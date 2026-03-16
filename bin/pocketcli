@@ -1,0 +1,71 @@
+#! /usr/bin/env sh
+
+BASE="$HOME/.pocketcli/repo"
+
+menu() {
+
+echo ""
+echo "PocketCli"
+echo ""
+echo "1 connect"
+echo "2 scan-network"
+echo "3 radar-bootstrap"
+echo "4 provision-host"
+echo "5 provision-network"
+echo "6 exit"
+echo ""
+}
+
+while true
+do
+
+menu
+read -r opt
+
+case "$opt" in
+
+1)
+
+HOST=$(tailscale status --json | jq -r '.Peer[].HostName' | fzf)
+
+if [ -n "$HOST" ]
+then
+ssh "$HOST"
+fi
+;;
+
+2)
+
+sh "$BASE/discovery/pocketcli-scan.sh"
+
+;;
+
+3)
+
+sh "$BASE/radar/pocketcli-bootstrap.sh"
+
+;;
+
+4)
+
+echo "Host:"
+read -r HOST
+
+sh "$BASE/provision/pocketcli-provision-host.sh" "$HOST"
+
+;;
+
+5)
+
+sh "$BASE/provision/pocketcli-provision-network.sh"
+
+;;
+
+6)
+
+exit
+;;
+
+esac
+
+done
