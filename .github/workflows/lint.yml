@@ -1,0 +1,55 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on all scripts
+        run: |
+          echo "── Scanning shell scripts ──"
+          find . \
+            -not -path './.git/*' \
+            \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
+            -print \
+            | sort \
+            | xargs shellcheck \
+                --severity=warning \
+                --shell=bash \
+                --exclude=SC1091   # allow 'source' of files not present at lint time
+          echo "✔ ShellCheck passed."
+
+  syntax:
+    name: Bash syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check bash syntax
+        run: |
+          echo "── Checking bash syntax ──"
+          ERRORS=0
+          find . \
+            -not -path './.git/*' \
+            \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
+            -print \
+            | sort \
+            | while IFS= read -r f; do
+                bash -n "${f}" && echo "  ok  ${f}" || { echo "  ✘  ${f}"; ERRORS=$((ERRORS+1)); }
+              done
+          [ "${ERRORS}" -eq 0 ] && echo "✔ All syntax checks passed."

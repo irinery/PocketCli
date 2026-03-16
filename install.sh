@@ -1,53 +1,109 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
+# =============================================================================
+# PocketCli — install.sh
+# Orchestrates the full installation flow.
+# =============================================================================
 
-set -e
+set -euo pipefail
 
-echo "Installing PocketCli..."
+INSTALL_DIR="${HOME}/.pocketcli"
+SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 
-install_pkg() {
+# ---------------------------------------------------------------------------
+# Helpers (duplicated for standalone safety)
+# ---------------------------------------------------------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-if command -v apt >/dev/null 2>&1
-then
-sudo apt update
-sudo apt install -y "$@"
+info()    { printf "${CYAN}[PocketCli]${NC} %s\n" "$*"; }
+success() { printf "${GREEN}[✔]${NC} %s\n" "$*"; }
+warn()    { printf "${YELLOW}[!]${NC} %s\n" "$*"; }
+die()     { printf "${RED}[✘]${NC} %s\n" "$*" >&2; exit 1; }
 
-elif command -v apk >/dev/null 2>&1
-then
-sudo apk add "$@"
+# ---------------------------------------------------------------------------
+# Detect OS
+# ---------------------------------------------------------------------------
+source "${INSTALL_DIR}/detect_os.sh"
+detect_os
+info "Detected OS: ${OS}"
 
-elif command -v brew >/dev/null 2>&1
-then
-brew install "$@"
-
-elif command -v dnf >/dev/null 2>&1
-then
-sudo dnf install -y "$@"
-
-else
-echo "unsupported package manager"
-exit 1
-fi
-}
-
-install_pkg git jq fzf openssh-client
-
-mkdir -p ~/.pocketcli
-
-if [ ! -d ~/.pocketcli/repo ]
-then
-git clone https://github.com/YOURORG/pocketcli ~/.pocketcli/repo
-else
-cd ~/.pocketcli/repo
-git pull
-fi
-
-mkdir -p ~/.local/bin
-
-ln -sf ~/.pocketcli/repo/bin/pocketcli ~/.local/bin/pocketcli
-
-chmod +x ~/.pocketcli/repo/bin/pocketcli
-
+# ---------------------------------------------------------------------------
+# Choose install mode
+# ---------------------------------------------------------------------------
 echo ""
-echo "PocketCli installed"
-echo "Run:"
-echo "pocketcli"
+echo "  Select install mode:"
+echo ""
+echo "    1) Viewer  →  iPad or lightweight terminal (SSH client only)"
+echo "    2) Agent   →  server or remote machine (full environment)"
+echo ""
+printf "  Choice [1/2]: "
+read -r MODE_CHOICE
+
+case "${MODE_CHOICE}" in
+    1) MODE="viewer" ;;
+    2) MODE="agent"  ;;
+    *) die "Invalid choice: '${MODE_CHOICE}'. Run the installer again." ;;
+esac
+
+info "Mode selected: ${MODE}"
+
+# ---------------------------------------------------------------------------
+# Install dependencies
+# ---------------------------------------------------------------------------
+"${SCRIPTS_DIR}/install_deps.sh" "${OS}" "${MODE}"
+
+# ---------------------------------------------------------------------------
+# Install & configure Tailscale
+# ---------------------------------------------------------------------------
+"${SCRIPTS_DIR}/install_tailscale.sh" "${OS}"
+
+# ---------------------------------------------------------------------------
+# Apply config files
+# ---------------------------------------------------------------------------
+info "Applying configuration files..."
+
+CONFIG_DIR="${INSTALL_DIR}/config"
+SHELL_RC="${HOME}/.zshrc"
+
+# Use .bashrc if zsh not available
+command -v zsh >/dev/null 2>&1 || SHELL_RC="${HOME}/.bashrc"
+
+# zshrc
+if ! grep -qF "pocketcli" "${SHELL_RC}" 2>/dev/null; then
+    cat >> "${SHELL_RC}" <<SHELLEOF
+
+# ── PocketCli ──────────────────────────────────────────────────────────────
+export POCKETCLI_DIR="\${HOME}/.pocketcli"
+source "\${POCKETCLI_DIR}/config/zshrc"
+# ───────────────────────────────────────────────────────────────────────────
+SHELLEOF
+fi
+
+# tmux config
+mkdir -p "${HOME}/.config/tmux"
+cp "${CONFIG_DIR}/tmux.conf" "${HOME}/.config/tmux/tmux.conf"
+
+# starship config
+mkdir -p "${HOME}/.config"
+cp "${CONFIG_DIR}/starship.toml" "${HOME}/.config/starship.toml"
+
+success "Config files applied."
+
+# ---------------------------------------------------------------------------
+# Harden permissions
+# ---------------------------------------------------------------------------
+info "Applying permission hardening..."
+chmod -R o-rwx,g-w "${INSTALL_DIR}"
+find "${INSTALL_DIR}" -type f -name "*.sh" -exec chmod 700 {} \;
+success "Permissions hardened."
+
+# ---------------------------------------------------------------------------
+# Start the appropriate environment
+# ---------------------------------------------------------------------------
+case "${MODE}" in
+    viewer) exec "${SCRIPTS_DIR}/start_viewer.sh" ;;
+    agent)  exec "${SCRIPTS_DIR}/start_agent.sh"  ;;
+esac

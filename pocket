@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+# =============================================================================
+# PocketCli — pocket
+# Main CLI entrypoint. Dispatches all subcommands.
+#
+# Usage:
+#   pocket <command> [args]
+#
+# Commands:
+#   connect  <host>       SSH into a Tailscale machine (fzf if no host given)
+#   list                  List online Tailscale machines
+#   run      <host> <cmd> Run a command on a remote machine
+#   copy     <src> <dst>  scp wrapper between local and remote
+#   fleet    <sub> [args] Run commands across multiple machines
+#   status                Show local node status
+#   radar                 Open the radar dashboard
+#   menu                  Open the interactive fzf menu
+#   update                Pull latest PocketCli
+#   uninstall             Remove PocketCli from this machine
+#   help                  Show this help
+# =============================================================================
+
+set -euo pipefail
+
+POCKETCLI_DIR="${HOME}/.pocketcli"
+SCRIPTS="${POCKETCLI_DIR}/scripts"
+
+# ---------------------------------------------------------------------------
+# Colours
+# ---------------------------------------------------------------------------
+BOLD='\033[1m'
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+_info()  { printf "${CYAN}▸${NC} %s\n" "$*"; }
+_ok()    { printf "${GREEN}✔${NC} %s\n" "$*"; }
+_warn()  { printf "${YELLOW}!${NC} %s\n" "$*"; }
+_die()   { printf "${RED}✘${NC} %s\n" "$*" >&2; exit 1; }
+
+_require() {
+    command -v "$1" >/dev/null 2>&1 || _die "$1 is required but not installed."
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: help
+# ---------------------------------------------------------------------------
+_cmd_help() {
+    echo ""
+    printf "${BOLD}  PocketCli${NC}  ${DIM}— portable terminal toolkit${NC}\n"
+    echo ""
+    printf "  ${BOLD}Usage:${NC}  pocket <command> [args]\n"
+    echo ""
+    printf "  ${BOLD}Commands:${NC}\n"
+    echo ""
+    printf "  ${CYAN}connect${NC}  [host]          SSH into a machine (fzf picker if omitted)\n"
+    printf "  ${CYAN}list${NC}                    List online Tailscale machines\n"
+    printf "  ${CYAN}run${NC}      <host> <cmd>   Run a command on a remote machine\n"
+    printf "  ${CYAN}copy${NC}     <src>  <dst>   scp wrapper  (use host:path notation)\n"
+    printf "  ${CYAN}fleet${NC}    <sub>  [args]  Run commands across multiple machines\n"
+    printf "  ${CYAN}status${NC}                  Show local node status\n"
+    printf "  ${CYAN}radar${NC}                   Open radar dashboard\n"
+    printf "  ${CYAN}menu${NC}                    Open interactive fzf menu\n"
+    printf "  ${CYAN}update${NC}                  Update PocketCli to latest\n"
+    printf "  ${CYAN}uninstall${NC}               Remove PocketCli from this machine\n"
+    printf "  ${CYAN}help${NC}                    Show this help\n"
+    echo ""
+    printf "  ${DIM}Examples:${NC}\n"
+    printf "  ${DIM}  pocket connect server-01${NC}\n"
+    printf "  ${DIM}  pocket run server-01 \"docker ps\"${NC}\n"
+    printf "  ${DIM}  pocket copy ./deploy.sh server-01:/tmp/${NC}\n"
+    printf "  ${DIM}  pocket fleet run \"uptime\"${NC}\n"
+    printf "  ${DIM}  pocket fleet run \"git pull && docker compose up -d\" --pick${NC}\n"
+    echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: list
+# ---------------------------------------------------------------------------
+_cmd_list() {
+    _require tailscale
+    _require jq
+
+    TS_STATUS=$(tailscale status --json 2>/dev/null) \
+        || _die "Cannot reach Tailscale daemon. Is it running?"
+
+    echo ""
+    printf "  ${BOLD}%-22s %-16s %-10s %-18s${NC}\n" "Hostname" "IP" "Status" "OS"
+    printf "  %-22s %-16s %-10s %-18s\n" \
+        "──────────────────────" "────────────────" "──────────" "──────────────────"
+
+    echo "${TS_STATUS}" | jq -r '
+        .Peer | to_entries[] | .value |
+        "\(.HostName) \(.TailscaleIPs[0] // "n/a") \(if .Online then "online" else "offline" end) \(.OS // "unknown")"
+    ' | while IFS=' ' read -r host ip status os; do
+        host="${host//[^a-zA-Z0-9._-]/}"
+        ip="${ip//[^0-9.:]/}"
+        os="${os//[^a-zA-Z0-9._-]/}"
+
+        if [ "${status}" = "online" ]; then
+            STATUS_FMT="${GREEN}${status}${NC}"
+        else
+            STATUS_FMT="${DIM}${status}${NC}"
+        fi
+        printf "  %-22s %-16s ${STATUS_FMT}%-0s %-18s\n" \
+            "${host}" "${ip}" "" "${os}"
+    done
+    echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: connect
+# ---------------------------------------------------------------------------
+_cmd_connect() {
+    _require tailscale
+    local host="${1:-}"
+
+    if [ -z "${host}" ]; then
+        _require fzf
+        host=$(_pick_online_host "Connect to") || exit 0
+    fi
+
+    host="${host//[^a-zA-Z0-9._-]/}"
+    [ -z "${host}" ] && _die "Invalid hostname."
+
+    _info "Connecting to ${host}..."
+    exec ssh "${host}"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: run
+# ---------------------------------------------------------------------------
+_cmd_run() {
+    [ $# -lt 2 ] && { _die "Usage: pocket run <host> <command>"; }
+    _require tailscale
+
+    local host="${1}"
+    shift
+    local remote_cmd="$*"
+
+    host="${host//[^a-zA-Z0-9._-]/}"
+    [ -z "${host}" ] && _die "Invalid hostname."
+
+    _info "Running on ${host}: ${remote_cmd}"
+    ssh -o StrictHostKeyChecking=accept-new "${host}" -- "${remote_cmd}"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: copy
+# ---------------------------------------------------------------------------
+_cmd_copy() {
+    [ $# -lt 2 ] && { _die "Usage: pocket copy <src> <dst>  (use host:path notation)"; }
+    _require scp
+
+    local src="${1}"
+    local dst="${2}"
+
+    _info "Copying: ${src}  →  ${dst}"
+    scp -r "${src}" "${dst}"
+    _ok "Done."
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: status
+# ---------------------------------------------------------------------------
+_cmd_status() {
+    exec "${SCRIPTS}/pocket-status.sh"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: radar
+# ---------------------------------------------------------------------------
+_cmd_radar() {
+    exec "${POCKETCLI_DIR}/radar.sh"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: menu
+# ---------------------------------------------------------------------------
+_cmd_menu() {
+    exec "${SCRIPTS}/pocketcli_menu.sh"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: update
+# ---------------------------------------------------------------------------
+_cmd_update() {
+    _info "Updating PocketCli..."
+    git -C "${POCKETCLI_DIR}" fetch --quiet origin
+    git -C "${POCKETCLI_DIR}" pull --ff-only
+    _ok "PocketCli is up to date."
+    "${POCKETCLI_DIR}/pocket" --version 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: uninstall
+# ---------------------------------------------------------------------------
+_cmd_uninstall() {
+    exec "${SCRIPTS}/uninstall.sh"
+}
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+_cmd_version() {
+    local ver
+    ver=$(git -C "${POCKETCLI_DIR}" describe --tags --always 2>/dev/null || echo "dev")
+    printf "PocketCli %s\n" "${ver}"
+}
+
+# ---------------------------------------------------------------------------
+# Internal: fzf host picker
+# ---------------------------------------------------------------------------
+_pick_online_host() {
+    local prompt="${1:-Select host}"
+    tailscale status --json 2>/dev/null \
+        | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
+        | sort \
+        | fzf --prompt="  ${prompt} » " --height=50% --no-info
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+CMD="${1:-help}"
+shift 2>/dev/null || true
+
+case "${CMD}" in
+    connect)    _cmd_connect "$@" ;;
+    list|ls)    _cmd_list         ;;
+    run)        _cmd_run    "$@"  ;;
+    copy|cp)    _cmd_copy   "$@"  ;;
+    fleet)      exec "${SCRIPTS}/fleet.sh" "$@" ;;
+    status)     _cmd_status       ;;
+    radar)      _cmd_radar        ;;
+    menu)       _cmd_menu         ;;
+    update)     _cmd_update       ;;
+    uninstall)  _cmd_uninstall    ;;
+    version|-v|--version) _cmd_version ;;
+    help|-h|--help|"")    _cmd_help    ;;
+    *)
+        _warn "Unknown command: '${CMD}'"
+        _cmd_help
+        exit 1
+    ;;
+esac

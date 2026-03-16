@@ -1,0 +1,70 @@
+# =============================================================================
+# PocketCli — config/starship.toml
+# Minimal, fast prompt.
+# =============================================================================
+
+# Timeout for commands (ms)
+command_timeout = 500
+
+format = """
+$directory\
+$git_branch\
+$git_status\
+$cmd_duration\
+$line_break\
+$character"""
+
+# ---------------------------------------------------------------------------
+# Directory
+# ---------------------------------------------------------------------------
+[directory]
+style = "bold cyan"
+truncation_length = 3
+truncate_to_repo = true
+
+# ---------------------------------------------------------------------------
+# Git
+# ---------------------------------------------------------------------------
+[git_branch]
+symbol = " "
+style = "bold purple"
+format = "[$symbol$branch]($style) "
+
+[git_status]
+style = "bold red"
+format = "([$all_status$ahead_behind]($style) )"
+conflicted = "✖"
+ahead     = "⇡${count}"
+behind    = "⇣${count}"
+diverged  = "⇕⇡${ahead_count}⇣${behind_count}"
+untracked = "?"
+modified  = "!"
+staged    = "+"
+deleted   = "✘"
+
+# ---------------------------------------------------------------------------
+# Command duration
+# ---------------------------------------------------------------------------
+[cmd_duration]
+min_time = 2000
+format = "[ $duration]($style) "
+style = "yellow"
+
+# ---------------------------------------------------------------------------
+# Prompt character
+# ---------------------------------------------------------------------------
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol   = "[➜](bold red)"
+
+# ---------------------------------------------------------------------------
+# Disabled modules (keep it fast)
+# ---------------------------------------------------------------------------
+[package]
+disabled = true
+
+[nodejs]
+disabled = false
+
+[python]
+disabled = false
