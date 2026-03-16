@@ -24,7 +24,6 @@ while true; do
     CHOICE=$(printf '1  Connect to server\n2  Radar (machine list)\n3  Update PocketCli\n4  Exit' \
         | fzf --no-info --height=40% --prompt="  > " \
               --header="  Up/Down to move | Enter to select" \
-              < /dev/tty \
         | cut -d' ' -f1)
 
     case "${CHOICE}" in
@@ -40,7 +39,7 @@ while true; do
                 printf '\n  No online machines on Tailscale.\n'; sleep 2; continue
             }
             SELECTED=$(printf '%s\n' "${PEERS}" \
-                | fzf --prompt="  Connect to > " --height=50% < /dev/tty)
+                | fzf --prompt="  Connect to > " --height=50%)
             [ -z "${SELECTED}" ] && continue
             SAFE=$(printf '%s' "${SELECTED}" | tr -cd 'a-zA-Z0-9._-')
             [ -z "${SAFE}" ] && { printf '\n  Invalid hostname.\n'; sleep 2; continue; }
