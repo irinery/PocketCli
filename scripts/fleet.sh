@@ -12,8 +12,6 @@
 
 set -euo pipefail
 
-SCRIPTS_DIR="${HOME}/.pocketcli/scripts"
-
 # ---------------------------------------------------------------------------
 # Colours
 # ---------------------------------------------------------------------------
@@ -72,7 +70,7 @@ _run_on_host() {
     [ -z "${host}" ] && return 1
 
     {
-        ssh \
+        ssh -n \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
             -o BatchMode=yes \
@@ -162,12 +160,12 @@ _fleet_status() {
         [ -z "${host}" ] && continue
         {
             echo "  ${BOLD}── ${CYAN}${host}${NC} ──"
-            ssh \
+            ssh -n \
                 -o StrictHostKeyChecking=accept-new \
                 -o ConnectTimeout=10 \
                 -o BatchMode=yes \
                 "${host}" -- \
-                "~/.pocketcli/scripts/pocket-status.sh 2>/dev/null || echo '  (pocket-status not available on this host)'" \
+                "${HOME}/.pocketcli/scripts/pocket-status.sh 2>/dev/null || echo '  (pocket-status not available on this host)'" \
                 2>&1
             echo ""
         } &

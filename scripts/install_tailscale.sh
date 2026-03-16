@@ -9,7 +9,21 @@ set -euo pipefail
 OS="${1:-}"
 [ -z "${OS}" ] && { printf '[PocketCli] OS not provided\n' >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# Helper — must be defined before any call site
+# ---------------------------------------------------------------------------
+_tailscale_login() {
+    printf '\n[PocketCli] Starting Tailscale login...\n'
+    printf '  (A browser window or URL will appear — authenticate to continue)\n\n'
+
+    sudo tailscale up --ssh || {
+        printf '[PocketCli] tailscale up failed. Run "sudo tailscale up --ssh" manually.\n'
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Skip if already installed
+# ---------------------------------------------------------------------------
 if command -v tailscale >/dev/null 2>&1; then
     printf '[PocketCli] Tailscale already installed — skipping.\n'
     _tailscale_login
@@ -43,13 +57,3 @@ esac
 
 printf '[PocketCli] Tailscale installed.\n'
 _tailscale_login
-
-# ---------------------------------------------------------------------------
-_tailscale_login() {
-    printf '\n[PocketCli] Starting Tailscale login...\n'
-    printf '  (A browser window or URL will appear — authenticate to continue)\n\n'
-
-    sudo tailscale up --ssh || {
-        printf '[PocketCli] tailscale up failed. Run "sudo tailscale up --ssh" manually.\n'
-    }
-}
