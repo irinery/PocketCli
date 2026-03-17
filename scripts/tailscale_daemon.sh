@@ -149,9 +149,14 @@ _full_setup() {
     if ! command -v tailscale >/dev/null 2>&1; then
         info "Installing tailscale..."
         if command -v apk >/dev/null 2>&1; then
-            run_or_die "apk add tailscale" apk add --no-cache tailscale qrencode
+            run_or_die "apk add tailscale" apk add --no-cache tailscale
+            # qrencode is optional — not in iSH Alpine 3.14 repo
+            apk add --no-cache qrencode 2>/dev/null \
+                && ok "qrencode installed (QR codes enabled)" \
+                || warn "qrencode not available — auth URL will be shown as text"
         elif command -v apt-get >/dev/null 2>&1; then
             curl -fsSL https://tailscale.com/install.sh | sh
+            apt-get install -y --no-install-recommends qrencode 2>/dev/null || true
         else
             die "Cannot install tailscale. Install manually: https://tailscale.com/download"
         fi

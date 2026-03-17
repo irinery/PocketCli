@@ -12,10 +12,13 @@ MODE="${2:-}"
 [ -z "${OS}" ]   && { printf '[PocketCli] OS not provided\n' >&2; exit 1; }
 [ -z "${MODE}" ] && { printf '[PocketCli] MODE not provided\n' >&2; exit 1; }
 
-# Viewer: minimal — just what's needed for SSH + menu
-VIEWER_PKGS="git curl jq tmux zsh qrencode"
-# Agent: full toolkit (fzf useful for pocket connect picker on non-iSH)
-AGENT_PKGS="git curl jq tmux zsh fzf ripgrep htop"
+# ---------------------------------------------------------------------------
+# Package lists — qrencode intentionally excluded:
+#   iSH Alpine 3.14 repo does not have it.
+#   It's installed separately + conditionally by tailscale_daemon.sh.
+# ---------------------------------------------------------------------------
+VIEWER_PKGS="git curl jq tmux zsh"
+AGENT_PKGS="git curl jq tmux zsh ripgrep htop"
 
 case "${MODE}" in
     viewer) PKGS="${VIEWER_PKGS}" ;;
@@ -32,7 +35,13 @@ case "${OS}" in
         # shellcheck disable=SC2086
         apk add --no-cache ${PKGS}
 
-        # starship — not in Alpine repos, install via official script
+        # Try qrencode — may not exist on iSH 3.14, that's OK
+        printf '[PocketCli] Trying qrencode (optional)...\n'
+        apk add --no-cache qrencode 2>/dev/null \
+            && printf '[PocketCli] qrencode installed.\n' \
+            || printf '[PocketCli] qrencode not available in this repo — skipping (auth URL will be shown as text).\n'
+
+        # starship — not in Alpine repos
         if [ "${MODE}" = "agent" ] && ! command -v starship >/dev/null 2>&1; then
             _install_starship
         fi
@@ -41,7 +50,7 @@ case "${OS}" in
     debian|wsl|linux)
         sudo apt-get update -qq
         # shellcheck disable=SC2086
-        sudo apt-get install -y --no-install-recommends ${PKGS} || true
+        sudo apt-get install -y --no-install-recommends ${PKGS} qrencode || true
 
         if [ "${MODE}" = "agent" ]; then
             command -v lazygit  >/dev/null 2>&1 || _install_lazygit_linux
@@ -54,7 +63,7 @@ case "${OS}" in
             printf '[PocketCli] Homebrew required: https://brew.sh\n'; exit 1
         }
         # shellcheck disable=SC2086
-        brew install ${PKGS} || true
+        brew install ${PKGS} qrencode || true
         [ "${MODE}" = "agent" ] && brew install lazygit || true
     ;;
 
