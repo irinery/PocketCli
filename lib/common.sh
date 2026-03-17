@@ -17,8 +17,9 @@ if [ -t 1 ]; then
     C_DIM='\033[2m'
     C_NC='\033[0m'
 else
-    C_BOLD=''; C_CYAN=''; C_GREEN=''; C_YELLOW=''
+    # Colour variables may be unused in this file but used by scripts sourcing it
     # shellcheck disable=SC2034
+    C_BOLD=''; C_CYAN=''; C_GREEN=''; C_YELLOW=''
     C_RED='';  C_DIM='';  C_NC=''
 fi
 
