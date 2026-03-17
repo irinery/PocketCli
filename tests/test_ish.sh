@@ -127,7 +127,7 @@ if [ -d "${HOME}/.ssh" ]; then
         *) _warn_test ".ssh permissions should be 700, got: ${PERM}" ;;
     esac
 else
-    _warn_test "~/.ssh does not exist (will be created on first use)"
+    _warn_test "${HOME}/.ssh does not exist (will be created on first use)"
 fi
 
 # Check for any existing key
@@ -211,12 +211,12 @@ _test "iSH-specific checks"
 if is_ish; then
     _pass "Running on iSH (detected)"
 
-    # Check for known-crashing tools
-    for BAD in fzf; do
-        if command -v "${BAD}" >/dev/null 2>&1; then
-            _warn_test "${BAD} installed — may crash on iSH (Go binary)"
-        fi
-    done
+    # Check for known-crashing Go binaries on iSH
+    if command -v fzf >/dev/null 2>&1; then
+        _warn_test "fzf installed — may crash on iSH (Go binary, terminal ioctl issues)"
+    else
+        _pass "fzf not installed (correct for iSH)"
+    fi
 
     # Check userspace net availability
     if tailscaled --help 2>&1 | grep -q 'userspace'; then

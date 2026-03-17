@@ -1,25 +1,46 @@
-#! /usr/bin/env sh
-BASE="$HOME/.pocketcli/repo"
+#!/usr/bin/env sh
+# =============================================================================
+# PocketCli — radar/pocketcli-bootstrap.sh
+# Pushes the radar agent script to a remote host and starts it.
+# Called by: pocket radar-bootstrap <host>
+# =============================================================================
 
-tailscale status --json | jq -r '.Peer[].HostName' | while read HOST
-do
+set -eu
 
-	SAFE_HOST=$(printf "%s" "$HOST" | tr -cd '[:alnum:].-')
+POCKETCLI_DIR="${HOME}/.pocketcli"
+. "${POCKETCLI_DIR}/lib/common.sh"
 
-	echo "Checking $SAFE_HOST"
+HOST="${1:-}"
+[ -z "${HOST}" ] && die "Usage: $0 <hostname>"
+HOST=$(safe_host "${HOST}")
+[ -z "${HOST}" ] && die "Invalid hostname."
 
-	if ssh -o ConnectTimeout=3 "$SAFE_HOST" "echo ok" >/dev/null 2>&1
-	then
+AGENT_SCRIPT="${POCKETCLI_DIR}/scripts/pocket-status.sh"
+REMOTE_AGENT=".pocketcli-agent.sh"
 
-		echo "Installing PocketCli agent on $SAFE_HOST"
+step "Bootstrapping radar agent on ${HOST}"
 
-		scp "$BASE/radar/pocketcli-agent.sh" \
-			"$SAFE_HOST:~/.pocketcli-agent.sh"
-
-		ssh "$SAFE_HOST" "chmod +x ~/.pocketcli-agent.sh"
-
-		ssh "$SAFE_HOST" \
-			'(crontab -l 2>/dev/null; echo "*/2 * * * * ~/.pocketcli-agent.sh") | crontab -'
-
+# 1. Test reachability — -n prevents stdin swallow inside conditionals
+if ! ssh -n -o ConnectTimeout=3 -o BatchMode=yes \
+        "${HOST}" "echo ok" >/dev/null 2>&1; then
+    die "Cannot reach ${HOST}. Check SSH access and Tailscale."
 fi
-done
+ok "Host reachable: ${HOST}"
+
+# 2. Copy agent script
+info "Copying agent to ${HOST}:~/${REMOTE_AGENT}..."
+scp -q "${AGENT_SCRIPT}" "${HOST}:${REMOTE_AGENT}"
+
+# 3. Make executable — -n required: called outside interactive context
+ssh -n -o BatchMode=yes \
+    "${HOST}" "chmod +x ~/${REMOTE_AGENT}"
+ok "Agent installed."
+
+# 4. Run agent once to verify
+info "Running agent on ${HOST}..."
+ssh -n -o BatchMode=yes \
+    "${HOST}" \
+    "sh ~/${REMOTE_AGENT}" 2>/dev/null \
+    || warn "Agent ran with errors on ${HOST} — check manually."
+
+ok "Bootstrap complete: ${HOST}"

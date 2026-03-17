@@ -13,7 +13,7 @@
 set -eu
 
 POCKETCLI_DIR="${HOME}/.pocketcli"
-. "${POCKETCLI_DIR}/lib/common.sh"
+. "${POCKETCLI_DIR}/scripts/lib/common.sh"
 
 PID_FILE="/tmp/tailscaled.pid"
 LOG_FILE="/tmp/tailscaled.log"
