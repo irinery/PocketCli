@@ -52,28 +52,33 @@ sh "${SCRIPTS_DIR}/install_deps.sh" "${OS}" "${MODE}"
 # ---------------------------------------------------------------------------
 # Install Tailscale
 # ---------------------------------------------------------------------------
-sh "${SCRIPTS_DIR}/install_tailscale.sh" "${OS}"
+sh "${SCRIPTS_DIR}/tailscale_daemon.sh" setup
 
 # ---------------------------------------------------------------------------
 # Apply config files
 # ---------------------------------------------------------------------------
 info "Applying configuration files..."
 
-# Detect shell RC file
-if command -v zsh >/dev/null 2>&1; then
-    SHELL_RC="${HOME}/.zshrc"
-else
-    SHELL_RC="${HOME}/.profile"
-fi
+# Always write to .profile (iSH uses sh, not zsh/bash by default)
+# Also write to .zshrc if zsh exists
+_inject_path() {
+    RC="$1"
+    if ! grep -qF "pocketcli" "${RC}" 2>/dev/null; then
+        printf '\n# -- PocketCli ------------------------------------------------\n' >> "${RC}"
+        printf 'export POCKETCLI_DIR="%s"\n' "${INSTALL_DIR}"         >> "${RC}"
+        # Use single quotes around PATH so $PATH expands at runtime, not now
+        printf 'export PATH="%s:$PATH"\n'   "${INSTALL_DIR}"          >> "${RC}"
+        printf '. "%s/config/zshrc"\n'      "${INSTALL_DIR}"          >> "${RC}"
+        printf '# --------------------------------------------------------------\n' >> "${RC}"
+        info "PATH added to ${RC}"
+    fi
+}
 
-# Inject PocketCli block only once
-if ! grep -qF "pocketcli" "${SHELL_RC}" 2>/dev/null; then
-    printf '\n# -- PocketCli ------------------------------------------------\n' >> "${SHELL_RC}"
-    printf 'export POCKETCLI_DIR="%s"\n' "${INSTALL_DIR}" >> "${SHELL_RC}"
-    printf 'export PATH="%s:${PATH}"\n' "${INSTALL_DIR}" >> "${SHELL_RC}"
-    printf '. "%s/config/zshrc"\n' "${INSTALL_DIR}" >> "${SHELL_RC}"
-    printf '# --------------------------------------------------------------\n' >> "${SHELL_RC}"
-fi
+_inject_path "${HOME}/.profile"
+command -v zsh >/dev/null 2>&1 && _inject_path "${HOME}/.zshrc" || true
+
+# Apply right now for this session (don't require shell restart)
+export PATH="${INSTALL_DIR}:${PATH}"
 
 # tmux config
 mkdir -p "${HOME}/.config/tmux"
@@ -97,9 +102,28 @@ find "${INSTALL_DIR}" -name "*.sh" -exec chmod 700 {} \;
 success "Permissions hardened."
 
 # ---------------------------------------------------------------------------
+# Post-install tip
+# ---------------------------------------------------------------------------
+echo ""
+echo "  ================================="
+success "PocketCli installed!"
+echo "  ================================="
+echo ""
+echo "  PATH already active in this session."
+echo "  For new shells, run:"
+echo ""
+printf '    . ~/.profile\n'
+echo ""
+echo "  Then use:  pocket help"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Start environment
 # ---------------------------------------------------------------------------
+
+# .profile must be sourced in the new shell — iSH ash doesn't auto-source it
+# We pass PATH explicitly via env so the child script has it immediately
 case "${MODE}" in
-    viewer) exec sh "${SCRIPTS_DIR}/start_viewer.sh" ;;
-    agent)  exec sh "${SCRIPTS_DIR}/start_agent.sh"  ;;
+    viewer) exec env PATH="${INSTALL_DIR}:${PATH}" sh "${SCRIPTS_DIR}/start_viewer.sh" ;;
+    agent)  exec env PATH="${INSTALL_DIR}:${PATH}" sh "${SCRIPTS_DIR}/start_agent.sh"  ;;
 esac
