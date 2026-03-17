@@ -63,7 +63,7 @@ info "Applying configuration files..."
 # Also write to .zshrc if zsh exists
 _inject_path() {
     RC="$1"
-    if ! grep -qF "pocketcli" "${RC}" 2>/dev/null; then
+    if ! grep -qF "PocketCli" "${RC}" 2>/dev/null; then
         printf '\n# -- PocketCli ------------------------------------------------\n' >> "${RC}"
         printf 'export POCKETCLI_DIR="%s"\n' "${INSTALL_DIR}"         >> "${RC}"
         # Use single quotes around PATH so $PATH expands at runtime, not now
