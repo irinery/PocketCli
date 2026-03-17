@@ -1,28 +1,43 @@
 #!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/tailscale_daemon.sh
-# Manages the tailscaled daemon lifecycle on iSH / Alpine without init system.
+# Manages tailscaled lifecycle.
 #
-# Usage:
-#   pocket tailscale-setup     → full setup (install + start + auth)
-#   pocket tailscale-start     → start daemon only
-#   pocket tailscale-status    → show status + IP
-#   pocket tailscale-restart   → kill + restart daemon
+# On iSH (iPad): tailscaled CANNOT run — kernel lacks netlink support.
+# The iOS Tailscale app handles VPN. This script detects that and skips
+# the daemon, falling back to ping-based connectivity detection.
 # =============================================================================
 
 set -eu
 
 POCKETCLI_DIR="${HOME}/.pocketcli"
-. "${POCKETCLI_DIR}/scripts/lib/common.sh"
+. "${POCKETCLI_DIR}/lib/common.sh"
 
 PID_FILE="/tmp/tailscaled.pid"
 LOG_FILE="/tmp/tailscaled.log"
+
+# =============================================================================
+# iSH guard — called at the top of any command that needs the daemon
+# =============================================================================
+_assert_not_ish() {
+    if is_ish; then
+        echo ""
+        warn "iSH detected — tailscaled cannot run on this kernel."
+        info "The Tailscale iOS app handles VPN for this device."
+        info "To check connectivity: pocket ts-ping <hostname>"
+        info "To list saved hosts:   pocket menu"
+        echo ""
+        exit 0
+    fi
+}
 
 # =============================================================================
 # Daemon lifecycle
 # =============================================================================
 
 _daemon_start() {
+    _assert_not_ish
+
     if is_tailscale_daemon_running; then
         ok "tailscaled already running (PID $(pgrep tailscaled | head -1))"
         return 0
@@ -33,8 +48,7 @@ _daemon_start() {
     info "Starting tailscaled (userspace networking)..."
     : > "${LOG_FILE}"
 
-    # Single-dash flags work on both old (Alpine 3.14/iSH) and new tailscaled.
-    # Minimal flags only — no --outbound-http-proxy-listen (not in old versions).
+    # Minimal flags — compatible with old tailscaled (Alpine 3.14 / v1.8.x)
     tailscaled \
         -tun=userspace-networking \
         -socks5-server=localhost:1055 \
@@ -46,83 +60,86 @@ _daemon_start() {
     info "Waiting for daemon (PID ${DAEMON_PID})..."
     I=0
     while [ "${I}" -lt 20 ]; do
-        sleep 1
-        printf '.'
-        # Check if process is still alive
+        sleep 1; printf '.'
         if ! kill -0 "${DAEMON_PID}" 2>/dev/null; then
             printf '\n'
             warn "tailscaled exited early. Log:"
-            cat "${LOG_FILE}" | head -20
+            head -20 "${LOG_FILE}"
             return 1
         fi
-        # Check if socket is responding
         if tailscale status >/dev/null 2>&1; then
-            printf '\n'
-            ok "tailscaled is ready."
-            return 0
+            printf '\n'; ok "tailscaled is ready."; return 0
         fi
         I=$((I + 1))
     done
-
     printf '\n'
-    warn "tailscaled started but not responding after 20s."
-    warn "Check log: ${LOG_FILE}"
+    warn "tailscaled not responding after 20s. Check: ${LOG_FILE}"
     return 1
 }
 
 _daemon_stop() {
+    _assert_not_ish
     info "Stopping tailscaled..."
-
-    # Try PID file first
     if [ -f "${PID_FILE}" ]; then
-        PID=$(cat "${PID_FILE}" 2>/dev/null || echo "")
-        if [ -n "${PID}" ]; then
-            kill "${PID}" 2>/dev/null || true
-            sleep 1
-        fi
+        PID=$(cat "${PID_FILE}" 2>/dev/null || true)
+        [ -n "${PID}" ] && kill "${PID}" 2>/dev/null || true
         rm -f "${PID_FILE}"
     fi
-
-    # Kill any remaining tailscaled processes
-    pkill -x tailscaled 2>/dev/null || true
+    pkill tailscaled 2>/dev/null || true
     sleep 1
-
-    if is_tailscale_daemon_running; then
-        warn "tailscaled still running — sending SIGKILL"
-        pkill -9 -x tailscaled 2>/dev/null || true
-    fi
-
+    is_tailscale_daemon_running && pkill -9 tailscaled 2>/dev/null || true
     ok "tailscaled stopped."
 }
 
 _daemon_status() {
     step "Tailscale Status"
 
+    # iSH path — no daemon, check via iOS VPN
+    if is_ish; then
+        warn "iSH: tailscaled daemon not available (kernel limitation)"
+        TS_IP=$(get_tailscale_ip)
+        if [ -n "${TS_IP}" ]; then
+            ok "On Tailscale network via iOS app (IP: ${TS_IP})"
+        else
+            warn "Not on Tailscale network. Open the Tailscale iOS app and connect."
+        fi
+        echo ""
+        info "Saved hosts (pocket menu for interactive selection):"
+        HOSTS_FILE="${POCKETCLI_DIR}/hosts"
+        if [ -f "${HOSTS_FILE}" ] && grep -qv '^\s*$' "${HOSTS_FILE}" 2>/dev/null; then
+            grep -v '^\s*#' "${HOSTS_FILE}" | grep -v '^\s*$' \
+                | while IFS= read -r h; do
+                    REACHABLE=""
+                    ping_host "${h}" 2 && REACHABLE=" ${C_GREEN}[reachable]${C_NC}" \
+                                       || REACHABLE=" ${C_YELLOW}[no response]${C_NC}"
+                    printf "  %-25s%b\n" "${h}" "${REACHABLE}"
+                  done
+        else
+            info "No saved hosts yet. Use option 2 in pocket menu to add them."
+        fi
+        echo ""
+        return 0
+    fi
+
+    # Normal path
     if ! command -v tailscale >/dev/null 2>&1; then
         warn "tailscale not installed."; return 1
     fi
-
     if is_tailscale_daemon_running; then
         PID=$(pgrep tailscaled | head -1 || echo "?")
         ok "tailscaled running (PID ${PID})"
     else
-        warn "tailscaled NOT running"
-        return 1
+        warn "tailscaled NOT running"; return 1
     fi
-
     if ! with_timeout 5 tailscale status >/dev/null 2>&1; then
-        warn "Daemon running but socket not responding"
-        return 1
+        warn "Daemon running but socket not responding"; return 1
     fi
 
-    # Show IP and peers
-    TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || echo "not assigned")
-    printf "\n  ${C_BOLD}%-18s${C_NC} %s\n" "This device IP:" "${TS_IP}"
-
+    TS_IP=$(get_tailscale_ip)
+    printf "\n  ${C_BOLD}%-18s${C_NC} %s\n" "This device IP:" "${TS_IP:-not assigned}"
     echo ""
     printf "  ${C_BOLD}%-22s %-16s %-8s${C_NC}\n" "Hostname" "IP" "Online"
     printf "  %-22s %-16s %-8s\n" "----------------------" "----------------" "--------"
-
     tailscale status 2>/dev/null \
         | grep -v '^#\|^$\|offers exit' \
         | while IFS= read -r line; do
@@ -133,111 +150,122 @@ _daemon_status() {
             STATUS=$([ "${ACTIVE}" -gt 0 ] && echo "yes" || echo "-")
             printf "  %-22s %-16s %-8s\n" "${HOST}" "${IP}" "${STATUS}"
           done
-
     echo ""
 }
 
 # =============================================================================
-# Full setup — called by installer and by 'pocket tailscale-setup'
+# ts-ping — reachability check without tailscale CLI
 # =============================================================================
+_ts_ping() {
+    HOST=$(safe_host "${1:-}")
+    [ -z "${HOST}" ] && die "Usage: pocket ts-ping <hostname>"
 
+    info "Pinging ${HOST}..."
+    if ping_host "${HOST}" 5; then
+        ok "${HOST} is reachable on Tailscale network"
+        return 0
+    else
+        warn "${HOST} did not respond"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Full setup
+# =============================================================================
 _full_setup() {
     step "Tailscale Full Setup"
 
-    # 1. Install if needed
+    # On iSH — no daemon possible, just validate iOS connectivity
+    if is_ish; then
+        echo ""
+        info "iSH (iPad) detected."
+        info "tailscaled cannot run on this kernel (netlink not supported)."
+        echo ""
+        TS_IP=$(get_tailscale_ip)
+        if [ -n "${TS_IP}" ]; then
+            ok "Already on Tailscale network via iOS app (IP: ${TS_IP})"
+            info "You can SSH into any Tailscale machine directly."
+            info "Add hosts with: pocket menu  (option 2)"
+        else
+            echo ""
+            printf "  ${C_YELLOW}Action required:${C_NC}\n"
+            echo "  1. Install the Tailscale app from the App Store"
+            echo "  2. Sign in and enable the VPN"
+            echo "  3. Re-run: pocket tailscale-setup"
+            echo ""
+        fi
+        return 0
+    fi
+
+    # Normal install path
     if ! command -v tailscale >/dev/null 2>&1; then
         info "Installing tailscale..."
         if command -v apk >/dev/null 2>&1; then
             run_or_die "apk add tailscale" apk add --no-cache tailscale
-            # qrencode is optional — not in iSH Alpine 3.14 repo
             apk add --no-cache qrencode 2>/dev/null \
-                && ok "qrencode installed (QR codes enabled)" \
-                || warn "qrencode not available — auth URL will be shown as text"
+                && ok "qrencode installed" \
+                || warn "qrencode not available — URL shown as text"
         elif command -v apt-get >/dev/null 2>&1; then
             curl -fsSL https://tailscale.com/install.sh | sh
             apt-get install -y --no-install-recommends qrencode 2>/dev/null || true
         else
-            die "Cannot install tailscale. Install manually: https://tailscale.com/download"
+            die "Cannot install tailscale. See: https://tailscale.com/download"
         fi
     else
         ok "tailscale already installed."
     fi
 
-    # 2. Start daemon
     _daemon_start || die "Could not start tailscaled. Check: ${LOG_FILE}"
-
-    # 3. Authenticate
     _authenticate
-
-    # 4. Final status
     _daemon_status
 }
 
 # =============================================================================
 # Authentication with QR code
 # =============================================================================
-
 _authenticate() {
-    step "Authentication"
+    _assert_not_ish
 
-    # Already connected?
     if with_timeout 5 tailscale status >/dev/null 2>&1; then
-        TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
-        if [ -n "${TS_IP}" ]; then
-            ok "Already authenticated (IP: ${TS_IP})"
-            return 0
-        fi
+        TS_IP=$(get_tailscale_ip)
+        [ -n "${TS_IP}" ] && { ok "Already authenticated (IP: ${TS_IP})"; return 0; }
     fi
 
     info "Running tailscale up..."
     AUTH_LOG="/tmp/ts_auth_$$.log"
     : > "${AUTH_LOG}"
 
-    # Start tailscale up, capture output
     tailscale up --ssh > "${AUTH_LOG}" 2>&1 &
     TS_UP_PID=$!
 
-    # Poll for auth URL up to 15 seconds
-    I=0
-    AUTH_URL=""
+    I=0; AUTH_URL=""
     while [ "${I}" -lt 15 ]; do
         sleep 1
-        AUTH_URL=$(grep -o 'https://login\.tailscale\.com/[^ ]*' "${AUTH_LOG}" 2>/dev/null \
-            | head -1 || true)
+        AUTH_URL=$(grep -o 'https://login\.tailscale\.com/[^ ]*' "${AUTH_LOG}" 2>/dev/null | head -1 || true)
         [ -n "${AUTH_URL}" ] && break
         I=$((I + 1))
     done
 
     if [ -n "${AUTH_URL}" ]; then
         _show_auth_url "${AUTH_URL}"
-
         info "Waiting for authentication (up to 3 min)..."
-        # Wait for tailscale up to complete (user scans QR / visits URL)
         I=0
         while [ "${I}" -lt 180 ]; do
             sleep 2
-            if with_timeout 3 tailscale status >/dev/null 2>&1; then
-                TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || true)
-                if [ -n "${TS_IP}" ]; then
-                    echo ""
-                    ok "Authenticated! IP: ${TS_IP}"
-                    rm -f "${AUTH_LOG}"
-                    return 0
-                fi
+            TS_IP=$(get_tailscale_ip)
+            if [ -n "${TS_IP}" ]; then
+                echo ""; ok "Authenticated! IP: ${TS_IP}"
+                rm -f "${AUTH_LOG}"; return 0
             fi
-            I=$((I + 2))
-            printf '.'
+            I=$((I + 2)); printf '.'
         done
-        printf '\n'
-        warn "Timeout waiting for authentication. Check: tailscale status"
+        printf '\n'; warn "Timeout. Check: tailscale status"
     else
-        # No URL — might already be authenticated or error
         wait "${TS_UP_PID}" 2>/dev/null || true
-        if with_timeout 5 tailscale status >/dev/null 2>&1; then
-            ok "Authenticated (no URL needed)"
-        else
-            warn "Could not get auth URL. Run: tailscale up --ssh"
-            cat "${AUTH_LOG}" | head -10
+        TS_IP=$(get_tailscale_ip)
+        if [ -n "${TS_IP}" ]; then ok "Authenticated (IP: ${TS_IP})"
+        else warn "Could not get auth URL. Run: tailscale up --ssh"
         fi
     fi
 
@@ -248,35 +276,28 @@ _authenticate() {
 _show_auth_url() {
     URL="$1"
     echo ""
-    printf "  ${C_BOLD}┌─────────────────────────────────────┐${C_NC}\n"
-    printf "  ${C_BOLD}│  Scan QR or visit the URL below     │${C_NC}\n"
-    printf "  ${C_BOLD}└─────────────────────────────────────┘${C_NC}\n"
+    printf "  ${C_BOLD}+-------------------------------------+${C_NC}\n"
+    printf "  ${C_BOLD}|  Scan QR or open the URL below     |${C_NC}\n"
+    printf "  ${C_BOLD}+-------------------------------------+${C_NC}\n"
     echo ""
 
     QR_OK=0
-
-    # Try qrencode (best quality — crisp blocks)
     if command -v qrencode >/dev/null 2>&1; then
         qrencode -t UTF8 -m 1 -o - "${URL}" 2>/dev/null \
             | while IFS= read -r line; do printf "  %s\n" "${line}"; done \
-            && QR_OK=1
+            && QR_OK=1 || true
     fi
 
-    # Try installing qrencode if on Alpine/iSH
     if [ "${QR_OK}" -eq 0 ] && command -v apk >/dev/null 2>&1; then
-        info "Installing qrencode..."
-        if apk add --no-cache qrencode >/dev/null 2>&1; then
-            qrencode -t UTF8 -m 1 -o - "${URL}" 2>/dev/null \
+        apk add --no-cache qrencode >/dev/null 2>&1 \
+            && qrencode -t UTF8 -m 1 -o - "${URL}" 2>/dev/null \
                 | while IFS= read -r line; do printf "  %s\n" "${line}"; done \
-                && QR_OK=1
-        fi
+            && QR_OK=1 || true
     fi
 
-    # Fallback: print URL large and clearly
     if [ "${QR_OK}" -eq 0 ]; then
         echo ""
-        printf "  ${C_YELLOW}Open this URL in your browser:${C_NC}\n"
-        echo ""
+        printf "  ${C_YELLOW}Open in browser:${C_NC}\n\n"
         printf "  ${C_CYAN}${C_BOLD}%s${C_NC}\n" "${URL}"
         echo ""
     fi
@@ -285,7 +306,6 @@ _show_auth_url() {
 # =============================================================================
 # Dispatch
 # =============================================================================
-
 CMD="${1:-help}"
 shift 2>/dev/null || true
 
@@ -296,16 +316,17 @@ case "${CMD}" in
     status)  _daemon_status  ;;
     auth)    _authenticate   ;;
     setup)   _full_setup     ;;
+    ping)    _ts_ping "$@"   ;;
     help|*)
         echo ""
-        printf "  Usage: sh %s <command>\n" "$0"
-        echo ""
-        printf "  start    Start tailscaled daemon\n"
-        printf "  stop     Stop tailscaled daemon\n"
-        printf "  restart  Restart daemon\n"
-        printf "  status   Show status and peers\n"
-        printf "  auth     Re-authenticate (shows QR code)\n"
+        printf "  Usage: pocket tailscale-<command>\n\n"
         printf "  setup    Full install + start + auth\n"
+        printf "  start    Start daemon (non-iSH only)\n"
+        printf "  stop     Stop daemon\n"
+        printf "  restart  Restart daemon\n"
+        printf "  status   Status + peers (iSH: shows connectivity)\n"
+        printf "  auth     Re-authenticate (shows QR)\n"
+        printf "  ping     Check host reachability via ping\n"
         echo ""
     ;;
 esac

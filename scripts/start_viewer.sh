@@ -1,27 +1,22 @@
 #!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/start_viewer.sh
-# Starts Viewer mode. Auto-starts tailscaled if not running.
+# Viewer mode startup. Handles both:
+#   - iSH (iPad): iOS Tailscale app provides VPN, no daemon possible
+#   - Normal: starts tailscaled if needed
 # =============================================================================
 
 set -eu
 
 POCKETCLI_DIR="${HOME}/.pocketcli"
-
-# Load helpers
 . "${POCKETCLI_DIR}/lib/common.sh"
-
-# Ensure pocket is reachable in this session
 export PATH="${POCKETCLI_DIR}:${PATH}"
 
-printf '\n[PocketCli] Starting Viewer environment...\n'
-
 # ---------------------------------------------------------------------------
-# SSH setup
+# SSH config
 # ---------------------------------------------------------------------------
 mkdir -p "${HOME}/.ssh"
 chmod 700 "${HOME}/.ssh"
-
 SSH_CONFIG="${HOME}/.ssh/config"
 if ! grep -qF "ForwardAgent" "${SSH_CONFIG}" 2>/dev/null; then
     cat >> "${SSH_CONFIG}" << 'SSHEOF'
@@ -36,36 +31,64 @@ SSHEOF
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-start tailscaled if installed but not running
+# Tailscale connectivity check
 # ---------------------------------------------------------------------------
-if command -v tailscaled >/dev/null 2>&1; then
-    if ! is_tailscale_daemon_running; then
-        printf '[PocketCli] tailscaled not running — starting...\n'
-        sh "${POCKETCLI_DIR}/scripts/tailscale_daemon.sh" start \
-            && printf '[PocketCli] tailscaled started.\n' \
-            || printf '[PocketCli] Could not start tailscaled. Run: pocket tailscale-start\n'
+echo ""
+
+if is_ish; then
+    # iSH: daemon will never work — check iOS VPN instead
+    TS_IP=$(get_tailscale_ip)
+    if [ -n "${TS_IP}" ]; then
+        ok "Tailscale active via iOS app (IP: ${TS_IP})"
+
+        # Probe saved hosts to confirm routing works
+        HOSTS_FILE="${POCKETCLI_DIR}/hosts"
+        if [ -f "${HOSTS_FILE}" ]; then
+            FIRST=$(grep -v '^\s*#' "${HOSTS_FILE}" | grep -v '^\s*$' | head -1)
+            if [ -n "${FIRST}" ]; then
+                printf "  Testing route to %s... " "${FIRST}"
+                if ping_host "${FIRST}" 3; then
+                    printf "${C_GREEN}OK${C_NC}\n"
+                else
+                    printf "${C_YELLOW}no response${C_NC} (may still be reachable via SSH)\n"
+                fi
+            fi
+        fi
     else
-        printf '[PocketCli] tailscaled already running.\n'
+        warn "Not on Tailscale network."
+        echo ""
+        echo "  To connect:"
+        echo "  1. Open the Tailscale app on your iPad"
+        echo "  2. Enable the VPN"
+        echo "  3. Return here and press Enter to continue"
+        printf "\n  Press Enter when connected... "
+        read -r _D < /dev/tty
+
+        TS_IP=$(get_tailscale_ip)
+        if [ -n "${TS_IP}" ]; then
+            ok "Connected! IP: ${TS_IP}"
+        else
+            warn "Still not connected — continuing anyway (SSH may still work on LAN)"
+        fi
     fi
 else
-    printf '[PocketCli] Tailscale not installed. Run: pocket tailscale-setup\n'
-fi
-
-# ---------------------------------------------------------------------------
-# Show quick status
-# ---------------------------------------------------------------------------
-if command -v tailscale >/dev/null 2>&1 && is_tailscale_daemon_running; then
-    TS_IP=$(tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.' || true)
-    if [ -n "${TS_IP}" ]; then
-        printf '[PocketCli] Tailscale IP: %s\n' "${TS_IP}"
+    # Non-iSH: start daemon if needed
+    if command -v tailscaled >/dev/null 2>&1; then
+        if ! is_tailscale_daemon_running; then
+            info "Starting tailscaled..."
+            sh "${POCKETCLI_DIR}/scripts/tailscale_daemon.sh" start \
+                || warn "Could not start tailscaled. Run: pocket tailscale-setup"
+        fi
+        TS_IP=$(get_tailscale_ip)
+        if [ -n "${TS_IP}" ]; then
+            ok "Tailscale IP: ${TS_IP}"
+        else
+            warn "Tailscale not authenticated. Run: pocket tailscale-setup"
+        fi
     else
-        printf '[PocketCli] Tailscale not authenticated. Run: pocket tailscale-setup\n'
+        warn "Tailscale not installed. Run: pocket tailscale-setup"
     fi
 fi
 
 echo ""
-
-# ---------------------------------------------------------------------------
-# Launch menu
-# ---------------------------------------------------------------------------
 exec sh "${POCKETCLI_DIR}/scripts/pocketcli_menu.sh"
