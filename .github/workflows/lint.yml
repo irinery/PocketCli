@@ -28,7 +28,7 @@ jobs:
             | sort \
             | xargs shellcheck \
                 --severity=warning \
-                --shell=sh \
+                --shell=bash \
                 --exclude=SC1091   # allow 'source' of files not present at lint time
           echo "✔ ShellCheck passed."
 

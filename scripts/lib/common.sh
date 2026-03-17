@@ -1,26 +1,31 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # =============================================================================
 # PocketCli — scripts/lib/common.sh
 # Shared helpers. Source with: . "$POCKETCLI_DIR/scripts/lib/common.sh"
-# POSIX sh only. No bash. No pipefail (not POSIX).
+# alterado para BASH
 # =============================================================================
 
 # ---------------------------------------------------------------------------
 # Colours — degrade gracefully if terminal doesn't support them
 # ---------------------------------------------------------------------------
-if [ -t 1 ]; then
-    C_BOLD='\033[1m'
-    C_CYAN='\033[0;36m'
-    C_GREEN='\033[0;32m'
-    C_YELLOW='\033[1;33m'
-    C_RED='\033[0;31m'
-    C_DIM='\033[2m'
-    C_NC='\033[0m'
+if [[ -t 1 ]]; then
+    C_BOLD=$'\033[1m'
+    C_CYAN=$'\033[0;36m'
+    C_GREEN=$'\033[0;32m'
+    C_YELLOW=$'\033[1;33m'
+    C_RED=$'\033[0;31m'
+    C_DIM=$'\033[2m'
+    C_NC=$'\033[0m'
 else
-    # Colour variables may be unused in this file but used by scripts sourcing it
+    # Colour variables may be unused here but used by sourced scripts
     # shellcheck disable=SC2034
-    C_BOLD=''; C_CYAN=''; C_GREEN=''; C_YELLOW=''
-    C_RED='';  C_DIM='';  C_NC=''
+    C_BOLD=''
+    C_CYAN=''
+    C_GREEN=''
+    C_YELLOW=''
+    C_RED=''
+    C_DIM=''
+    C_NC=''
 fi
 
 info()    { printf "${C_CYAN}[*]${C_NC} %s\n"   "$*"; }
