@@ -31,14 +31,13 @@ _daemon_start() {
     command -v tailscaled >/dev/null 2>&1 || die "tailscaled not installed. Run: pocket tailscale-setup"
 
     info "Starting tailscaled (userspace networking)..."
-
-    # Rotate log
     : > "${LOG_FILE}"
 
+    # Single-dash flags work on both old (Alpine 3.14/iSH) and new tailscaled.
+    # Minimal flags only — no --outbound-http-proxy-listen (not in old versions).
     tailscaled \
-        --tun=userspace-networking \
-        --socks5-server=localhost:1055 \
-        --outbound-http-proxy-listen=localhost:1055 \
+        -tun=userspace-networking \
+        -socks5-server=localhost:1055 \
         >> "${LOG_FILE}" 2>&1 &
 
     DAEMON_PID=$!
