@@ -27,12 +27,11 @@ prompt_choice() {
     VAR_NAME="$1"
     PROMPT="$2"
     if [ -n "${3:-}" ]; then
-        VALUE="$3"
+        eval "$VAR_NAME=\$3"
     else
         printf '%s' "$PROMPT"
-        read -r VALUE < /dev/tty
+        read -r "$VAR_NAME" < /dev/tty
     fi
-    eval "$VAR_NAME=\$VALUE"
 }
 
 backup_file() {
