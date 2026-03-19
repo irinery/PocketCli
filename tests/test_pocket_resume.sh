@@ -34,3 +34,33 @@ grep -F 'resume' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1 && ex
 grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1
 printf 'PASS pocket resume creates tmux session and keeps last command state
 '
+
+run_default_menu_with_dev_tty_test() {
+    WORKDIR=$(mktemp -d)
+    HOME_DIR="$WORKDIR/home"
+    MOCKBIN="$WORKDIR/mockbin"
+    LOG_FILE="$WORKDIR/log"
+    mkdir -p "$HOME_DIR/.pocketcli/scripts/lib" "$HOME_DIR/.pocketcli/state" "$MOCKBIN"
+    cp "$REPO_ROOT/pocket" "$HOME_DIR/.pocketcli/pocket"
+    cp "$REPO_ROOT/scripts/lib/common.sh" "$HOME_DIR/.pocketcli/scripts/lib/common.sh"
+    chmod +x "$HOME_DIR/.pocketcli/pocket"
+
+    cat > "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh" <<'EOS'
+#!/usr/bin/env sh
+set -eu
+printf 'menu-invoked
+' >> "$POCKETCLI_TEST_LOG"
+exit 0
+EOS
+    chmod +x "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh"
+
+    script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" /dev/null </dev/null >/dev/null 2>&1 || true
+
+    grep -F 'menu-invoked' "$LOG_FILE" >/dev/null 2>&1
+    grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1
+    grep -F 'help' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1 && exit 1 || true
+    printf 'PASS pocket defaults to menu when stdin is not a TTY but /dev/tty is available
+'
+}
+
+run_default_menu_with_dev_tty_test

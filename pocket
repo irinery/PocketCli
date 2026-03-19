@@ -195,9 +195,13 @@ _cmd_version() {
 # Dispatch
 # =============================================================================
 
+_has_interactive_tty() {
+    [ -r /dev/tty ] || [ -c /dev/tty ]
+}
+
 CMD="${1:-}"
 if [ -z "${CMD}" ]; then
-    if [ -t 0 ] && [ -t 1 ]; then
+    if _has_interactive_tty; then
         if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
             CMD="resume"
         else

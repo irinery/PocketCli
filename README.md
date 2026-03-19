@@ -89,7 +89,7 @@ PocketCli/
 │   ├── install_deps.sh       ← instala pacotes por OS/modo
 │   ├── install_tailscale.sh  ← instala e faz login no Tailscale
 │   ├── start_agent.sh        ← inicia tmux com htop + lazygit
-│   ├── start_viewer.sh       ← prepara SSH, abre menu
+│   ├── start_viewer.sh       ← prepara SSH; `pocket` sem args cai no menu em terminais interativos
 │   └── pocketcli_menu.sh     ← dashboard TUI leve com navegação Vim e telemetria útil
 │
 └── tools/
@@ -138,7 +138,7 @@ Prompt minimalista com informações de git e duração de comandos.
 | `Ctrl+S + z` | Zoom no pane atual |
 | `Ctrl+S + R` | Recarregar config |
 
-> No iPad/iSH, use `pocket` (or `pocket resume`) to always reopen the named tmux session. If iSH is killed by low memory, PocketCli recreates the last saved command automatically on the next launch.
+> No iPad/iSH, `pocket` abre o menu principal por padrão sempre que houver um terminal interativo acessível via `/dev/tty`; use `pocket resume` para reanexar a sessão tmux nomeada quando quiser retomar o workspace. If iSH is killed by low memory, PocketCli recreates the last saved command automatically on the next launch.
 
 ### Nerd Font (opcional)
 Para exibir os ícones corretamente no emulador de terminal:
@@ -155,10 +155,10 @@ Para exibir os ícones corretamente no emulador de terminal:
 # Conectar a um servidor
 pocket-menu
 
-# Abrir/reatar a sessão persistente do PocketCli
+# Abrir o menu principal padrão do PocketCli
 pocket
 
-# Forçar a recriação/anexação da sessão
+# Forçar a recriação/anexação da sessão tmux persistente
 pocket resume
 
 # Ver máquinas disponíveis
