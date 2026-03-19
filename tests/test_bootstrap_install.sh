@@ -123,12 +123,10 @@ EOS
     fi
 }
 
-run_install_test() {
-    WORKDIR=$(mktemp -d)
-    HOME_DIR="$WORKDIR/home"
+prepare_install_fixture() {
+    HOME_DIR="$1"
+    MOCKBIN="$2"
     INSTALL_DIR="$HOME_DIR/.pocketcli"
-    MOCKBIN="$WORKDIR/mockbin"
-    LOG_FILE="$WORKDIR/install.log"
 
     mkdir -p "$HOME_DIR" "$INSTALL_DIR/scripts/lib" "$INSTALL_DIR/config" "$MOCKBIN"
     cp "$REPO_ROOT/install.sh" "$INSTALL_DIR/install.sh"
@@ -198,6 +196,16 @@ EOS
 exit 0
 EOS
     chmod +x "$MOCKBIN/find"
+}
+
+run_install_test() {
+    WORKDIR=$(mktemp -d)
+    HOME_DIR="$WORKDIR/home"
+    INSTALL_DIR="$HOME_DIR/.pocketcli"
+    MOCKBIN="$WORKDIR/mockbin"
+    LOG_FILE="$WORKDIR/install.log"
+
+    prepare_install_fixture "$HOME_DIR" "$MOCKBIN"
 
     mkdir -p "$HOME_DIR/.config/tmux"
     env \
@@ -212,8 +220,52 @@ EOS
     assert_file_contains "$LOG_FILE" "start_viewer PATH=$INSTALL_DIR:" "install.sh inicia o viewer com PATH já ajustado"
     assert_file_contains "$HOME_DIR/.profile" "export POCKETCLI_DIR=\"$INSTALL_DIR\"" "install.sh injeta POCKETCLI_DIR no perfil"
     assert_file_contains "$HOME_DIR/.profile" "export PATH=\"$INSTALL_DIR:\$PATH\"" "install.sh injeta PATH no perfil"
+    assert_file_contains "$HOME_DIR/.bashrc" "export POCKETCLI_DIR=\"$INSTALL_DIR\"" "install.sh injeta POCKETCLI_DIR também no bashrc"
     assert_equals "set -g mouse on" "$(cat "$HOME_DIR/.config/tmux/tmux.conf")" "install.sh copia a configuração do tmux"
     assert_equals "add_newline = false" "$(cat "$HOME_DIR/.config/starship.toml")" "install.sh copia a configuração do starship"
+}
+
+run_agent_config_modes_test() {
+    WORKDIR=$(mktemp -d)
+    HOME_DIR="$WORKDIR/home"
+    INSTALL_DIR="$HOME_DIR/.pocketcli"
+    MOCKBIN="$WORKDIR/mockbin"
+    LOG_FILE="$WORKDIR/install.log"
+
+    prepare_install_fixture "$HOME_DIR" "$MOCKBIN"
+    mkdir -p "$HOME_DIR/.config/tmux" "$HOME_DIR/.config"
+    cat > "$HOME_DIR/.config/tmux/tmux.conf" <<'EOS'
+set -g status off
+EOS
+    cat > "$HOME_DIR/.config/starship.toml" <<'EOS'
+format = "$character"
+EOS
+
+    env \
+        HOME="$HOME_DIR" \
+        PATH="$MOCKBIN:/usr/bin:/bin" \
+        POCKETCLI_MODE_CHOICE="2" \
+        POCKETCLI_AGENT_CONFIG_CHOICE="3" \
+        POCKETCLI_TEST_LOG="$LOG_FILE" \
+        sh "$INSTALL_DIR/install.sh" >/tmp/pocketcli-agent-install.out 2>/tmp/pocketcli-agent-install.err
+
+    assert_file_contains "$LOG_FILE" "install_deps:debian:agent" "install.sh instala dependências para o modo agent"
+    assert_file_contains "$LOG_FILE" "start_agent PATH=$INSTALL_DIR:" "install.sh inicia o agent com PATH já ajustado"
+    assert_file_contains "/tmp/pocketcli-agent-install.out" "Comparing host config with PocketCli project config" "install.sh mostra a comparação entre host e projeto antes da escolha"
+    assert_file_contains "/tmp/pocketcli-agent-install.out" "status: different" "install.sh destaca quando encontra diferenças de config"
+    assert_equals "set -g status off" "$(cat "$INSTALL_DIR/managed/host/tmux.conf")" "install.sh guarda o tmux original do host"
+    assert_equals "set -g mouse on" "$(cat "$INSTALL_DIR/managed/project/tmux.conf")" "install.sh guarda o tmux do projeto"
+    assert_file_contains "$HOME_DIR/.profile" "POCKETCLI_CONFIG_MODE=\"project\"" "modo de teste ativa a config do projeto por padrão"
+
+    env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" sh "$INSTALL_DIR/scripts/switch_config.sh" host >/tmp/pocketcli-switch-host.out 2>/tmp/pocketcli-switch-host.err
+    assert_equals "set -g status off" "$(cat "$HOME_DIR/.config/tmux/tmux.conf")" "switch_config.sh restaura o tmux do host"
+    assert_equals 'format = "$character"' "$(cat "$HOME_DIR/.config/starship.toml")" "switch_config.sh restaura o starship do host"
+    assert_file_contains "$HOME_DIR/.profile" "POCKETCLI_CONFIG_MODE=\"host\"" "switch_config.sh atualiza o modo ativo para host"
+
+    env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" sh "$INSTALL_DIR/scripts/switch_config.sh" project >/tmp/pocketcli-switch-project.out 2>/tmp/pocketcli-switch-project.err
+    assert_equals "set -g mouse on" "$(cat "$HOME_DIR/.config/tmux/tmux.conf")" "switch_config.sh aplica novamente o tmux do projeto"
+    assert_equals "add_newline = false" "$(cat "$HOME_DIR/.config/starship.toml")" "switch_config.sh aplica novamente o starship do projeto"
+    assert_file_contains "$HOME_DIR/.profile" "POCKETCLI_CONFIG_MODE=\"project\"" "switch_config.sh atualiza o modo ativo para project"
 }
 
 printf '== Testes bootstrap ==\n'
@@ -221,6 +273,7 @@ run_bootstrap_test clone
 run_bootstrap_test update
 printf '\n== Testes install ==\n'
 run_install_test
+run_agent_config_modes_test
 
 printf '\nResumo: %s passou, %s falhou.\n' "$PASS_COUNT" "$FAIL_COUNT"
 [ "$FAIL_COUNT" -eq 0 ]
