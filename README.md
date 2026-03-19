@@ -138,6 +138,8 @@ Prompt minimalista com informações de git e duração de comandos.
 | `Ctrl+S + z` | Zoom no pane atual |
 | `Ctrl+S + R` | Recarregar config |
 
+> No iPad/iSH, use `pocket` (or `pocket resume`) to always reopen the named tmux session. If iSH is killed by low memory, PocketCli recreates the last saved command automatically on the next launch.
+
 ### Nerd Font (opcional)
 Para exibir os ícones corretamente no emulador de terminal:
 
@@ -153,8 +155,11 @@ Para exibir os ícones corretamente no emulador de terminal:
 # Conectar a um servidor
 pocket-menu
 
-# Ou simplesmente abrir o menu principal
+# Abrir/reatar a sessão persistente do PocketCli
 pocket
+
+# Forçar a recriação/anexação da sessão
+pocket resume
 
 # Ver máquinas disponíveis
 pocket-radar
