@@ -116,7 +116,16 @@ get_tailscale_ip() {
 # ---------------------------------------------------------------------------
 ping_host() {
     HOST="$1"; WAIT="${2:-3}"
-    with_timeout "${WAIT}" ping -c 1 -W "${WAIT}" "${HOST}" >/dev/null 2>&1
+    if with_timeout "${WAIT}" ping -c 1 -W "${WAIT}" "${HOST}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if with_timeout "${WAIT}" ping -c 1 -w "${WAIT}" "${HOST}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if with_timeout "${WAIT}" ping -c 1 "${HOST}" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
 }
 
 # ---------------------------------------------------------------------------
