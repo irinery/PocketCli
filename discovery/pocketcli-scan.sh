@@ -10,9 +10,6 @@ set -eu
 POCKETCLI_DIR="${HOME}/.pocketcli"
 . "${POCKETCLI_DIR}/lib/common.sh"
 
-require tailscale
-require jq
-
 _scan_host() {
     HOST="$1"
     HOST=$(safe_host "${HOST}")
@@ -35,7 +32,7 @@ _scan_host() {
         printf "    ${C_DIM}docker running — no containers${C_NC}\n"
     else
         printf '%s\n' "${CONTAINERS}" | while IFS= read -r c; do
-            printf "    ${C_GREEN}▸${C_NC} %s\n" "$(printf '%s' "${c}" | tr -cd 'a-zA-Z0-9._-/')"
+            printf "    ${C_GREEN}▸${C_NC} %s\n" "$(printf '%s' "${c}" | tr -cd 'a-zA-Z0-9./_-')"
         done
     fi
 }
@@ -47,14 +44,16 @@ echo ""
 printf "  ${C_BOLD}PocketCli — Infrastructure Scan${C_NC}\n"
 echo ""
 
-HOSTS=$(tailscale status --json 2>/dev/null \
-    | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
-    | sort) || { warn "Cannot reach Tailscale daemon."; exit 1; }
+HOSTS=$(list_known_hosts)
 
 [ -z "${HOSTS}" ] && { warn "No online Tailscale machines found."; exit 0; }
 
 COUNT=$(printf '%s\n' "${HOSTS}" | wc -l | tr -d ' ')
-info "Scanning ${COUNT} machine(s)..."
+if [ -n "$(list_online_tailscale_hosts)" ]; then
+    info "Scanning ${COUNT} machine(s) from Tailscale discovery..."
+else
+    warn "Tailscale discovery unavailable — scanning ${COUNT} saved host(s)."
+fi
 
 printf '%s\n' "${HOSTS}" | while IFS= read -r host; do
     [ -z "${host}" ] && continue

@@ -110,12 +110,75 @@ get_tailscale_ip() {
     fi
 }
 
+_saved_hosts_file() {
+    printf '%s/.pocketcli/hosts' "${HOME}"
+}
+
+list_saved_hosts() {
+    HOSTS_FILE=$(_saved_hosts_file)
+    if [ ! -f "${HOSTS_FILE}" ]; then
+        return 0
+    fi
+
+    grep -v '^[[:space:]]*#' "${HOSTS_FILE}" 2>/dev/null \
+        | grep -v '^[[:space:]]*$' \
+        | while IFS= read -r h; do
+            h=$(safe_host "${h}")
+            [ -n "${h}" ] && printf '%s\n' "${h}"
+        done
+}
+
+list_online_tailscale_hosts() {
+    if ! command -v tailscale >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+
+    TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+    [ -z "${TS_STATUS}" ] && return 0
+
+    printf '%s\n' "${TS_STATUS}" \
+        | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' 2>/dev/null \
+        | sort \
+        | while IFS= read -r h; do
+            h=$(safe_host "${h}")
+            [ -n "${h}" ] && printf '%s\n' "${h}"
+        done
+}
+
+list_known_hosts() {
+    HOSTS=$(list_online_tailscale_hosts)
+    if [ -n "${HOSTS}" ]; then
+        printf '%s\n' "${HOSTS}"
+        return 0
+    fi
+
+    list_saved_hosts
+}
+
+resolve_tailscale_ip_for_host() {
+    HOST=$(safe_host "${1:-}")
+    [ -z "${HOST}" ] && return 0
+    if ! command -v tailscale >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+        return 0
+    fi
+
+    TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+    [ -z "${TS_STATUS}" ] && return 0
+
+    printf '%s\n' "${TS_STATUS}" \
+        | jq -r --arg host "${HOST}" '.Peer | to_entries[] | .value | select(.HostName == $host) | .TailscaleIPs[0] // empty' 2>/dev/null \
+        | head -1 \
+        | tr -cd '0-9.:'
+}
+
 # ---------------------------------------------------------------------------
 # ping_host <host> [timeout_sec]
 # Quick reachability check — no tailscale CLI needed.
 # ---------------------------------------------------------------------------
 ping_host() {
     HOST="$1"; WAIT="${2:-3}"
+    IP=$(resolve_tailscale_ip_for_host "${HOST}" || true)
+
     if with_timeout "${WAIT}" ping -c 1 -W "${WAIT}" "${HOST}" >/dev/null 2>&1; then
         return 0
     fi
@@ -124,6 +187,23 @@ ping_host() {
     fi
     if with_timeout "${WAIT}" ping -c 1 "${HOST}" >/dev/null 2>&1; then
         return 0
+    fi
+    if [ -n "${IP}" ] && with_timeout "${WAIT}" ping -c 1 -W "${WAIT}" "${IP}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "${IP}" ] && with_timeout "${WAIT}" ping -c 1 -w "${WAIT}" "${IP}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "${IP}" ] && with_timeout "${WAIT}" ping -c 1 "${IP}" >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v ssh >/dev/null 2>&1; then
+        if with_timeout "${WAIT}" ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout="${WAIT}" "${HOST}" true >/dev/null 2>&1; then
+            return 0
+        fi
+        if [ -n "${IP}" ] && with_timeout "${WAIT}" ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout="${WAIT}" "${IP}" true >/dev/null 2>&1; then
+            return 0
+        fi
     fi
     return 1
 }
