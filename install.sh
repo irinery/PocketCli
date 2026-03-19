@@ -24,15 +24,14 @@ die()     { printf '[PocketCli] ERROR: %s\n' "$*" >&2; exit 1; }
 [ -z "${HOME:-}" ] && die "\$HOME is not set."
 
 prompt_choice() {
-    VAR_NAME="$1"
-    PROMPT="$2"
-    if [ -n "${3:-}" ]; then
-        VALUE="$3"
+    PROMPT="$1"
+    if [ -n "${2:-}" ]; then
+        CHOICE_VALUE="$2"
     else
         printf '%s' "$PROMPT"
-        read -r VALUE < /dev/tty
+        read -r CHOICE_VALUE < /dev/tty
     fi
-    eval "$VAR_NAME=\$VALUE"
+    printf '%s' "$CHOICE_VALUE"
 }
 
 backup_file() {
@@ -214,7 +213,7 @@ echo ""
 echo "    1) Viewer  ->  iPad or lightweight terminal (SSH client only)"
 echo "    2) Agent   ->  server or remote machine (full environment)"
 echo ""
-prompt_choice MODE_CHOICE "  Choice [1/2]: " "${POCKETCLI_MODE_CHOICE:-}"
+MODE_CHOICE=$(prompt_choice "  Choice [1/2]: " "${POCKETCLI_MODE_CHOICE:-}")
 
 case "${MODE_CHOICE}" in
     1) MODE="viewer" ;;
@@ -233,7 +232,7 @@ if [ "${MODE}" = "agent" ]; then
     echo "    2) Use project config      -> apply PocketCli config from this repository"
     echo "    3) Test original mode      -> keep both configs and enable automated switching"
     echo ""
-    prompt_choice CONFIG_CHOICE "  Choice [1/2/3]: " "${POCKETCLI_AGENT_CONFIG_CHOICE:-}"
+    CONFIG_CHOICE=$(prompt_choice "  Choice [1/2/3]: " "${POCKETCLI_AGENT_CONFIG_CHOICE:-}")
     case "${CONFIG_CHOICE}" in
         1) CONFIG_MODE="host" ;;
         2) CONFIG_MODE="project" ;;
