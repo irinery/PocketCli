@@ -43,8 +43,8 @@ _menu_line() {
 }
 
 _screen_clear() {
-    if command -v clear >/dev/null 2>&1; then
-        clear
+    if command -v clear >/dev/null 2>&1 && clear >/dev/null 2>&1; then
+        printf ''
     else
         printf '\033[2J\033[H'
     fi
@@ -179,13 +179,16 @@ _collect_ts_ip() {
 
 _list_hosts() {
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        tailscale status --json 2>/dev/null \
-            | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
-            | sort \
-            | while IFS= read -r h; do
-                printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-'; printf '\n'
-              done
-        return
+        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+        if [ -n "${TS_STATUS}" ]; then
+            printf '%s\n' "${TS_STATUS}" \
+                | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' 2>/dev/null \
+                | sort \
+                | while IFS= read -r h; do
+                    printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-'; printf '\n'
+                  done
+            return
+        fi
     fi
 
     if [ -f "${HOSTS_FILE}" ]; then
@@ -201,19 +204,26 @@ _list_hosts() {
 
 _collect_peer_count() {
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        tailscale status --json 2>/dev/null | jq -r '.Peer | length' 2>/dev/null || printf '0'
-    else
-        printf '0'
+        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+        if [ -n "${TS_STATUS}" ]; then
+            printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || printf '0'
+            return
+        fi
     fi
+    COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
+    printf '%s' "${COUNT}"
 }
 
 _collect_online_count() {
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        tailscale status --json 2>/dev/null | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || printf '0'
-    else
-        COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
-        printf '%s' "${COUNT}"
+        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+        if [ -n "${TS_STATUS}" ]; then
+            printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || printf '0'
+            return
+        fi
     fi
+    COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
+    printf '%s' "${COUNT}"
 }
 
 _collect_focus_host() {
