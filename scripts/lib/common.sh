@@ -130,3 +130,37 @@ wait_for_tailscale() {
     done
     printf '\n'; return 1
 }
+
+# ---------------------------------------------------------------------------
+# PocketCli session persistence helpers
+# Stores the last interactive invocation so `pocket` can recreate it after
+# iSH/iPad resets or low-memory evictions.
+# ---------------------------------------------------------------------------
+pocket_state_dir() {
+    printf '%s/.pocketcli/state' "${HOME}"
+}
+
+pocket_last_command_file() {
+    printf '%s/last-command' "$(pocket_state_dir)"
+}
+
+pocket_tmux_session() {
+    printf '%s' "${POCKETCLI_TMUX_SESSION:-pocketcli}"
+}
+
+pocket_save_command() {
+    mkdir -p "$(pocket_state_dir)"
+    : > "$(pocket_last_command_file)"
+    for _arg in "$@"; do
+        printf '%s\n' "${_arg}" >> "$(pocket_last_command_file)"
+    done
+}
+
+pocket_load_command() {
+    FILE=$(pocket_last_command_file)
+    if [ ! -f "${FILE}" ] || [ ! -s "${FILE}" ]; then
+        printf 'menu\n'
+        return 0
+    fi
+    cat "${FILE}"
+}

@@ -29,7 +29,8 @@ _cmd_help() {
     printf "  ${C_CYAN}fleet${C_NC}    <sub>  [args]   Commands across machines\n"
     printf "  ${C_CYAN}status${C_NC}                   Local node status\n"
     printf "  ${C_CYAN}radar${C_NC}                    Radar dashboard\n"
-    printf "  ${C_CYAN}menu${C_NC}                     Interactive menu (default)\n"
+    printf "  ${C_CYAN}menu${C_NC}                     Interactive menu\n"
+    printf "  ${C_CYAN}resume${C_NC}                   Restore/attach the PocketCli tmux session\n"
     echo ""
     printf "  ${C_CYAN}tailscale-setup${C_NC}          Install + start + auth (shows QR)\n"
     printf "  ${C_CYAN}tailscale-start${C_NC}          Start tailscaled daemon\n"
@@ -128,6 +129,44 @@ _cmd_radar()  { exec sh "${POCKETCLI_DIR}/radar.sh"; }
 _cmd_menu()   { exec sh "${SCRIPTS}/pocketcli_menu.sh"; }
 _cmd_doctor() { exec sh "${POCKETCLI_DIR}/tests/test_ish.sh"; }
 
+_persist_command_if_needed() {
+    case "${1:-}" in
+        ''|help|-h|--help|version|-v|--version|resume|__restore) return 0 ;;
+    esac
+    pocket_save_command "$@"
+}
+
+_cmd_resume() {
+    require tmux
+    SESSION=$(pocket_tmux_session)
+
+    if tmux has-session -t "${SESSION}" 2>/dev/null; then
+        info "Reattaching tmux session ${SESSION}..."
+    else
+        info "Creating tmux session ${SESSION} from the last PocketCli command..."
+        if [ ! -s "$(pocket_last_command_file)" ]; then
+            pocket_save_command menu
+        fi
+        tmux new-session -d -s "${SESSION}" "POCKETCLI_RESTORE=1 '${POCKETCLI_DIR}/pocket' __restore"
+        tmux source-file "${HOME}/.config/tmux/tmux.conf" 2>/dev/null || true
+    fi
+
+    exec tmux attach-session -t "${SESSION}"
+}
+
+_cmd_restore() {
+    set --
+    FILE=$(pocket_last_command_file)
+    if [ -f "${FILE}" ] && [ -s "${FILE}" ]; then
+        while IFS= read -r _arg || [ -n "${_arg}" ]; do
+            set -- "$@" "${_arg}"
+        done < "${FILE}"
+    fi
+
+    [ $# -gt 0 ] || set -- menu
+    exec sh "${POCKETCLI_DIR}/pocket" "$@"
+}
+
 _cmd_fleet() {
     exec sh "${SCRIPTS}/fleet.sh" "$@"
 }
@@ -159,7 +198,11 @@ _cmd_version() {
 CMD="${1:-}"
 if [ -z "${CMD}" ]; then
     if [ -t 0 ] && [ -t 1 ]; then
-        CMD="menu"
+        if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+            CMD="resume"
+        else
+            CMD="menu"
+        fi
     else
         CMD="help"
     fi
@@ -167,6 +210,8 @@ fi
 if [ $# -gt 0 ]; then
     shift
 fi
+
+_persist_command_if_needed "${CMD}" "$@"
 
 case "${CMD}" in
     connect)                    _cmd_connect "$@" ;;
@@ -179,6 +224,8 @@ case "${CMD}" in
     radar)                      _cmd_radar ;;
     menu)                       _cmd_menu ;;
     doctor)                     _cmd_doctor ;;
+    resume)                     _cmd_resume ;;
+    __restore)                  _cmd_restore ;;
     tailscale-setup)            _cmd_ts setup ;;
     tailscale-start)            _cmd_ts start ;;
     tailscale-restart)          _cmd_ts restart ;;
