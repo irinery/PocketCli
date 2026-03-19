@@ -1,11 +1,17 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/pocket-status.sh
 # Shows the local node's status in a clean TUI panel.
 # Safe: uses jq for JSON, no eval, all variables quoted.
 # =============================================================================
 
-set -euo pipefail
+set -eu
+
+LOG_FILE="${POCKETCLI_DEBUG_LOG:-/tmp/pocketcli-debug.log}"
+log_debug() {
+    TS=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf 'unknown-time')
+    printf '%s [pocket-status] %s\n' "${TS}" "$*" >> "${LOG_FILE}" 2>/dev/null || true
+}
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -23,6 +29,7 @@ _row() { printf "  ${CYAN}%-18s${NC} %s\n" "${1}" "${2}"; }
 
 # Hostname — strip everything except safe chars
 HOST=$(hostname | tr -cd '[:alnum:]-.')
+log_debug "collecting status for host=${HOST}"
 
 # OS
 if [ -f /etc/os-release ]; then
@@ -45,11 +52,13 @@ CPU_LOAD=$(printf '%s' "${CPU_LOAD}" | tr -cd '0-9.')
 
 # Memory (Linux only; gracefully skipped on macOS)
 if command -v free >/dev/null 2>&1; then
-    read -r MEM_USED MEM_TOTAL < <(
-        free -m | awk '/^Mem:/ {printf "%s %s", $3, $2}'
-    )
+    log_debug "collecting memory info via free"
+    MEM_LINE=$(free -m | awk '/^Mem:/ {printf "%s %s", $3, $2}')
+    MEM_USED=$(printf '%s\n' "${MEM_LINE}" | awk '{print $1}')
+    MEM_TOTAL=$(printf '%s\n' "${MEM_LINE}" | awk '{print $2}')
     MEM_INFO="${MEM_USED}MB / ${MEM_TOTAL}MB"
 else
+    log_debug "collecting memory info via vm_stat"
     # macOS: use vm_stat
     PAGES_FREE=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
     PAGES_ACTIVE=$(vm_stat 2>/dev/null | awk '/Pages active/ {gsub(/\./,"",$3); print $3}')
@@ -76,6 +85,7 @@ fi
 
 # Tailscale IP (optional)
 if command -v tailscale >/dev/null 2>&1; then
+    log_debug "collecting tailscale ip"
     TS_IP=$(tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.')
     TS_INFO="${TS_IP:-not connected}"
 else
@@ -87,6 +97,7 @@ POCKET_VER=$(git -C "${HOME}/.pocketcli" describe --tags --always 2>/dev/null ||
 
 # Timestamp
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+log_debug "status summary os=${OS_NAME} uptime=${UPTIME} tailscale=${TS_INFO} containers=${CONTAINERS_INFO}"
 
 # ---------------------------------------------------------------------------
 # Render
