@@ -34,7 +34,12 @@ echo "    2) Agent   ->  server or remote machine (full environment)"
 echo ""
 printf "  Choice [1/2]: "
 # Read from /dev/tty explicitly — required when stdin is a pipe (curl | sh)
-read -r MODE_CHOICE < /dev/tty
+# Tests may provide POCKETCLI_MODE_CHOICE to avoid interactive prompts.
+if [ -n "${POCKETCLI_MODE_CHOICE:-}" ]; then
+    MODE_CHOICE="${POCKETCLI_MODE_CHOICE}"
+else
+    read -r MODE_CHOICE < /dev/tty
+fi
 
 case "${MODE_CHOICE}" in
     1) MODE="viewer" ;;

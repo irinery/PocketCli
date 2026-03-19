@@ -166,6 +166,18 @@ tmux new -s work
 
 ---
 
+## Testes
+
+Para validar o fluxo logo após baixar o repositório, execute:
+
+```bash
+sh tests/test_bootstrap_install.sh
+```
+
+Esse teste usa dados mockados para validar o bootstrap inicial, a atualização do clone existente e a orquestração do `install.sh` sem depender de rede ou instalar pacotes reais.
+
+---
+
 ## Filosofia
 
 - **1 comando** para instalar tudo
