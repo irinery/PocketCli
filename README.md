@@ -65,7 +65,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 
 | Comando | Descrição |
 |---|---|
-| `pocket-menu` | Menu interativo leve com atalhos estilo Vim para conectar em servidores |
+| `pocket-menu` | Control Deck leve com dashboard local, ações SSH e atalhos prontos para iPad/tmux |
 | `pocket-radar` | Lista máquinas online no Tailscale |
 | `pocket-update` | Atualiza o PocketCli via git pull |
 
@@ -81,7 +81,7 @@ PocketCli/
 ├── radar.sh              ← lista máquinas Tailscale
 │
 ├── config/
-│   ├── tmux.conf         ← prefixo Ctrl+S, mouse, vim keys, status minimalista
+│   ├── tmux.conf         ← prefixo Ctrl+S, atalhos de panes/SSH e status denso porém leve
 │   ├── zshrc             ← aliases, starship, fzf
 │   └── starship.toml     ← prompt rápido e bonito
 │
@@ -90,7 +90,7 @@ PocketCli/
 │   ├── install_tailscale.sh  ← instala e faz login no Tailscale
 │   ├── start_agent.sh        ← inicia tmux com htop + lazygit
 │   ├── start_viewer.sh       ← prepara SSH, abre menu
-│   └── pocketcli_menu.sh     ← menu TUI leve com navegação Vim
+│   └── pocketcli_menu.sh     ← dashboard TUI leve com navegação Vim e telemetria útil
 │
 └── tools/
     └── fonts.sh          ← instala JetBrainsMono Nerd Font (opcional)
@@ -132,7 +132,11 @@ Prompt minimalista com informações de git e duração de comandos.
 | `Ctrl+S + \|` | Split horizontal |
 | `Ctrl+S + -` | Split vertical |
 | `Ctrl+S + h/j/k/l` | Navegar entre painéis |
-| `Ctrl+S + r` | Recarregar config |
+| `Ctrl+S + Enter` | Abrir novo pane já pedindo um host SSH |
+| `Ctrl+S + e` | Split horizontal com prompt rápido para SSH |
+| `Ctrl+S + Space` | Alternar layout do tmux |
+| `Ctrl+S + z` | Zoom no pane atual |
+| `Ctrl+S + R` | Recarregar config |
 
 ### Nerd Font (opcional)
 Para exibir os ícones corretamente no emulador de terminal:
@@ -193,7 +197,7 @@ Esse teste usa dados mockados para validar o bootstrap inicial, a atualização 
 
 - **1 comando** para instalar tudo
 - **Leve** — sem Electron, sem Docker, sem dependências pesadas
-- **Keyboard-first** — menu principal com navegação estilo Vim (j/k, gg, G, Enter)
+- **Keyboard-first** — menu principal com navegação estilo Vim, dashboard confiável e atalhos pensados para touch + teclado
 - **Portátil** — mesmo ambiente em qualquer lugar
 - **SSH-first** — funciona confortavelmente via tablet
 
