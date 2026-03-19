@@ -15,8 +15,9 @@ if [ -t 1 ]; then
     C_DIM='\033[2m'
 else
     C_BOLD=''; C_CYAN=''; C_GREEN=''; C_YELLOW=''
+    C_RED=''; C_NC=''
     # shellcheck disable=SC2034
-    C_RED=''; C_DIM=''; C_NC=''
+    C_DIM=''
 fi
 
 info()  { printf "${C_CYAN}[*]${C_NC} %s\n"   "$*"; }
