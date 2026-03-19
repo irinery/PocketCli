@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/fleet.sh
 # Run commands across multiple Tailscale machines in parallel.
@@ -10,7 +10,13 @@
 #   pocket fleet list                 List all reachable machines
 # =============================================================================
 
-set -euo pipefail
+set -eu
+
+LOG_FILE="${POCKETCLI_DEBUG_LOG:-/tmp/pocketcli-debug.log}"
+log_debug() {
+    TS=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf 'unknown-time')
+    printf '%s [fleet] %s\n' "${TS}" "$*" >> "${LOG_FILE}" 2>/dev/null || true
+}
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -36,10 +42,14 @@ _require() { command -v "$1" >/dev/null 2>&1 || _die "$1 is required."; }
 _online_hosts() {
     _require tailscale
     _require jq
+    log_debug "collecting online hosts from tailscale"
     tailscale status --json 2>/dev/null \
         | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
         | sort \
-        | while IFS= read -r h; do printf '%s\n' "${h//[^a-zA-Z0-9._-]/}"; done
+        | while IFS= read -r h; do
+            log_debug "found online host raw=${h}"
+            printf '%s\n' "$(printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-')"
+          done
 }
 
 # ---------------------------------------------------------------------------
@@ -47,9 +57,10 @@ _online_hosts() {
 # ---------------------------------------------------------------------------
 _pick_hosts() {
     _require fzf
-    local all
+    all=""
     all=$(_online_hosts)
     [ -z "${all}" ] && _die "No online machines found on Tailscale."
+    log_debug "opening interactive picker"
     echo "${all}" | fzf \
         --multi \
         --prompt="  Select machines (TAB to multi-select) » " \
@@ -62,23 +73,28 @@ _pick_hosts() {
 # Run a command on a single host, prefixing all output with the hostname
 # ---------------------------------------------------------------------------
 _run_on_host() {
-    local host="${1}"
-    local cmd="${2}"
+    host="${1}"
+    cmd="${2}"
+    tmp_output=""
 
     # Sanitise host one more time at execution boundary
-    host="${host//[^a-zA-Z0-9._-]/}"
+    host=$(printf '%s' "${host}" | tr -cd 'a-zA-Z0-9._-')
     [ -z "${host}" ] && return 1
 
     {
+        tmp_output=$(mktemp)
+        log_debug "running remote command host=${host} cmd=${cmd}"
         ssh -n \
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=10 \
             -o BatchMode=yes \
-            "${host}" -- "${cmd}" 2>&1 \
-            | while IFS= read -r line; do
+            "${host}" -- "${cmd}" >"${tmp_output}" 2>&1
+        exit_code=$?
+        while IFS= read -r line; do
                 printf "${BOLD}[${CYAN}%s${NC}${BOLD}]${NC} %s\n" "${host}" "${line}"
-            done
-        local exit_code="${PIPESTATUS[0]}"
+            done < "${tmp_output}"
+        rm -f "${tmp_output}"
+        log_debug "remote command finished host=${host} exit=${exit_code}"
         if [ "${exit_code}" -eq 0 ]; then
             printf "${GREEN}[✔ %s]${NC}\n" "${host}"
         else
@@ -93,8 +109,8 @@ _run_on_host() {
 _fleet_run() {
     [ $# -lt 1 ] && _die "Usage: pocket fleet run <command> [--pick]"
 
-    local pick=0
-    local cmd=""
+    pick=0
+    cmd=""
 
     # Parse args
     for arg in "$@"; do
@@ -107,17 +123,20 @@ _fleet_run() {
     [ -z "${cmd}" ] && _die "No command specified."
 
     # Get target hosts
-    local hosts
+    hosts=""
     if [ "${pick}" -eq 1 ]; then
+        log_debug "fleet run using interactive selection"
         hosts=$(_pick_hosts) || exit 0
     else
+        log_debug "fleet run using all online hosts"
         hosts=$(_online_hosts)
     fi
 
     [ -z "${hosts}" ] && _die "No hosts to run on."
 
-    local count
+    count=""
     count=$(echo "${hosts}" | wc -l | tr -d ' ')
+    log_debug "fleet run target_count=${count}"
 
     echo ""
     _info "Running on ${count} machine(s): ${BOLD}${cmd}${NC}"
@@ -127,7 +146,9 @@ _fleet_run() {
     while IFS= read -r host; do
         [ -z "${host}" ] && continue
         _run_on_host "${host}" "${cmd}"
-    done <<< "${hosts}"
+    done <<EOF
+${hosts}
+EOF
 
     # Wait for all background jobs
     wait
@@ -140,12 +161,13 @@ _fleet_run() {
 # Subcommand: fleet status
 # ---------------------------------------------------------------------------
 _fleet_status() {
-    local hosts
+    hosts=""
     hosts=$(_online_hosts)
     [ -z "${hosts}" ] && _die "No online machines found."
 
-    local count
+    count=""
     count=$(echo "${hosts}" | wc -l | tr -d ' ')
+    log_debug "fleet status target_count=${count}"
 
     echo ""
     printf "  ${BOLD}╔════════════════════════════════════════╗${NC}\n"
@@ -169,7 +191,9 @@ _fleet_status() {
                 2>&1
             echo ""
         } &
-    done <<< "${hosts}"
+    done <<EOF
+${hosts}
+EOF
 
     wait
 }
