@@ -37,6 +37,12 @@ curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/main/bootstrap.sh
 ```
 1) Viewer  →  iPad ou terminal leve (apenas cliente SSH)
 2) Agent   →  servidor ou máquina remota (ambiente completo)
+
+No modo Agent, o instalador agora oferece três estratégias de configuração:
+- primeiro ele compara a config atual do host com a config do projeto
+- manter a config original do host
+- aplicar a config do projeto
+- testar o modo original, preservando as duas configs com troca automatizada
 ```
 
 ### Viewer
@@ -50,6 +56,8 @@ curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/main/bootstrap.sh
 - Habilita Tailscale SSH
 - Inicia ambiente tmux com `htop` + `lazygit`
 - Permite gerenciamento remoto
+- Mostra um comparativo entre `tmux`, `starship` e integração de shell antes da escolha
+- Pode preservar a config atual do host, aplicar a do projeto ou alternar entre ambas com `~/.pocketcli/scripts/switch_config.sh`
 
 ---
 
