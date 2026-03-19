@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/start_viewer.sh
-# Viewer mode startup. Handles both:
+# Viewer mode startup. Ensures interactive installs land in the main menu by default. Handles both:
 #   - iSH (iPad): iOS Tailscale app provides VPN, no daemon possible
 #   - Normal: starts tailscaled if needed
 # =============================================================================
