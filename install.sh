@@ -26,11 +26,18 @@ die()     { printf '[PocketCli] ERROR: %s\n' "$*" >&2; exit 1; }
 prompt_choice() {
     VAR_NAME="$1"
     PROMPT="$2"
+
+    case "$VAR_NAME" in
+        ''|*[!A-Za-z0-9_]*|[0-9]*)
+            die "Invalid variable name for prompt_choice: $VAR_NAME"
+        ;;
+    esac
+
     if [ -n "${3:-}" ]; then
         eval "$VAR_NAME=\$3"
     else
         printf '%s' "$PROMPT"
-        read -r "$VAR_NAME" < /dev/tty
+        eval "read -r $VAR_NAME < /dev/tty"
     fi
 }
 
