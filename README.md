@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/main/bootstrap.sh
 
 | Comando | Descrição |
 |---|---|
-| `pocket-menu` | Menu interativo (fzf) para conectar em servidores |
+| `pocket-menu` | Menu interativo leve com atalhos estilo Vim para conectar em servidores |
 | `pocket-radar` | Lista máquinas online no Tailscale |
 | `pocket-update` | Atualiza o PocketCli via git pull |
 
@@ -82,7 +82,7 @@ PocketCli/
 │   ├── install_tailscale.sh  ← instala e faz login no Tailscale
 │   ├── start_agent.sh        ← inicia tmux com htop + lazygit
 │   ├── start_viewer.sh       ← prepara SSH, abre menu
-│   └── pocketcli_menu.sh     ← menu TUI com fzf
+│   └── pocketcli_menu.sh     ← menu TUI leve com navegação Vim
 │
 └── tools/
     └── fonts.sh          ← instala JetBrainsMono Nerd Font (opcional)
@@ -141,6 +141,9 @@ Para exibir os ícones corretamente no emulador de terminal:
 # Conectar a um servidor
 pocket-menu
 
+# Ou simplesmente abrir o menu principal
+pocket
+
 # Ver máquinas disponíveis
 pocket-radar
 
@@ -182,6 +185,7 @@ Esse teste usa dados mockados para validar o bootstrap inicial, a atualização 
 
 - **1 comando** para instalar tudo
 - **Leve** — sem Electron, sem Docker, sem dependências pesadas
+- **Keyboard-first** — menu principal com navegação estilo Vim (j/k, gg, G, Enter)
 - **Portátil** — mesmo ambiente em qualquer lugar
 - **SSH-first** — funciona confortavelmente via tablet
 

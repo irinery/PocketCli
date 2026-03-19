@@ -7,7 +7,7 @@
 
 set -eu
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 PASS_COUNT=0
 FAIL_COUNT=0
 

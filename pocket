@@ -29,7 +29,7 @@ _cmd_help() {
     printf "  ${C_CYAN}fleet${C_NC}    <sub>  [args]   Commands across machines\n"
     printf "  ${C_CYAN}status${C_NC}                   Local node status\n"
     printf "  ${C_CYAN}radar${C_NC}                    Radar dashboard\n"
-    printf "  ${C_CYAN}menu${C_NC}                     Interactive menu\n"
+    printf "  ${C_CYAN}menu${C_NC}                     Interactive menu (default)\n"
     echo ""
     printf "  ${C_CYAN}tailscale-setup${C_NC}          Install + start + auth (shows QR)\n"
     printf "  ${C_CYAN}tailscale-start${C_NC}          Start tailscaled daemon\n"
@@ -156,8 +156,17 @@ _cmd_version() {
 # Dispatch
 # =============================================================================
 
-CMD="${1:-help}"
-shift 2>/dev/null || true
+CMD="${1:-}"
+if [ -z "${CMD}" ]; then
+    if [ -t 0 ] && [ -t 1 ]; then
+        CMD="menu"
+    else
+        CMD="help"
+    fi
+fi
+if [ $# -gt 0 ]; then
+    shift
+fi
 
 case "${CMD}" in
     connect)                    _cmd_connect "$@" ;;
