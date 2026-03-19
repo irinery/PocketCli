@@ -12,7 +12,6 @@ POCKETCLI_DIR="${HOME}/.pocketcli"
 
 export PATH="${POCKETCLI_DIR}:${PATH}"
 
-HOSTS_FILE="${POCKETCLI_DIR}/hosts"
 CURRENT_INDEX=1
 MENU_ACTION=""
 LAST_MESSAGE="Use j/k para navegar, Enter para abrir, h/l para panes, q para sair."
@@ -178,28 +177,7 @@ _collect_ts_ip() {
 }
 
 _list_hosts() {
-    if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
-        if [ -n "${TS_STATUS}" ]; then
-            printf '%s\n' "${TS_STATUS}" \
-                | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' 2>/dev/null \
-                | sort \
-                | while IFS= read -r h; do
-                    printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-'; printf '\n'
-                  done
-            return
-        fi
-    fi
-
-    if [ -f "${HOSTS_FILE}" ]; then
-        grep -v '^[[:space:]]*#' "${HOSTS_FILE}" | grep -v '^[[:space:]]*$' \
-            | while IFS= read -r h; do
-                printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-'; printf '\n'
-              done
-        return
-    fi
-
-    return 1
+    list_known_hosts
 }
 
 _collect_peer_count() {
@@ -227,11 +205,11 @@ _collect_online_count() {
 }
 
 _collect_focus_host() {
-    _list_hosts 2>/dev/null | head -1
+    _list_hosts 2>/dev/null | head -1 || true
 }
 
 _probe_focus_host() {
-    HOST="$(_collect_focus_host)"
+    HOST="$(_collect_focus_host || true)"
     [ -z "${HOST}" ] && { printf 'sem host salvo'; return; }
 
     if ping_host "${HOST}" 2; then
@@ -362,6 +340,7 @@ _manage_hosts() {
     while true; do
         _render_header
         printf '  %bHosts favoritos%b\n\n' "${C_BOLD}" "${C_NC}"
+        HOSTS_FILE="${POCKETCLI_DIR}/hosts"
         if [ -f "${HOSTS_FILE}" ]; then
             grep -v '^[[:space:]]*#' "${HOSTS_FILE}" | grep -v '^[[:space:]]*$' \
                 | awk '{printf "    %d)  %s\n", NR, $0}' || echo '    (none)'
