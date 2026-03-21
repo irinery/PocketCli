@@ -114,18 +114,49 @@ _saved_hosts_file() {
     printf '%s/.pocketcli/hosts' "${HOME}"
 }
 
-list_saved_hosts() {
-    HOSTS_FILE=$(_saved_hosts_file)
-    if [ ! -f "${HOSTS_FILE}" ]; then
+_fallback_seeds_file() {
+    printf '%s/.pocketcli/fallback_seeds' "${HOME}"
+}
+
+_read_targets_file() {
+    TARGETS_FILE="$1"
+    if [ ! -f "${TARGETS_FILE}" ]; then
         return 0
     fi
 
-    grep -v '^[[:space:]]*#' "${HOSTS_FILE}" 2>/dev/null \
+    grep -v '^[[:space:]]*#' "${TARGETS_FILE}" 2>/dev/null \
         | grep -v '^[[:space:]]*$' \
         | while IFS= read -r h; do
             h=$(safe_host "${h}")
             [ -n "${h}" ] && printf '%s\n' "${h}"
         done
+}
+
+save_known_target() {
+    TARGET=$(safe_host "${1:-}")
+    TARGET_FILE="${2:-$(_saved_hosts_file)}"
+    [ -z "${TARGET}" ] && return 1
+
+    mkdir -p "$(dirname "${TARGET_FILE}")"
+    if [ -f "${TARGET_FILE}" ] && grep -Fx "${TARGET}" "${TARGET_FILE}" >/dev/null 2>&1; then
+        return 0
+    fi
+    printf '%s\n' "${TARGET}" >> "${TARGET_FILE}"
+}
+
+list_saved_hosts() {
+    _read_targets_file "$(_saved_hosts_file)"
+}
+
+list_fallback_seeds() {
+    _read_targets_file "$(_fallback_seeds_file)"
+}
+
+list_fallback_targets() {
+    {
+        list_saved_hosts
+        list_fallback_seeds
+    } | awk 'NF && !seen[$0]++'
 }
 
 list_online_tailscale_hosts() {
@@ -152,7 +183,11 @@ list_known_hosts() {
         return 0
     fi
 
-    list_saved_hosts
+    list_fallback_targets
+}
+
+is_ip_target() {
+    printf '%s' "${1:-}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 }
 
 resolve_tailscale_ip_for_host() {
