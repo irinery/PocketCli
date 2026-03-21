@@ -52,11 +52,16 @@ COUNT=$(printf '%s\n' "${HOSTS}" | wc -l | tr -d ' ')
 if [ -n "$(list_online_tailscale_hosts)" ]; then
     info "Scanning ${COUNT} machine(s) from Tailscale discovery..."
 else
-    warn "Tailscale discovery unavailable — scanning ${COUNT} saved host(s)."
+    warn "Tailscale discovery unavailable — scanning ${COUNT} saved/seed host(s)."
 fi
 
 printf '%s\n' "${HOSTS}" | while IFS= read -r host; do
     [ -z "${host}" ] && continue
+    if ! ping_host "${host}" 2; then
+        printf "\n  ${C_BOLD}── %s${C_NC}\n" "${host}"
+        printf "    ${C_DIM}offline / no ping${C_NC}\n"
+        continue
+    fi
     _scan_host "${host}" &
 done
 wait
