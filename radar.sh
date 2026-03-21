@@ -39,17 +39,26 @@ if [ -n "${TS_STATUS}" ]; then
             printf "  %-20s %-15s %-10s\n" "${host}" "${ip}" "${status}"
         done
 else
-    log_debug "tailscale status unavailable, falling back to saved hosts"
-    printf "  %-20s %-15s %-10s\n" "(fallback)" "-" "saved hosts"
-    list_saved_hosts | while IFS= read -r host; do
+    log_debug "tailscale status unavailable, falling back to saved hosts and seeds"
+    printf "  %-20s %-15s %-10s\n" "(fallback)" "-" "saved+seed"
+    list_fallback_targets | while IFS= read -r host; do
         [ -z "${host}" ] && continue
         if ping_host "${host}" 2; then
             status="reachable"
         else
             status="saved"
         fi
-        ip=$(resolve_tailscale_ip_for_host "${host}" || true)
-        [ -z "${ip}" ] && ip="n/a"
+        if is_ip_target "${host}"; then
+            ip="${host}"
+            if [ "${status}" = "reachable" ]; then
+                status="seed-ok"
+            else
+                status="seed"
+            fi
+        else
+            ip=$(resolve_tailscale_ip_for_host "${host}" || true)
+            [ -z "${ip}" ] && ip="n/a"
+        fi
         log_debug "rendering fallback host=${host} ip=${ip} status=${status}"
         printf "  %-20s %-15s %-10s\n" "${host}" "${ip}" "${status}"
     done
