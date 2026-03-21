@@ -387,51 +387,86 @@ _manage_hosts() {
     done
 }
 
+_pause_for_user() {
+    MESSAGE=${1:-'  Pressione Enter para voltar...'}
+    printf '%b' "${MESSAGE}"
+    stty sane < /dev/tty 2>/dev/null || true
+    read -r _D < /dev/tty || true
+}
+
+_run_with_pause() {
+    SUCCESS_MESSAGE=${1:-}
+    FAILURE_MESSAGE=${2:-}
+    PAUSE_MESSAGE=${3:-'\n  Pressione Enter para voltar...'}
+    shift 3
+
+    _render_header
+
+    set +e
+    "$@"
+    RC=$?
+    set -e
+
+    if [ "${RC}" -eq 0 ]; then
+        [ -n "${SUCCESS_MESSAGE}" ] && LAST_MESSAGE="${SUCCESS_MESSAGE}"
+    else
+        if [ -n "${FAILURE_MESSAGE}" ]; then
+            LAST_MESSAGE=$(printf '%s' "${FAILURE_MESSAGE}" | sed "s/%s/${RC}/")
+        else
+            LAST_MESSAGE="Ação finalizada com falha (exit ${RC})."
+        fi
+    fi
+
+    _pause_for_user "${PAUSE_MESSAGE}"
+    return 0
+}
+
 _run_action() {
     case "$1" in
         connect)
-            _render_header
             HOST=$(_pick_host) || { LAST_MESSAGE='Conexão cancelada.'; return; }
             [ -z "${HOST}" ] && { LAST_MESSAGE='Nenhum host selecionado.'; return; }
-            printf '\n  Conectando em %s...\n\n' "${HOST}"
-            ssh "${HOST}" || LAST_MESSAGE="Falha ao conectar em ${HOST}."
-            printf '\n  Pressione Enter para voltar...'
-            read -r _D < /dev/tty
-            LAST_MESSAGE="Sessão ${HOST} encerrada. Pronto para a próxima conexão."
+            _run_with_pause \
+                "Sessão ${HOST} encerrada. Pronto para a próxima conexão." \
+                "Falha ao conectar em ${HOST} (exit %s)." \
+                '\n  Pressione Enter para voltar...' \
+                sh -c 'printf "\n  Conectando em %s...\n\n" "$1"; exec ssh "$1"' sh "${HOST}"
         ;;
         radar)
-            _render_header
             if ! command -v tailscale >/dev/null 2>&1; then
+                _render_header
                 printf '\n  Tailscale não instalado. Rode: pocket tailscale-setup\n'
                 LAST_MESSAGE='Radar indisponível sem tailscale.'
+                _pause_for_user '\n  Pressione Enter para voltar...'
             elif ! is_tailscale_daemon_running 2>/dev/null && ! is_ish; then
+                _render_header
                 printf '\n  tailscaled não está rodando. Rode: pocket tailscale-start\n'
                 LAST_MESSAGE='Inicie o daemon para usar o radar.'
+                _pause_for_user '\n  Pressione Enter para voltar...'
             else
-                sh "${HOME}/.pocketcli/radar.sh" 2>/dev/null || printf '\n  Radar indisponível.\n'
-                LAST_MESSAGE='Radar executado.'
+                _run_with_pause \
+                    'Radar executado.' \
+                    'Radar indisponível (exit %s).' \
+                    '\n  Pressione Enter para voltar...' \
+                    sh "${HOME}/.pocketcli/radar.sh"
             fi
-            printf '\n  Pressione Enter para voltar...'
-            read -r _D < /dev/tty
         ;;
         status)
-            _render_header
-            sh "${POCKETCLI_DIR}/scripts/pocket-status.sh"
-            LAST_MESSAGE='Status local renderizado.'
-            printf '  Pressione Enter para voltar...'
-            read -r _D < /dev/tty
+            _run_with_pause \
+                'Status local renderizado.' \
+                'Falha ao renderizar status local (exit %s).' \
+                '  Pressione Enter para voltar...' \
+                sh "${POCKETCLI_DIR}/scripts/pocket-status.sh"
         ;;
         hosts)
             _manage_hosts
         ;;
         update)
-            _render_header
-            printf '\n  Atualizando PocketCli...\n\n'
-            git -C "${HOME}/.pocketcli" pull --ff-only \
-                && LAST_MESSAGE='PocketCli atualizado com sucesso.' \
-                || LAST_MESSAGE='Falha ao atualizar PocketCli.'
-            printf '\n  Pressione Enter para voltar...'
-            read -r _D < /dev/tty
+            _run_with_pause \
+                'PocketCli atualizado com sucesso.' \
+                'Falha ao atualizar PocketCli (exit %s).' \
+                '\n  Pressione Enter para voltar...' \
+                sh -c 'printf "\n  Atualizando PocketCli...\n\n"; exec git -C "$1" pull --ff-only' sh "${HOME}/.pocketcli"
         ;;
         exit)
             _screen_clear
