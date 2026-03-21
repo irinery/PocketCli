@@ -170,6 +170,118 @@ _ts_ping() {
     fi
 }
 
+_install_tailscale() {
+    if command -v tailscale >/dev/null 2>&1; then
+        ok "tailscale already installed."
+        return 0
+    fi
+
+    info "Installing tailscale..."
+    if command -v apk >/dev/null 2>&1; then
+        if apk add --no-cache tailscale >/dev/null 2>&1; then
+            ok "apk add tailscale"
+            apk add --no-cache qrencode 2>/dev/null \
+                && ok "qrencode installed" \
+                || warn "qrencode not available — URL shown as text"
+            return 0
+        fi
+        warn "Could not install tailscale via apk"
+        return 1
+    elif command -v apt-get >/dev/null 2>&1; then
+        if curl -fsSL https://tailscale.com/install.sh | sh; then
+            apt-get install -y --no-install-recommends qrencode 2>/dev/null || true
+            return 0
+        fi
+        warn "Could not install tailscale via install.sh"
+        return 1
+    fi
+
+    warn "Cannot install tailscale automatically on this system."
+    return 1
+}
+
+_prompt_fallback_targets() {
+    if [ -n "${POCKETCLI_TAILSCALE_FALLBACK_TARGETS:-}" ]; then
+        printf '%s
+' "${POCKETCLI_TAILSCALE_FALLBACK_TARGETS}"
+        return 0
+    fi
+
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+        return 1
+    fi
+
+    printf '
+'
+    printf '  ${C_BOLD}Fallback sem app Tailscale${C_NC}
+'
+    printf '  Informe um host/IP conhecido da tailnet (ex.: 100.113.114.52).
+'
+    printf '  Você pode informar vários valores separados por espaço ou vírgula.
+
+'
+    printf '  Hosts/IPs: ' > /dev/tty
+    IFS= read -r INPUT < /dev/tty || return 1
+    printf '%s
+' "${INPUT}"
+}
+
+_save_fallback_targets() {
+    RAW_INPUT=${1:-}
+    [ -z "${RAW_INPUT}" ] && return 1
+
+    TARGETS=$(printf '%s' "${RAW_INPUT}" | tr ',;' '  ')
+    SAVED=0
+    for target in ${TARGETS}; do
+        target=$(safe_host "${target}")
+        [ -z "${target}" ] && continue
+        save_known_target "${target}" || continue
+        if is_ip_target "${target}"; then
+            save_known_target "${target}" "$(_fallback_seeds_file)" || true
+        fi
+        SAVED=$((SAVED + 1))
+    done
+
+    [ "${SAVED}" -gt 0 ]
+}
+
+_setup_install_fallback() {
+    warn "Tailscale installation failed; continuing with connectivity fallback."
+    info "PocketCli can keep scanning known hosts/IPs without tailscale status."
+
+    RAW_TARGETS=$(_prompt_fallback_targets || true)
+    if [ -z "${RAW_TARGETS}" ]; then
+        warn "No fallback host/IP provided. Add one later in ~/.pocketcli/hosts or rerun pocket tailscale-setup."
+        return 1
+    fi
+
+    if ! _save_fallback_targets "${RAW_TARGETS}"; then
+        warn "No valid fallback host/IP was saved."
+        return 1
+    fi
+
+    REACHABLE=1
+    for target in $(printf '%s' "${RAW_TARGETS}" | tr ',;' '  '); do
+        target=$(safe_host "${target}")
+        [ -z "${target}" ] && continue
+        info "Testing reachability for ${target}..."
+        if ping_host "${target}" 3; then
+            ok "${target} is reachable and was saved for radar/scan fallback"
+            REACHABLE=0
+        else
+            warn "${target} did not respond, but it was saved for later fallback scans"
+        fi
+    done
+
+    if [ "${REACHABLE}" -eq 0 ]; then
+        info "Use 'pocket scan' or 'pocket radar' to continue without tailscale status."
+        return 0
+    fi
+
+    warn "No fallback host responded yet. Review the saved IP/host and try again."
+    return 1
+}
+
 # =============================================================================
 # Full setup
 # =============================================================================
@@ -199,21 +311,9 @@ _full_setup() {
     fi
 
     # Normal install path
-    if ! command -v tailscale >/dev/null 2>&1; then
-        info "Installing tailscale..."
-        if command -v apk >/dev/null 2>&1; then
-            run_or_die "apk add tailscale" apk add --no-cache tailscale
-            apk add --no-cache qrencode 2>/dev/null \
-                && ok "qrencode installed" \
-                || warn "qrencode not available — URL shown as text"
-        elif command -v apt-get >/dev/null 2>&1; then
-            curl -fsSL https://tailscale.com/install.sh | sh
-            apt-get install -y --no-install-recommends qrencode 2>/dev/null || true
-        else
-            die "Cannot install tailscale. See: https://tailscale.com/download"
-        fi
-    else
-        ok "tailscale already installed."
+    if ! _install_tailscale; then
+        _setup_install_fallback && return 0
+        die "Cannot install tailscale automatically. See: https://tailscale.com/download"
     fi
 
     _daemon_start || die "Could not start tailscaled. Check: ${LOG_FILE}"
