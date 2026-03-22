@@ -121,7 +121,14 @@ write_profile_managed_block() {
         printf 'export POCKETCLI_DIR="%s"\n' "$INSTALL_DIR"
         printf 'export PATH="%s:$PATH"\n' "$INSTALL_DIR"
         printf 'export POCKETCLI_CONFIG_MODE="%s"\n' "$MODE_NAME"
-        printf '. "%s/profile/zshrc"\n' "$INSTALL_DIR"
+        case "$(basename "$RC")" in
+            .zshrc)
+                printf '. "%s/profile/zshrc"\n' "$INSTALL_DIR"
+                ;;
+            *)
+                printf '. "%s/profile/shellrc"\n' "$INSTALL_DIR"
+                ;;
+        esac
         printf '%s\n' "$PROFILE_MARKER_END"
     } >> "$RC"
     info "PocketCli block updated in ${RC}"
@@ -171,7 +178,14 @@ write_profile_managed_block() {
         printf 'export POCKETCLI_DIR="%s"\n' "\$INSTALL_DIR"
         printf 'export PATH="%s:$PATH"\n' "\$INSTALL_DIR"
         printf 'export POCKETCLI_CONFIG_MODE="%s"\n' "\$MODE_NAME"
-        printf '. "%s/profile/zshrc"\n' "\$INSTALL_DIR"
+        case "\$(basename "\$RC")" in
+            .zshrc)
+                printf '. "%s/profile/zshrc"\n' "\$INSTALL_DIR"
+                ;;
+            *)
+                printf '. "%s/profile/shellrc"\n' "\$INSTALL_DIR"
+                ;;
+        esac
         printf '%s\n' "\$PROFILE_MARKER_END"
     } >> "\$RC"
 }
