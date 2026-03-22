@@ -58,6 +58,7 @@ esac
 EOS
 chmod +x "$MOCKBIN/git"
 
+env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" POCKETCLI_TEST_GIT_LOG="$LOG_FILE" POCKETCLI_TEST_STASH_FILE="$STASH_FILE" sh "$HOME_DIR/.pocketcli/pocket" update >/tmp/pocketcli-update-no-explain.out 2>/tmp/pocketcli-update-no-explain.err
 env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" POCKETCLI_TEST_GIT_LOG="$LOG_FILE" POCKETCLI_TEST_STASH_FILE="$STASH_FILE" sh "$HOME_DIR/.pocketcli/pocket" -e update >/tmp/pocketcli-update.out 2>/tmp/pocketcli-update.err
 
 grep -F 'status --porcelain' "$LOG_FILE" >/dev/null 2>&1
@@ -69,3 +70,9 @@ printf 'PASS pocket update salva mudanças locais, atualiza e restaura o stash\n
 grep -F 'PocketCli invocation' /tmp/pocketcli-update.out >/dev/null 2>&1
 grep -F 'Checking local modifications' /tmp/pocketcli-update.out >/dev/null 2>&1
 grep -F 'worktree_status:' /tmp/pocketcli-update.out >/dev/null 2>&1
+
+grep -F 'Updating PocketCli' /tmp/pocketcli-update-no-explain.out >/dev/null 2>&1
+if grep -F '[explain]' /tmp/pocketcli-update-no-explain.out >/dev/null 2>&1; then
+    printf 'FAIL explain logs apareceram sem -e\n' >&2
+    exit 1
+fi
