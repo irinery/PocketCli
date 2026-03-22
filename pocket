@@ -176,12 +176,44 @@ _cmd_ts() {
     exec sh "${SCRIPTS}/tailscale_daemon.sh" "$@"
 }
 
+_restore_update_stash() {
+    REPO_DIR="$1"
+    STASH_REF="$2"
+
+    [ -n "${STASH_REF}" ] || return 0
+
+    if git -C "${REPO_DIR}" stash pop --quiet >/dev/null 2>&1; then
+        ok "Local changes restored after update."
+    else
+        warn "Update completed, but local changes need manual review (git -C ${REPO_DIR} stash list)."
+    fi
+}
+
 _cmd_update() {
     step "Updating PocketCli"
-    git -C "${POCKETCLI_DIR}" fetch --quiet origin
-    git -C "${POCKETCLI_DIR}" pull --ff-only \
-        && ok "PocketCli updated." \
-        || warn "Update failed — check git status."
+    REPO_DIR="${POCKETCLI_DIR}"
+    STASH_REF=""
+    BEFORE_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+
+    if [ -n "$(git -C "${REPO_DIR}" status --porcelain 2>/dev/null || true)" ]; then
+        info "Saving local changes before update..."
+        git -C "${REPO_DIR}" stash push --include-untracked --quiet -m "pocketcli-update" >/dev/null 2>&1 || true
+        AFTER_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+        if [ -n "${AFTER_STASH}" ] && [ "${AFTER_STASH}" != "${BEFORE_STASH}" ]; then
+            STASH_REF="${AFTER_STASH}"
+        fi
+    fi
+
+    if git -C "${REPO_DIR}" fetch --quiet origin \
+        && git -C "${REPO_DIR}" pull --ff-only; then
+        ok "PocketCli updated."
+    else
+        warn "Update failed — check git status."
+        _restore_update_stash "${REPO_DIR}" "${STASH_REF}"
+        return 0
+    fi
+
+    _restore_update_stash "${REPO_DIR}" "${STASH_REF}"
 }
 
 _cmd_uninstall() { exec sh "${SCRIPTS}/uninstall.sh"; }
