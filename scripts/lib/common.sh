@@ -27,9 +27,18 @@ die()   { printf "${C_RED}[✘]${C_NC} %s\n"    "$*" >&2; exit 1; }
 step()  { printf "\n${C_BOLD}──  %s${C_NC}\n"  "$*"; }
 
 explain_enabled() { [ "${POCKETCLI_EXPLAIN:-0}" = "1" ]; }
-explain() { explain_enabled && printf "${C_DIM}[explain]${C_NC} %s\n" "$*"; }
-explain_step() { explain_enabled && printf "${C_DIM}[explain]${C_NC} ---- %s ----\n" "$*"; }
-explain_kv() { explain_enabled && printf "${C_DIM}[explain]${C_NC} %s=%s\n" "$1" "${2:-}"; }
+explain() {
+    explain_enabled || return 0
+    printf "${C_DIM}[explain]${C_NC} %s\n" "$*"
+}
+explain_step() {
+    explain_enabled || return 0
+    printf "${C_DIM}[explain]${C_NC} ---- %s ----\n" "$*"
+}
+explain_kv() {
+    explain_enabled || return 0
+    printf "${C_DIM}[explain]${C_NC} %s=%s\n" "$1" "${2:-}"
+}
 explain_block() {
     if ! explain_enabled; then
         return 0

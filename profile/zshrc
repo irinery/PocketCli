@@ -1,46 +1,14 @@
 # =============================================================================
 # PocketCli — profile/zshrc
-# Sourced from ~/.zshrc by the installer.
+# Zsh-specific shell integration sourced from ~/.zshrc by the installer.
 # =============================================================================
+
+. "${POCKETCLI_DIR}/profile/shellrc"
 
 # ---------------------------------------------------------------------------
 # Starship prompt
 # ---------------------------------------------------------------------------
 command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
-
-# ---------------------------------------------------------------------------
-# PocketCli commands
-# ---------------------------------------------------------------------------
-export PATH="${POCKETCLI_DIR}/scripts:${PATH}"
-
-alias pocket-menu="pocket menu"
-alias pocket-radar="$POCKETCLI_DIR/radar.sh"
-alias pocket-update="pocket update"
-
-# ---------------------------------------------------------------------------
-# Quality of life aliases
-# ---------------------------------------------------------------------------
-alias ll="ls -lah"
-alias la="ls -A"
-alias ..="cd .."
-alias ...="cd ../.."
-alias grep="grep --color=auto"
-alias df="df -h"
-alias du="du -sh"
-alias ports="ss -tulpn"
-
-# Git shortcuts
-alias g="git"
-alias gs="git status"
-alias gp="git pull"
-alias gc="git commit"
-alias gco="git checkout"
-alias gl="git log --oneline --graph --decorate"
-
-# tmux shortcuts
-alias ta="tmux attach-session -t"
-alias tl="tmux list-sessions"
-alias tn="tmux new-session -s"
 
 # ---------------------------------------------------------------------------
 # fzf integration
