@@ -8,7 +8,7 @@ set -eu
 
 INSTALL_DIR="${HOME}/.pocketcli"
 SCRIPTS_DIR="${INSTALL_DIR}/scripts"
-CONFIG_DIR="${INSTALL_DIR}/config"
+PROFILE_DIR="${INSTALL_DIR}/profile"
 MANAGED_DIR="${INSTALL_DIR}/managed"
 HOST_CONFIG_DIR="${MANAGED_DIR}/host"
 PROJECT_CONFIG_DIR="${MANAGED_DIR}/project"
@@ -90,8 +90,8 @@ compare_config_file() {
 show_agent_config_comparison() {
     echo ""
     echo "  Comparing host config with PocketCli project config:"
-    compare_config_file "tmux" "${HOME}/.config/tmux/tmux.conf" "${CONFIG_DIR}/tmux.conf"
-    compare_config_file "starship" "${HOME}/.config/starship.toml" "${CONFIG_DIR}/starship.toml"
+    compare_config_file "tmux" "${HOME}/.config/tmux/tmux.conf" "${PROFILE_DIR}/tmux.conf"
+    compare_config_file "starship" "${HOME}/.config/starship.toml" "${PROFILE_DIR}/starship.toml"
     printf '  - shell integration\n'
     if grep -qF "PocketCli" "${HOME}/.profile" 2>/dev/null; then
         printf '      status: host profile already contains PocketCli hooks\n'
@@ -121,7 +121,7 @@ write_profile_managed_block() {
         printf 'export POCKETCLI_DIR="%s"\n' "$INSTALL_DIR"
         printf 'export PATH="%s:$PATH"\n' "$INSTALL_DIR"
         printf 'export POCKETCLI_CONFIG_MODE="%s"\n' "$MODE_NAME"
-        printf '. "%s/config/zshrc"\n' "$INSTALL_DIR"
+        printf '. "%s/profile/zshrc"\n' "$INSTALL_DIR"
         printf '%s\n' "$PROFILE_MARKER_END"
     } >> "$RC"
     info "PocketCli block updated in ${RC}"
@@ -132,6 +132,7 @@ write_switcher_script() {
 #!/usr/bin/env sh
 set -eu
 INSTALL_DIR="${INSTALL_DIR}"
+PROFILE_DIR="${PROFILE_DIR}"
 MANAGED_DIR="${MANAGED_DIR}"
 HOST_CONFIG_DIR="${HOST_CONFIG_DIR}"
 PROJECT_CONFIG_DIR="${PROJECT_CONFIG_DIR}"
@@ -170,7 +171,7 @@ write_profile_managed_block() {
         printf 'export POCKETCLI_DIR="%s"\n' "\$INSTALL_DIR"
         printf 'export PATH="%s:$PATH"\n' "\$INSTALL_DIR"
         printf 'export POCKETCLI_CONFIG_MODE="%s"\n' "\$MODE_NAME"
-        printf '. "%s/config/zshrc"\n' "\$INSTALL_DIR"
+        printf '. "%s/profile/zshrc"\n' "\$INSTALL_DIR"
         printf '%s\n' "\$PROFILE_MARKER_END"
     } >> "\$RC"
 }
@@ -218,133 +219,86 @@ echo ""
 echo "  Select install mode:"
 echo ""
 echo "    1) Viewer  ->  iPad or lightweight terminal (SSH client only)"
-echo "    2) Agent   ->  server or remote machine (full environment)"
+echo "    2) Agent   ->  full environment on the machine"
 echo ""
-prompt_choice MODE_CHOICE "  Choice [1/2]: " "${POCKETCLI_MODE_CHOICE:-}"
 
-case "${MODE_CHOICE}" in
-    1) MODE="viewer" ;;
-    2) MODE="agent"  ;;
-    *) die "Invalid choice '${MODE_CHOICE}'. Re-run the installer." ;;
-esac
-
-info "Mode: ${MODE}"
-CONFIG_MODE="project"
-if [ "${MODE}" = "agent" ]; then
-    show_agent_config_comparison
-    echo ""
-    echo "  Agent config mode:"
-    echo ""
-    echo "    1) Keep host config        -> preserve current tmux/starship/profile behavior"
-    echo "    2) Use project config      -> apply PocketCli config from this repository"
-    echo "    3) Test original mode      -> keep both configs and enable automated switching"
-    echo ""
-    prompt_choice CONFIG_CHOICE "  Choice [1/2/3]: " "${POCKETCLI_AGENT_CONFIG_CHOICE:-}"
-    case "${CONFIG_CHOICE}" in
-        1) CONFIG_MODE="host" ;;
-        2) CONFIG_MODE="project" ;;
-        3) CONFIG_MODE="test-original" ;;
-        *) die "Invalid config choice '${CONFIG_CHOICE}'. Re-run the installer." ;;
-    esac
-    info "Agent config mode: ${CONFIG_MODE}"
+if [ -n "${POCKETCLI_MODE_CHOICE:-}" ]; then
+    MODE_CHOICE="${POCKETCLI_MODE_CHOICE}"
+else
+    prompt_choice MODE_CHOICE "  Choice [1/2]: "
 fi
 
-# ---------------------------------------------------------------------------
-# Install dependencies
-# ---------------------------------------------------------------------------
-sh "${SCRIPTS_DIR}/install_deps.sh" "${OS}" "${MODE}"
+action_mode=""
+case "$MODE_CHOICE" in
+    1) action_mode="viewer" ;;
+    2) action_mode="agent" ;;
+    *) die "Invalid choice. Use 1 or 2." ;;
+esac
 
-# ---------------------------------------------------------------------------
-# Install Tailscale
-# ---------------------------------------------------------------------------
-sh "${SCRIPTS_DIR}/tailscale_daemon.sh" setup
+info "Selected mode: ${action_mode}"
 
-# ---------------------------------------------------------------------------
-# Apply config files
-# ---------------------------------------------------------------------------
-info "Applying configuration files..."
-mkdir -p "${HOST_CONFIG_DIR}" "${PROJECT_CONFIG_DIR}" "${ACTIVE_CONFIG_DIR}" "${HOME}/.config/tmux" "${HOME}/.config"
+# Install deps
+PATH="${INSTALL_DIR}:${PATH}"; export PATH
+sh "${SCRIPTS_DIR}/install_deps.sh" "${OS}" "${action_mode}"
 
+# Tailscale setup only if not iSH? external script handles it
+sh "${SCRIPTS_DIR}/tailscale_daemon.sh" setup || true
+
+mkdir -p "${HOME}/.config/tmux" "${HOME}/.config" "${MANAGED_DIR}" "${ACTIVE_CONFIG_DIR}"
+
+# Snapshot current host and project-managed files
 backup_file "${HOME}/.config/tmux/tmux.conf" "${HOST_CONFIG_DIR}/tmux.conf"
 backup_file "${HOME}/.config/starship.toml" "${HOST_CONFIG_DIR}/starship.toml"
 backup_file "${HOME}/.profile" "${HOST_CONFIG_DIR}/profile"
-backup_file "${HOME}/.bashrc" "${HOST_CONFIG_DIR}/bashrc"
-backup_file "${HOME}/.zshrc" "${HOST_CONFIG_DIR}/zshrc"
 
-copy_if_present "${CONFIG_DIR}/tmux.conf" "${PROJECT_CONFIG_DIR}/tmux.conf"
-copy_if_present "${CONFIG_DIR}/starship.toml" "${PROJECT_CONFIG_DIR}/starship.toml"
-copy_if_present "${CONFIG_DIR}/zshrc" "${PROJECT_CONFIG_DIR}/zshrc"
+copy_if_present "${PROFILE_DIR}/tmux.conf" "${PROJECT_CONFIG_DIR}/tmux.conf"
+copy_if_present "${PROFILE_DIR}/starship.toml" "${PROJECT_CONFIG_DIR}/starship.toml"
 copy_if_present "${HOME}/.profile" "${PROJECT_CONFIG_DIR}/profile"
-copy_if_present "${HOME}/.bashrc" "${PROJECT_CONFIG_DIR}/bashrc"
-copy_if_present "${HOME}/.zshrc" "${PROJECT_CONFIG_DIR}/zshrc"
 
 write_switcher_script
 
-case "${CONFIG_MODE}" in
-    host)
-        sh "${SWITCHER_SCRIPT}" host
-        ;;
-    project)
-        cp "${CONFIG_DIR}/tmux.conf" "${HOME}/.config/tmux/tmux.conf"
-        cp "${CONFIG_DIR}/starship.toml" "${HOME}/.config/starship.toml"
-        write_profile_managed_block "${HOME}/.profile" "project"
-        write_profile_managed_block "${HOME}/.bashrc" "project"
-        command -v zsh >/dev/null 2>&1 && write_profile_managed_block "${HOME}/.zshrc" "project" || true
-        ;;
-    test-original)
-        cp "${CONFIG_DIR}/tmux.conf" "${HOME}/.config/tmux/tmux.conf"
-        cp "${CONFIG_DIR}/starship.toml" "${HOME}/.config/starship.toml"
-        write_profile_managed_block "${HOME}/.profile" "project"
-        write_profile_managed_block "${HOME}/.bashrc" "project"
-        command -v zsh >/dev/null 2>&1 && write_profile_managed_block "${HOME}/.zshrc" "project" || true
-        info "Test mode enabled. Switch anytime with:"
-        info "  sh ${SWITCHER_SCRIPT} host"
-        info "  sh ${SWITCHER_SCRIPT} project"
-        ;;
-esac
-
-success "Config files applied."
-
-# Apply right now for this session (don't require shell restart)
-export PATH="${INSTALL_DIR}:${PATH}"
-
-# Make pocket binary executable
-chmod 700 "${INSTALL_DIR}/pocket"
-
-# ---------------------------------------------------------------------------
-# Harden permissions
-# ---------------------------------------------------------------------------
-info "Hardening permissions..."
-chmod -R o-rwx "${INSTALL_DIR}"
-find "${INSTALL_DIR}" -name "*.sh" -exec chmod 700 {} \;
-success "Permissions hardened."
-
-# ---------------------------------------------------------------------------
-# Post-install tip
-# ---------------------------------------------------------------------------
-echo ""
-echo "  ================================="
-success "PocketCli installed!"
-echo "  ================================="
-echo ""
-echo "  PATH already active in this session."
-echo "  For new shells, run:"
-echo ""
-printf '    . ~/.profile\n'
-echo ""
-if [ "${CONFIG_MODE}" = "test-original" ]; then
-    echo "  Config switcher available:"
-    printf '    sh %s host\n' "${SWITCHER_SCRIPT}"
-    printf '    sh %s project\n' "${SWITCHER_SCRIPT}"
+if [ "${action_mode}" = "agent" ]; then
+    show_agent_config_comparison
+    echo "    1) Keep host config        -> preserve current tmux/starship/profile behavior"
+    echo "    2) Apply project config    -> use PocketCli profile defaults immediately"
+    echo "    3) Test both (recommended) -> keep both and enable quick switching"
     echo ""
-fi
-echo "  Then use:  pocket help"
-echo ""
 
-# ---------------------------------------------------------------------------
-# Start environment
-# ---------------------------------------------------------------------------
-case "${MODE}" in
-    viewer) exec env PATH="${INSTALL_DIR}:${PATH}" sh "${SCRIPTS_DIR}/start_viewer.sh" ;;
-    agent)  exec env PATH="${INSTALL_DIR}:${PATH}" sh "${SCRIPTS_DIR}/start_agent.sh"  ;;
-esac
+    if [ -n "${POCKETCLI_AGENT_CONFIG_CHOICE:-}" ]; then
+        AGENT_CONFIG_CHOICE="${POCKETCLI_AGENT_CONFIG_CHOICE}"
+    else
+        prompt_choice AGENT_CONFIG_CHOICE "  Choice [1/2/3]: "
+    fi
+
+    case "$AGENT_CONFIG_CHOICE" in
+        1)
+            write_profile_managed_block "${HOME}/.profile" "host"
+            write_profile_managed_block "${HOME}/.bashrc" "host"
+            command -v zsh >/dev/null 2>&1 && write_profile_managed_block "${HOME}/.zshrc" "host" || true
+        ;;
+        2|3)
+            cp "${PROFILE_DIR}/tmux.conf" "${HOME}/.config/tmux/tmux.conf"
+            cp "${PROFILE_DIR}/starship.toml" "${HOME}/.config/starship.toml"
+            write_profile_managed_block "${HOME}/.profile" "project"
+            write_profile_managed_block "${HOME}/.bashrc" "project"
+            command -v zsh >/dev/null 2>&1 && write_profile_managed_block "${HOME}/.zshrc" "project" || true
+        ;;
+        *) die "Invalid choice. Use 1, 2 or 3." ;;
+    esac
+else
+    cp "${PROFILE_DIR}/tmux.conf" "${HOME}/.config/tmux/tmux.conf"
+    cp "${PROFILE_DIR}/starship.toml" "${HOME}/.config/starship.toml"
+    write_profile_managed_block "${HOME}/.profile" "project"
+    write_profile_managed_block "${HOME}/.bashrc" "project"
+    command -v zsh >/dev/null 2>&1 && write_profile_managed_block "${HOME}/.zshrc" "project" || true
+fi
+
+if [ "${action_mode}" = "viewer" ]; then
+    sh "${SCRIPTS_DIR}/start_viewer.sh"
+else
+    sh "${SCRIPTS_DIR}/start_agent.sh"
+fi
+
+success "Installation completed."
+printf '    Reload your shell with:\n'
+printf '    . ~/.profile\n'

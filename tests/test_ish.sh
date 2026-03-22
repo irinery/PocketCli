@@ -182,7 +182,7 @@ _check "POCKETCLI_DIR exists"   test -d "${POCKETCLI_DIR}"
 _check "pocket binary exists"   test -f "${POCKETCLI_DIR}/pocket"
 _check "pocket is executable"   test -x "${POCKETCLI_DIR}/pocket"
 _check "lib/common.sh exists"   test -f "${POCKETCLI_DIR}/scripts/lib/common.sh"
-_check "config/tmux.conf"       test -f "${POCKETCLI_DIR}/config/tmux.conf"
+_check "profile/tmux.conf"      test -f "${POCKETCLI_DIR}/profile/tmux.conf"
 _check "radar.sh exists"        test -f "${POCKETCLI_DIR}/radar.sh"
 
 # Check pocket in PATH
