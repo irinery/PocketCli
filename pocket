@@ -20,7 +20,7 @@ _cmd_help() {
     echo ""
     printf "  ${C_BOLD}PocketCli${C_NC}  ${C_DIM}— portable terminal toolkit${C_NC}\n"
     echo ""
-    printf "  ${C_BOLD}Usage:${C_NC}  pocket <command> [args]\n"
+    printf "  ${C_BOLD}Usage:${C_NC}  pocket [-e|--explain] <command> [args]\n"
     echo ""
     printf "  ${C_CYAN}connect${C_NC}  [host]           SSH into a machine\n"
     printf "  ${C_CYAN}list${C_NC}                     List Tailscale machines\n"
@@ -42,6 +42,7 @@ _cmd_help() {
     printf "  ${C_CYAN}update${C_NC}                   Update PocketCli\n"
     printf "  ${C_CYAN}uninstall${C_NC}                Remove PocketCli\n"
     printf "  ${C_CYAN}help${C_NC}                     This help\n"
+    printf "  ${C_CYAN}-e, --explain${C_NC}            Show explicit logs for each execution step\n"
     echo ""
     if is_ish; then
         printf "  ${C_DIM}[iSH detected — using compatible mode]${C_NC}\n\n"
@@ -194,26 +195,55 @@ _cmd_update() {
     step "Updating PocketCli"
     REPO_DIR="${POCKETCLI_DIR}"
     STASH_REF=""
-    BEFORE_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
 
-    if [ -n "$(git -C "${REPO_DIR}" status --porcelain 2>/dev/null || true)" ]; then
+    explain_step "Preparing repository context"
+    explain_kv "repo_dir" "${REPO_DIR}"
+
+    explain_step "Checking stash state before update"
+    BEFORE_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+    explain_kv "stash_before" "${BEFORE_STASH:-none}"
+
+    explain_step "Checking local modifications"
+    WORKTREE_STATUS=$(git -C "${REPO_DIR}" status --porcelain 2>/dev/null || true)
+    if [ -n "${WORKTREE_STATUS}" ]; then
+        explain "Local modifications detected; creating a temporary stash before updating."
+        explain_block "worktree_status" "${WORKTREE_STATUS}"
         info "Saving local changes before update..."
         git -C "${REPO_DIR}" stash push --include-untracked --quiet -m "pocketcli-update" >/dev/null 2>&1 || true
         AFTER_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+        explain_kv "stash_after_push" "${AFTER_STASH:-none}"
         if [ -n "${AFTER_STASH}" ] && [ "${AFTER_STASH}" != "${BEFORE_STASH}" ]; then
             STASH_REF="${AFTER_STASH}"
+            explain_kv "active_temp_stash" "${STASH_REF}"
+        else
+            explain "No new stash entry was created; continuing without a temporary stash reference."
         fi
+    else
+        explain "Working tree is clean; update will run without creating a stash."
     fi
 
-    if git -C "${REPO_DIR}" fetch --quiet origin \
-        && git -C "${REPO_DIR}" pull --ff-only; then
-        ok "PocketCli updated."
+    explain_step "Fetching remote changes"
+    if git -C "${REPO_DIR}" fetch --quiet origin; then
+        explain "Fetch completed successfully."
     else
         warn "Update failed — check git status."
+        explain "Fetch failed; restoring any temporary stash before exiting."
         _restore_update_stash "${REPO_DIR}" "${STASH_REF}"
         return 0
     fi
 
+    explain_step "Applying fast-forward update"
+    if git -C "${REPO_DIR}" pull --ff-only; then
+        ok "PocketCli updated."
+        explain "Fast-forward pull completed successfully."
+    else
+        warn "Update failed — check git status."
+        explain "Pull failed; restoring any temporary stash before exiting."
+        _restore_update_stash "${REPO_DIR}" "${STASH_REF}"
+        return 0
+    fi
+
+    explain_step "Restoring local modifications"
     _restore_update_stash "${REPO_DIR}" "${STASH_REF}"
 }
 
@@ -232,6 +262,20 @@ _has_interactive_tty() {
     [ -r /dev/tty ] || [ -c /dev/tty ]
 }
 
+POCKETCLI_EXPLAIN="${POCKETCLI_EXPLAIN:-0}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -e|--explain)
+            POCKETCLI_EXPLAIN=1
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+export POCKETCLI_EXPLAIN
+
 CMD="${1:-}"
 if [ -z "${CMD}" ]; then
     if _has_interactive_tty; then
@@ -243,9 +287,16 @@ if [ -z "${CMD}" ]; then
     else
         CMD="help"
     fi
-fi
-if [ $# -gt 0 ]; then
+else
     shift
+fi
+
+if explain_enabled; then
+    explain_step "PocketCli invocation"
+    explain_kv "command" "${CMD}"
+    explain_kv "args" "$*"
+    explain_kv "home" "${HOME}"
+    explain_kv "pocketcli_dir" "${POCKETCLI_DIR}"
 fi
 
 _persist_command_if_needed "${CMD}" "$@"
