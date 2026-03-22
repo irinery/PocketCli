@@ -1,5 +1,5 @@
 # =============================================================================
-# PocketCli — config/zshrc
+# PocketCli — profile/zshrc
 # Sourced from ~/.zshrc by the installer.
 # =============================================================================
 
@@ -15,7 +15,7 @@ export PATH="${POCKETCLI_DIR}/scripts:${PATH}"
 
 alias pocket-menu="pocket menu"
 alias pocket-radar="$POCKETCLI_DIR/radar.sh"
-alias pocket-update="git -C $POCKETCLI_DIR pull --ff-only && echo 'PocketCli updated.'"
+alias pocket-update="pocket update"
 
 # ---------------------------------------------------------------------------
 # Quality of life aliases
