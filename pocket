@@ -147,7 +147,8 @@ _cmd_resume() {
         if [ ! -s "$(pocket_last_command_file)" ]; then
             pocket_save_command menu
         fi
-        tmux new-session -d -s "${SESSION}" "POCKETCLI_RESTORE=1 '${POCKETCLI_DIR}/pocket' __restore"
+        tmux new-session -d -s "${SESSION}"
+        tmux send-keys -t "${SESSION}" "POCKETCLI_RESTORE=1 '${POCKETCLI_DIR}/pocket' __restore" C-m
         tmux source-file "${HOME}/.config/tmux/tmux.conf" 2>/dev/null || true
     fi
 
