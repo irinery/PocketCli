@@ -67,7 +67,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 |---|---|
 | `pocket-menu` | Control Deck leve com dashboard local, ações SSH e atalhos prontos para iPad/tmux |
 | `pocket-radar` | Lista máquinas online no Tailscale |
-| `pocket-update` | Atualiza o PocketCli via git pull |
+| `pocket-update` | Atualiza o PocketCli preservando diferenças locais relevantes |
 
 ---
 
@@ -80,10 +80,10 @@ PocketCli/
 ├── detect_os.sh          ← detecta OS, exporta $OS
 ├── radar.sh              ← lista máquinas Tailscale
 │
-├── config/
-│   ├── tmux.conf         ← prefixo Ctrl+S, atalhos de panes/SSH e status denso porém leve
-│   ├── zshrc             ← aliases, starship, fzf
-│   └── starship.toml     ← prompt rápido e bonito
+├── profile/
+│   ├── tmux.conf         ← perfil padrão compartilhado para tmux
+│   ├── zshrc             ← aliases e integração shell referenciados pelo instalador
+│   └── starship.toml     ← prompt padrão compartilhado
 │
 ├── scripts/
 │   ├── install_deps.sh       ← instala pacotes por OS/modo

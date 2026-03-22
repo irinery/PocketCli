@@ -466,7 +466,7 @@ _run_action() {
                 'PocketCli atualizado com sucesso.' \
                 'Falha ao atualizar PocketCli (exit %s).' \
                 '\n  Pressione Enter para voltar...' \
-                sh -c 'printf "\n  Atualizando PocketCli...\n\n"; exec git -C "$1" pull --ff-only' sh "${HOME}/.pocketcli"
+                sh -c 'printf "\n  Atualizando PocketCli...\n\n"; exec "$1/pocket" update' sh "${HOME}/.pocketcli"
         ;;
         exit)
             _screen_clear

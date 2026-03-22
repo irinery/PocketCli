@@ -128,17 +128,17 @@ prepare_install_fixture() {
     MOCKBIN="$2"
     INSTALL_DIR="$HOME_DIR/.pocketcli"
 
-    mkdir -p "$HOME_DIR" "$INSTALL_DIR/scripts/lib" "$INSTALL_DIR/config" "$MOCKBIN"
+    mkdir -p "$HOME_DIR" "$INSTALL_DIR/scripts/lib" "$INSTALL_DIR/profile" "$MOCKBIN"
     cp "$REPO_ROOT/install.sh" "$INSTALL_DIR/install.sh"
     cp "$REPO_ROOT/detect_os.sh" "$INSTALL_DIR/detect_os.sh"
 
-    cat > "$INSTALL_DIR/config/tmux.conf" <<'EOS'
+    cat > "$INSTALL_DIR/profile/tmux.conf" <<'EOS'
 set -g mouse on
 EOS
-    cat > "$INSTALL_DIR/config/starship.toml" <<'EOS'
+    cat > "$INSTALL_DIR/profile/starship.toml" <<'EOS'
 add_newline = false
 EOS
-    cat > "$INSTALL_DIR/config/zshrc" <<'EOS'
+    cat > "$INSTALL_DIR/profile/zshrc" <<'EOS'
 alias pocket='pocket'
 EOS
     cat > "$INSTALL_DIR/pocket" <<'EOS'
