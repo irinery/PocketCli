@@ -26,6 +26,22 @@ warn()  { printf "${C_YELLOW}[!]${C_NC} %s\n" "$*"; }
 die()   { printf "${C_RED}[✘]${C_NC} %s\n"    "$*" >&2; exit 1; }
 step()  { printf "\n${C_BOLD}──  %s${C_NC}\n"  "$*"; }
 
+explain_enabled() { [ "${POCKETCLI_EXPLAIN:-0}" = "1" ]; }
+explain() { explain_enabled && printf "${C_DIM}[explain]${C_NC} %s\n" "$*"; }
+explain_step() { explain_enabled && printf "${C_DIM}[explain]${C_NC} ---- %s ----\n" "$*"; }
+explain_kv() { explain_enabled && printf "${C_DIM}[explain]${C_NC} %s=%s\n" "$1" "${2:-}"; }
+explain_block() {
+    if ! explain_enabled; then
+        return 0
+    fi
+    LABEL="$1"
+    VALUE="${2:-}"
+    printf "${C_DIM}[explain]${C_NC} %s:\n" "${LABEL}"
+    printf '%s\n' "${VALUE}" | while IFS= read -r _line; do
+        printf "${C_DIM}[explain]${C_NC}   %s\n" "${_line}"
+    done
+}
+
 run_or_warn() { DESC="$1"; shift; "$@" >/dev/null 2>&1 && ok "${DESC}" || warn "${DESC} — skipped"; }
 run_or_die()  { DESC="$1"; shift; "$@" >/dev/null 2>&1 && ok "${DESC}" || die "${DESC} — FAILED"; }
 
