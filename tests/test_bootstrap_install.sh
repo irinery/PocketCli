@@ -138,8 +138,12 @@ EOS
     cat > "$INSTALL_DIR/profile/starship.toml" <<'EOS'
 add_newline = false
 EOS
-    cat > "$INSTALL_DIR/profile/zshrc" <<'EOS'
+    cat > "$INSTALL_DIR/profile/shellrc" <<'EOS'
 alias pocket='pocket'
+EOS
+    cat > "$INSTALL_DIR/profile/zshrc" <<'EOS'
+. "${POCKETCLI_DIR}/profile/shellrc"
+setopt SHARE_HISTORY
 EOS
     cat > "$INSTALL_DIR/pocket" <<'EOS'
 #!/usr/bin/env sh
@@ -185,6 +189,12 @@ fi
 EOS
     chmod +x "$MOCKBIN/uname"
 
+    cat > "$MOCKBIN/zsh" <<'EOS'
+#!/usr/bin/env sh
+exit 0
+EOS
+    chmod +x "$MOCKBIN/zsh"
+
     cat > "$MOCKBIN/chmod" <<'EOS'
 #!/usr/bin/env sh
 exit 0
@@ -221,6 +231,11 @@ run_install_test() {
     assert_file_contains "$HOME_DIR/.profile" "export POCKETCLI_DIR=\"$INSTALL_DIR\"" "install.sh injeta POCKETCLI_DIR no perfil"
     assert_file_contains "$HOME_DIR/.profile" "export PATH=\"$INSTALL_DIR:\$PATH\"" "install.sh injeta PATH no perfil"
     assert_file_contains "$HOME_DIR/.bashrc" "export POCKETCLI_DIR=\"$INSTALL_DIR\"" "install.sh injeta POCKETCLI_DIR também no bashrc"
+    assert_file_contains "$HOME_DIR/.profile" ". \"$INSTALL_DIR/profile/shellrc\"" "install.sh usa shellrc POSIX no .profile"
+    assert_file_contains "$HOME_DIR/.bashrc" ". \"$INSTALL_DIR/profile/shellrc\"" "install.sh usa shellrc POSIX no .bashrc"
+    if grep -qF "profile/zshrc" "$HOME_DIR/.profile"; then
+        fail "install.sh não deve injetar zshrc dentro do .profile"
+    fi
     assert_equals "set -g mouse on" "$(cat "$HOME_DIR/.config/tmux/tmux.conf")" "install.sh copia a configuração do tmux"
     assert_equals "add_newline = false" "$(cat "$HOME_DIR/.config/starship.toml")" "install.sh copia a configuração do starship"
 }
@@ -256,6 +271,7 @@ EOS
     assert_equals "set -g status off" "$(cat "$INSTALL_DIR/managed/host/tmux.conf")" "install.sh guarda o tmux original do host"
     assert_equals "set -g mouse on" "$(cat "$INSTALL_DIR/managed/project/tmux.conf")" "install.sh guarda o tmux do projeto"
     assert_file_contains "$HOME_DIR/.profile" "POCKETCLI_CONFIG_MODE=\"project\"" "modo de teste ativa a config do projeto por padrão"
+    assert_file_contains "$HOME_DIR/.zshrc" ". \"$INSTALL_DIR/profile/zshrc\"" "install.sh mantém o zshrc apenas no arquivo do Zsh"
 
     env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" sh "$INSTALL_DIR/scripts/switch_config.sh" host >/tmp/pocketcli-switch-host.out 2>/tmp/pocketcli-switch-host.err
     assert_equals "set -g status off" "$(cat "$HOME_DIR/.config/tmux/tmux.conf")" "switch_config.sh restaura o tmux do host"
