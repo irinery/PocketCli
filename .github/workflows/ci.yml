@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shell-tests:
+    name: Shell test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run shell-based regression tests
+        run: |
+          set -euo pipefail
+          for t in tests/test_bootstrap_install.sh tests/test_menu_fallback.sh tests/test_menu_no_hosts.sh tests/test_pocket_resume.sh tests/test_pocket_update.sh tests/test_radar_fallback.sh tests/test_scan_fallback.sh tests/test_tailscale_setup_fallback.sh; do
+            echo "==> running ${t}"
+            sh "${t}"
+          done
+
+  go-tests:
+    name: Go tests and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run go test
+        run: go test ./...
+
+      - name: Build pocket binary
+        run: go build -o /tmp/pocket ./cmd/pocket
