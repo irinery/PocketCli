@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"pocketcli/internal/core"
 	"pocketcli/internal/ssh"
-	"pocketcli/internal/tailscale"
 )
 
 func main() {
@@ -38,16 +36,9 @@ func newRootCommand() *cobra.Command {
 func newHostsCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "hosts",
-		Short: "List Tailscale machines",
+		Short: "List, filter and connect to Tailscale machines",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, err := tailscale.GetStatus()
-			if err != nil {
-				return err
-			}
-
-			hosts := tailscale.MachinesFromStatus(status)
-			core.PrintHostsTable(cmd.OutOrStdout(), hosts)
-			return nil
+			return defaultHostsViewer(os.Stdin, cmd.OutOrStdout())
 		},
 	}
 }
