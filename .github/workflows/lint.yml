@@ -23,10 +23,11 @@ jobs:
           echo "── Scanning shell scripts ──"
           find . \
             -not -path './.git/*' \
+            -type f \
             \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
             -print \
             | sort \
-            | xargs shellcheck \
+            | xargs -r shellcheck \
                 --severity=warning \
                 --shell=bash \
                 --exclude=SC1091   # allow 'source' of files not present at lint time
@@ -46,6 +47,7 @@ jobs:
           ERRORS=0
           find . \
             -not -path './.git/*' \
+            -type f \
             \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
             -print \
             | sort \
