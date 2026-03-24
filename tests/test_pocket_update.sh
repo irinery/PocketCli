@@ -21,7 +21,24 @@ if [ "$1" = "-C" ]; then
     shift 2
 fi
 case "$1" in
+    clone)
+        DEST=""
+        for ARG in "$@"; do
+            DEST="$ARG"
+        done
+        mkdir -p "${DEST}/.git" "${DEST}/profile"
+        printf '# cloned\n' > "${DEST}/pocket"
+        printf 'from clone\n' > "${DEST}/profile/shellrc"
+        exit 0
+        ;;
     rev-parse)
+        if [ "${POCKETCLI_TEST_NO_GIT:-0}" = "1" ] && [ "${2:-}" = "--is-inside-work-tree" ]; then
+            exit 1
+        fi
+        if [ "${2:-}" = "--is-inside-work-tree" ]; then
+            printf 'true\n'
+            exit 0
+        fi
         if [ -f "$POCKETCLI_TEST_STASH_FILE" ]; then
             printf 'stash@{0}\n'
         fi
@@ -76,3 +93,11 @@ if grep -F '[explain]' /tmp/pocketcli-update-no-explain.out >/dev/null 2>&1; the
     printf 'FAIL explain logs apareceram sem -e\n' >&2
     exit 1
 fi
+
+PROFILE_FILE="$HOME_DIR/.pocketcli/profile/custom.txt"
+mkdir -p "$(dirname "$PROFILE_FILE")"
+printf 'preserve-me\n' > "$PROFILE_FILE"
+env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" POCKETCLI_TEST_GIT_LOG="$LOG_FILE" POCKETCLI_TEST_STASH_FILE="$STASH_FILE" POCKETCLI_TEST_NO_GIT=1 sh "$HOME_DIR/.pocketcli/pocket" update >/tmp/pocketcli-update-reseed.out 2>/tmp/pocketcli-update-reseed.err
+grep -F 'clone --quiet --branch main https://github.com/irinery/PocketCli.git' "$LOG_FILE" >/dev/null 2>&1
+grep -F 'preserve-me' "$HOME_DIR/.pocketcli/profile/custom.txt" >/dev/null 2>&1
+printf 'PASS pocket update recompõe .git quando a instalação veio sem metadados e preserva profile\n'
