@@ -66,7 +66,7 @@ exit 0
 EOS
     chmod +x "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh"
 
-    script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" /dev/null </dev/null >/dev/null 2>&1 || true
+    script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' TMUX='1' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" /dev/null </dev/null >/dev/null 2>&1 || true
 
     grep -F 'menu-invoked' "$LOG_FILE" >/dev/null 2>&1
     grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1
