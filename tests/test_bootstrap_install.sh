@@ -8,8 +8,14 @@
 set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+BASH_BIN=$(command -v bash || true)
 PASS_COUNT=0
 FAIL_COUNT=0
+
+[ -n "${BASH_BIN}" ] || {
+    printf 'FAIL bash não encontrado para executar bootstrap.sh\n' >&2
+    exit 1
+}
 
 pass() {
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -105,7 +111,7 @@ EOS
         PATH="$MOCKBIN:/usr/bin:/bin" \
         POCKETCLI_TEST_FIXTURE_REPO="$FIXTURE_REPO" \
         POCKETCLI_TEST_GIT_LOG="$LOG_FILE" \
-        bash "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap.out 2>/tmp/pocketcli-bootstrap.err
+        "$BASH_BIN" "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap.out 2>/tmp/pocketcli-bootstrap.err
 
     if [ "$TEST_NAME" = "clone" ]; then
         assert_file_contains "$LOG_FILE" "clone --quiet --branch main https://github.com/irinery/PocketCli.git $HOME_DIR/.pocketcli" "bootstrap faz clone do repositório na primeira execução"
@@ -125,7 +131,7 @@ EOS
             PATH="$MOCKBIN:/usr/bin:/bin" \
             POCKETCLI_TEST_FIXTURE_REPO="$FIXTURE_REPO" \
             POCKETCLI_TEST_GIT_LOG="$LOG_FILE" \
-            bash "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap.out 2>/tmp/pocketcli-bootstrap.err
+            "$BASH_BIN" "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap.out 2>/tmp/pocketcli-bootstrap.err
 
         assert_file_contains "$LOG_FILE" "fetch --quiet origin" "bootstrap faz fetch quando o repositório já existe"
         assert_file_contains "$LOG_FILE" "checkout --quiet main" "bootstrap faz checkout da versão configurada"
@@ -176,7 +182,7 @@ EOS
         SHELL="/bin/sh" \
         PATH="$MOCKBIN:/bin" \
         POCKETCLI_TEST_ARCHIVE="$ARCHIVE_FILE" \
-        bash "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap-archive.out 2>/tmp/pocketcli-bootstrap-archive.err
+        "$BASH_BIN" "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap-archive.out 2>/tmp/pocketcli-bootstrap-archive.err
 
     assert_file_contains "$HOME_DIR/install-ran" "archive install invoked" "bootstrap instala via fallback de archive quando git não está disponível"
     assert_file_not_exists "$HOME_DIR/.pocketcli/.git" "fallback por archive não depende de metadados git locais"
