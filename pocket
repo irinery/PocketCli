@@ -8,6 +8,8 @@ set -eu
 
 POCKETCLI_DIR="${HOME}/.pocketcli"
 SCRIPTS="${POCKETCLI_DIR}/scripts"
+POCKETCLI_REPO_URL="${POCKETCLI_REPO_URL:-https://github.com/irinery/PocketCli.git}"
+POCKETCLI_REPO_REF="${POCKETCLI_REPO_REF:-main}"
 
 # Load shared helpers
 . "${SCRIPTS}/lib/common.sh"
@@ -191,6 +193,44 @@ _restore_update_stash() {
     fi
 }
 
+_seed_repo_from_remote() {
+    REPO_DIR="$1"
+    TMP_ROOT=$(mktemp -d)
+    TMP_REPO="${TMP_ROOT}/repo"
+    PROFILE_BACKUP="${TMP_ROOT}/profile"
+    HAD_PROFILE=0
+
+    if [ -d "${REPO_DIR}/profile" ]; then
+        HAD_PROFILE=1
+        cp -R "${REPO_DIR}/profile" "${PROFILE_BACKUP}"
+    fi
+
+    if ! git clone --quiet --branch "${POCKETCLI_REPO_REF}" "${POCKETCLI_REPO_URL}" "${TMP_REPO}" >/dev/null 2>&1; then
+        rm -rf "${TMP_ROOT}"
+        return 1
+    fi
+
+    mkdir -p "${REPO_DIR}"
+    (
+        cd "${TMP_REPO}" &&
+        tar -cf - --exclude=.git .
+    ) | (
+        cd "${REPO_DIR}" &&
+        tar -xf -
+    )
+
+    rm -rf "${REPO_DIR}/.git"
+    cp -R "${TMP_REPO}/.git" "${REPO_DIR}/.git"
+
+    if [ "${HAD_PROFILE}" -eq 1 ]; then
+        mkdir -p "${REPO_DIR}/profile"
+        cp -R "${PROFILE_BACKUP}/." "${REPO_DIR}/profile/"
+    fi
+
+    rm -rf "${TMP_ROOT}"
+    return 0
+}
+
 _cmd_update() {
     step "Updating PocketCli"
     REPO_DIR="${POCKETCLI_DIR}"
@@ -198,6 +238,19 @@ _cmd_update() {
 
     explain_step "Preparing repository context"
     explain_kv "repo_dir" "${REPO_DIR}"
+    explain_kv "repo_ref" "${POCKETCLI_REPO_REF}"
+
+    if ! git -C "${REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        warn "Current install is missing git metadata; rebuilding update context..."
+        explain "The installation was not detected as a git repository; seeding tracked files from remote."
+        if _seed_repo_from_remote "${REPO_DIR}"; then
+            ok "Update context rebuilt from ${POCKETCLI_REPO_REF}."
+        else
+            warn "Could not rebuild update context automatically."
+            explain "Failed to clone/update repository metadata from remote."
+            return 0
+        fi
+    fi
 
     explain_step "Checking stash state before update"
     BEFORE_STASH=$(git -C "${REPO_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
