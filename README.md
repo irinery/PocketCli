@@ -210,6 +210,8 @@ Esse teste usa dados mockados para validar o bootstrap inicial, a atualização 
 
 ## Roadmap
 
+Plano detalhado por fases: `docs/implementation-plan.md`.
+
 - [ ] `Fleet Mode` — `pocket connect server1`, `pocket connect server2`
 - [ ] Dashboard TUI com logs, git e deploy
 - [ ] Deploy automático via git hook
