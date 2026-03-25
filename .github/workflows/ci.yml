@@ -41,3 +41,36 @@ jobs:
 
       - name: Build pocket binary
         run: go build -o /tmp/pocket ./cmd/pocket
+
+  viewer-ish-sim:
+    name: Viewer-ish (Alpine-like + mocked tailscale)
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.21
+    env:
+      GOMAXPROCS: "1"
+      GOMEMLIMIT: "768MiB"
+
+    steps:
+      - name: Install base dependencies (without tailscale)
+        run: apk add --no-cache bash git go
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Provide mocked tailscale binary
+        run: |
+          cat > /usr/local/bin/tailscale <<'TS'
+          #!/usr/bin/env sh
+          set -eu
+          if [ "$#" -eq 2 ] && [ "$1" = "status" ] && [ "$2" = "--json" ]; then
+            printf '{"Peer":{"viewer":{"HostName":"viewer","TailscaleIPs":["100.64.0.10"],"Online":false,"OS":"linux"}}}'
+            exit 0
+          fi
+          echo "mock tailscale: unsupported args: $*" >&2
+          exit 1
+          TS
+          chmod +x /usr/local/bin/tailscale
+
+      - name: Run focused go test suite under constrained env
+        run: go test ./cmd/pocket ./internal/...
