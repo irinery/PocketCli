@@ -9,6 +9,12 @@ import (
 	"pocketcli/internal/ssh"
 )
 
+var (
+	hostsViewer = defaultHostsViewer
+	openSSH     = ssh.Open
+	execSSH     = ssh.Exec
+)
+
 func main() {
 	root := newRootCommand()
 	if err := root.Execute(); err != nil {
@@ -38,7 +44,7 @@ func newHostsCommand() *cobra.Command {
 		Use:   "hosts",
 		Short: "List, filter and connect to Tailscale machines",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return defaultHostsViewer(os.Stdin, cmd.OutOrStdout())
+			return hostsViewer(os.Stdin, cmd.OutOrStdout())
 		},
 	}
 }
@@ -49,7 +55,7 @@ func newSSHCommand() *cobra.Command {
 		Short: "Open SSH session to host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return ssh.Open(args[0])
+			return openSSH(args[0])
 		},
 	}
 }
@@ -62,7 +68,7 @@ func newExecCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			host := args[0]
 			remoteCmd := strings.Join(args[1:], " ")
-			return ssh.Exec(host, remoteCmd)
+			return execSSH(host, remoteCmd)
 		},
 	}
 }
