@@ -25,8 +25,10 @@ type Machine struct {
 	OS       string
 }
 
+var execCommand = exec.Command
+
 func GetStatus() (Status, error) {
-	cmd := exec.Command("tailscale", "status", "--json")
+	cmd := execCommand("tailscale", "status", "--json")
 	out, err := cmd.Output()
 	if err != nil {
 		return Status{}, fmt.Errorf("tailscale status --json failed: %w", err)
