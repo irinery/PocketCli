@@ -24,7 +24,7 @@ _assert_not_ish() {
         echo ""
         warn "iSH detected — tailscaled cannot run on this kernel."
         info "The Tailscale iOS app handles VPN for this device."
-        info "To check connectivity: pocket ts-ping <hostname>"
+        info "To check connectivity: pocket tailscale-ping <hostname> (or ts-ping)"
         info "To list saved hosts:   pocket menu"
         echo ""
         exit 0

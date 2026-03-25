@@ -39,6 +39,8 @@ _cmd_help() {
     printf "  ${C_CYAN}tailscale-restart${C_NC}        Restart tailscaled daemon\n"
     printf "  ${C_CYAN}tailscale-status${C_NC}         Show Tailscale peers and IP\n"
     printf "  ${C_CYAN}tailscale-auth${C_NC}           Re-authenticate (shows QR)\n"
+    printf "  ${C_CYAN}tailscale-ping${C_NC}  <host>   Check host reachability via ping\n"
+    printf "  ${C_CYAN}ts-ping${C_NC}         <host>   Alias for tailscale-ping\n"
     echo ""
     printf "  ${C_CYAN}doctor${C_NC}                   Run compatibility tests\n"
     printf "  ${C_CYAN}update${C_NC}                   Update PocketCli\n"
@@ -373,6 +375,8 @@ case "${CMD}" in
     tailscale-stop)             _cmd_ts stop ;;
     tailscale-status)           _cmd_ts status ;;
     tailscale-auth)             _cmd_ts auth ;;
+    tailscale-ping)             _cmd_ts ping "$@" ;;
+    ts-ping)                    _cmd_ts ping "$@" ;;
     update)                     _cmd_update ;;
     uninstall)                  _cmd_uninstall ;;
     version|-v|--version)       _cmd_version ;;

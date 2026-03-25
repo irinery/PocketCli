@@ -47,6 +47,17 @@ assert_equals() {
     fi
 }
 
+assert_file_not_exists() {
+    FILE="$1"
+    MESSAGE="$2"
+    if [ ! -e "$FILE" ]; then
+        pass "$MESSAGE"
+    else
+        printf '  expected file to not exist: %s\n' "$FILE" >&2
+        fail "$MESSAGE"
+    fi
+}
+
 run_bootstrap_test() {
     TEST_NAME="$1"
     WORKDIR=$(mktemp -d)
@@ -121,6 +132,59 @@ EOS
         assert_file_contains "$LOG_FILE" "pull --quiet --ff-only" "bootstrap faz pull fast-forward no repositório existente"
         assert_file_contains "$HOME_DIR/install-ran" "update install invoked" "bootstrap executa install.sh após atualização"
     fi
+}
+
+run_bootstrap_archive_fallback_test() {
+    WORKDIR=$(mktemp -d)
+    HOME_DIR="$WORKDIR/home"
+    MOCKBIN="$WORKDIR/mockbin"
+    FIXTURE_REPO="$WORKDIR/fixture-repo"
+    ARCHIVE_SRC="$WORKDIR/archive-src"
+    ARCHIVE_FILE="$WORKDIR/pocketcli.tar.gz"
+    mkdir -p "$HOME_DIR" "$MOCKBIN" "$FIXTURE_REPO" "$ARCHIVE_SRC/PocketCli-main"
+
+    cat > "$ARCHIVE_SRC/PocketCli-main/install.sh" <<'EOS'
+#!/usr/bin/env sh
+set -eu
+printf 'archive install invoked\n' > "${HOME}/install-ran"
+EOS
+    chmod +x "$ARCHIVE_SRC/PocketCli-main/install.sh"
+    tar -czf "$ARCHIVE_FILE" -C "$ARCHIVE_SRC" "PocketCli-main"
+
+    cat > "$MOCKBIN/curl" <<'EOS'
+#!/usr/bin/env sh
+set -eu
+DEST=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o)
+            DEST="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+[ -n "$DEST" ] || exit 1
+cp "$POCKETCLI_TEST_ARCHIVE" "$DEST"
+EOS
+    chmod +x "$MOCKBIN/curl"
+    cat > "$MOCKBIN/git" <<'EOS'
+#!/usr/bin/env sh
+exit 1
+EOS
+    chmod +x "$MOCKBIN/git"
+
+    env \
+        HOME="$HOME_DIR" \
+        SHELL="/bin/sh" \
+        PATH="$MOCKBIN:/usr/bin:/bin" \
+        POCKETCLI_TEST_ARCHIVE="$ARCHIVE_FILE" \
+        bash "$REPO_ROOT/bootstrap.sh" >/tmp/pocketcli-bootstrap-archive.out 2>/tmp/pocketcli-bootstrap-archive.err
+
+    assert_file_contains "$HOME_DIR/install-ran" "archive install invoked" "bootstrap instala via fallback de archive quando git não está disponível"
+    assert_file_not_exists "$HOME_DIR/.pocketcli/.git" "fallback por archive não depende de metadados git locais"
 }
 
 prepare_install_fixture() {
@@ -287,6 +351,7 @@ EOS
 printf '== Testes bootstrap ==\n'
 run_bootstrap_test clone
 run_bootstrap_test update
+run_bootstrap_archive_fallback_test
 printf '\n== Testes install ==\n'
 run_install_test
 run_agent_config_modes_test
