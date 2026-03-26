@@ -485,6 +485,13 @@ _read_key() {
 
 trap 'stty sane < /dev/tty 2>/dev/null || true' EXIT INT TERM
 
+if [ "${POCKETCLI_MENU_RENDER_ONCE:-0}" = "1" ]; then
+    _render_header
+    _render_dashboard
+    _draw_menu
+    exit 0
+fi
+
 while true; do
     _render_header
     _render_dashboard

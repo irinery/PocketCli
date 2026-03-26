@@ -11,6 +11,13 @@ _pocketcli_log_detect_os() {
 }
 
 detect_os() {
+    if [ -n "${POCKETCLI_OS_OVERRIDE:-}" ]; then
+        OS="${POCKETCLI_OS_OVERRIDE}"
+        _pocketcli_log_detect_os "detected OS override=${OS}"
+        export OS
+        return 0
+    fi
+
     OS=""
     _pocketcli_log_detect_os "starting OS detection"
 
