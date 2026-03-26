@@ -7,25 +7,21 @@ on:
     branches: [main]
 
 jobs:
-  shell-tests:
-    name: Shell test suite
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run shell-based regression tests
-        run: |
-          set -euo pipefail
-          for t in tests/test_bootstrap_install.sh tests/test_menu_fallback.sh tests/test_menu_no_hosts.sh tests/test_pocket_resume.sh tests/test_pocket_update.sh tests/test_radar_fallback.sh tests/test_scan_fallback.sh tests/test_tailscale_setup_fallback.sh; do
-            echo "==> running ${t}"
-            sh "${t}"
-          done
-
-  go-tests:
-    name: Go tests and build
-    runs-on: ubuntu-latest
+  build-and-smoke:
+    name: Build and smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            ci_profile: linux
+            go_test_cmd: go test ./...
+          - name: macos
+            os: macos-latest
+            ci_profile: macos
+            go_test_cmd: go test ./...
 
     steps:
       - name: Checkout
@@ -36,41 +32,85 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run go test
-        run: go test ./...
+      - name: Run shell regression suite
+        env:
+          POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+          POCKETCLI_TEST_EXCLUDES: test_ish.sh
+        run: sh tests/run_all.sh
 
-      - name: Build pocket binary
-        run: go build -o /tmp/pocket ./cmd/pocket
+      - name: Run Go tests
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          ${{ matrix.go_test_cmd }}
+          END_TS=$(date +%s)
+          printf '### Go tests (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
 
-  viewer-ish-sim:
-    name: Viewer-ish (Alpine-like + mocked tailscale)
+      - name: Build pocket Go binary
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+          END_TS=$(date +%s)
+          printf '### Build (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+
+      - name: Run pocket smoke tests
+        env:
+          POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+          POCKETCLI_GO_BINARY: /tmp/pocket-go
+        run: sh tests/run_smoke.sh
+
+  build-and-smoke-alpine:
+    name: Build and smoke (alpine)
     runs-on: ubuntu-latest
     container:
       image: alpine:3.21
     env:
       GOMAXPROCS: "1"
       GOMEMLIMIT: "768MiB"
+      POCKETCLI_CI_PROFILE: alpine
 
     steps:
-      - name: Install base dependencies (without tailscale)
-        run: apk add --no-cache bash git go
+      - name: Install base dependencies
+        run: apk add --no-cache bash coreutils git go util-linux
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Provide mocked tailscale binary
-        run: |
-          cat > /usr/local/bin/tailscale <<'TS'
-          #!/usr/bin/env sh
-          set -eu
-          if [ "$#" -eq 2 ] && [ "$1" = "status" ] && [ "$2" = "--json" ]; then
-            printf '{"Peer":{"viewer":{"HostName":"viewer","TailscaleIPs":["100.64.0.10"],"Online":false,"OS":"linux"}}}'
-            exit 0
-          fi
-          echo "mock tailscale: unsupported args: $*" >&2
-          exit 1
-          TS
-          chmod +x /usr/local/bin/tailscale
+      - name: Run shell regression suite
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+          POCKETCLI_TEST_EXCLUDES: test_ish.sh
+        run: sh tests/run_all.sh
 
-      - name: Run focused go test suite under constrained env
-        run: go test ./cmd/pocket ./internal/...
+      - name: Run focused Go tests
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          go test ./cmd/pocket ./internal/...
+          END_TS=$(date +%s)
+          printf '### Go tests (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+
+      - name: Build pocket Go binary
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+          END_TS=$(date +%s)
+          printf '### Build (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+
+      - name: Run pocket smoke tests
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+          POCKETCLI_GO_BINARY: /tmp/pocket-go
+        run: sh tests/run_smoke.sh
