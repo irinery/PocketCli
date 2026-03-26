@@ -54,7 +54,7 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go build -o /tmp/pocket-go ./cmd/pocket
+          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
           END_TS=$(date +%s)
           printf '### Build (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
@@ -104,7 +104,7 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go build -o /tmp/pocket-go ./cmd/pocket
+          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
           END_TS=$(date +%s)
           printf '### Build (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
