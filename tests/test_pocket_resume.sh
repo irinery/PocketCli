@@ -2,6 +2,7 @@
 set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+. "$REPO_ROOT/tests/lib/test_helpers.sh"
 WORKDIR=$(mktemp -d)
 HOME_DIR="$WORKDIR/home"
 MOCKBIN="$WORKDIR/mockbin"
@@ -37,7 +38,7 @@ esac
 EOS
 chmod +x "$MOCKBIN/tmux"
 
-script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" /dev/null >/dev/null 2>&1 || true
+run_pty_command 3 /dev/null "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" >/dev/null 2>&1 || true
 
 grep -F 'tmux:new-session -d -s pocketcli' "$LOG_FILE" >/dev/null 2>&1
 grep -F "tmux:send-keys -t pocketcli POCKETCLI_RESTORE=1 '$HOME_DIR/.pocketcli/pocket' __restore C-m" "$LOG_FILE" >/dev/null 2>&1
@@ -66,7 +67,7 @@ exit 0
 EOS
     chmod +x "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh"
 
-    script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' TMUX='1' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" /dev/null </dev/null >/dev/null 2>&1 || true
+    run_pty_command 3 /dev/null "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' TMUX='1' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" >/dev/null 2>&1 || true
 
     grep -F 'menu-invoked' "$LOG_FILE" >/dev/null 2>&1
     grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1

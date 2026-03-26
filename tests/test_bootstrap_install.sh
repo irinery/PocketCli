@@ -286,6 +286,7 @@ run_install_test() {
         HOME="$HOME_DIR" \
         PATH="$MOCKBIN:/usr/bin:/bin" \
         POCKETCLI_MODE_CHOICE="1" \
+        POCKETCLI_OS_OVERRIDE="debian" \
         POCKETCLI_TEST_LOG="$LOG_FILE" \
         sh "$INSTALL_DIR/install.sh" >/tmp/pocketcli-install.out 2>/tmp/pocketcli-install.err
 
@@ -325,6 +326,7 @@ EOS
         PATH="$MOCKBIN:/usr/bin:/bin" \
         POCKETCLI_MODE_CHOICE="2" \
         POCKETCLI_AGENT_CONFIG_CHOICE="3" \
+        POCKETCLI_OS_OVERRIDE="debian" \
         POCKETCLI_TEST_LOG="$LOG_FILE" \
         sh "$INSTALL_DIR/install.sh" >/tmp/pocketcli-agent-install.out 2>/tmp/pocketcli-agent-install.err
 

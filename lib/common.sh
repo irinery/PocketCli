@@ -59,11 +59,28 @@ with_timeout() {
     if command -v timeout >/dev/null 2>&1; then
         timeout "${SECS}" "$@"; return $?
     fi
+    if command -v python3 >/dev/null 2>&1; then
+        python3 - "$SECS" "$@" <<'PY'
+import subprocess
+import sys
+
+timeout = int(sys.argv[1])
+command = sys.argv[2:]
+proc = subprocess.Popen(command)
+try:
+    raise SystemExit(proc.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    proc.kill()
+    proc.wait()
+    raise SystemExit(124)
+PY
+        return $?
+    fi
     "$@" & PID=$!
     ( sleep "${SECS}"; kill "${PID}" 2>/dev/null ) &
     GUARD=$!
     wait "${PID}" 2>/dev/null; RC=$?
-    kill "${GUARD}" 2>/dev/null; wait "${GUARD}" 2>/dev/null || true
+    kill "${GUARD}" 2>/dev/null || true
     return ${RC}
 }
 
