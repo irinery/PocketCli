@@ -2,6 +2,7 @@
 set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+. "$REPO_ROOT/tests/lib/test_helpers.sh"
 WORKDIR=$(mktemp -d)
 HOME_DIR="$WORKDIR/home"
 MOCKBIN="$WORKDIR/mockbin"
@@ -36,7 +37,7 @@ chmod +x "$MOCKBIN/clear" "$MOCKBIN/tailscale" "$MOCKBIN/jq" "$MOCKBIN/ping"
 
 OUTPUT_FILE="$WORKDIR/menu.out"
 
-timeout 2 script -q -c "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' TERM='dumb' sh '$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh'" "$OUTPUT_FILE" >/dev/null 2>&1 || true
+env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" TERM="dumb" POCKETCLI_MENU_RENDER_ONCE="1" sh "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh" >"$OUTPUT_FILE" 2>/dev/null || true
 
 grep -F 'sem host salvo' "$OUTPUT_FILE" >/dev/null 2>&1
 grep -F 'PocketCli Control Deck' "$OUTPUT_FILE" >/dev/null 2>&1
