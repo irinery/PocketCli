@@ -1,0 +1,57 @@
+name: Tag release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: tag-release-main
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Create release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Skip if HEAD already has a release tag
+        id: existing
+        run: |
+          EXISTING_TAG=$(git tag --points-at HEAD 'release/v*' | head -n 1 || true)
+          if [ -n "${EXISTING_TAG}" ]; then
+            printf 'tag=%s\n' "${EXISTING_TAG}" >> "${GITHUB_OUTPUT}"
+            printf 'skip=true\n' >> "${GITHUB_OUTPUT}"
+            echo "HEAD already tagged with ${EXISTING_TAG}"
+            exit 0
+          fi
+
+          printf 'skip=false\n' >> "${GITHUB_OUTPUT}"
+
+      - name: Compute next release tag
+        id: next
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          NEXT_TAG=$(sh ./scripts/next_release_tag.sh)
+          printf 'tag=%s\n' "${NEXT_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "Next tag: ${NEXT_TAG}"
+
+      - name: Create and push tag
+        if: steps.existing.outputs.skip != 'true'
+        env:
+          NEXT_TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${NEXT_TAG}" "${GITHUB_SHA}"
+          git push origin "${NEXT_TAG}"
