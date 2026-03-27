@@ -97,7 +97,12 @@ fi
 PROFILE_FILE="$HOME_DIR/.pocketcli/profile/custom.txt"
 mkdir -p "$(dirname "$PROFILE_FILE")"
 printf 'preserve-me\n' > "$PROFILE_FILE"
+printf 'obsolete\n' > "$HOME_DIR/.pocketcli/legacy.outside-profile"
 env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" POCKETCLI_TEST_GIT_LOG="$LOG_FILE" POCKETCLI_TEST_STASH_FILE="$STASH_FILE" POCKETCLI_TEST_NO_GIT=1 sh "$HOME_DIR/.pocketcli/pocket" update >/tmp/pocketcli-update-reseed.out 2>/tmp/pocketcli-update-reseed.err
 grep -F 'clone --quiet --branch main https://github.com/irinery/PocketCli.git' "$LOG_FILE" >/dev/null 2>&1
 grep -F 'preserve-me' "$HOME_DIR/.pocketcli/profile/custom.txt" >/dev/null 2>&1
+if [ -e "$HOME_DIR/.pocketcli/legacy.outside-profile" ]; then
+    printf 'FAIL pocket update manteve arquivo obsoleto fora de profile/\n' >&2
+    exit 1
+fi
 printf 'PASS pocket update recompõe .git quando a instalação veio sem metadados e preserva profile\n'

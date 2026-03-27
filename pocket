@@ -195,6 +195,20 @@ _restore_update_stash() {
     fi
 }
 
+_clear_install_tree_preserving_profile() {
+    REPO_DIR="$1"
+
+    [ -d "${REPO_DIR}" ] || return 0
+
+    for ENTRY in "${REPO_DIR}"/.[!.]* "${REPO_DIR}"/..?* "${REPO_DIR}"/*; do
+        [ -e "${ENTRY}" ] || continue
+        if [ "$(basename "${ENTRY}")" = "profile" ]; then
+            continue
+        fi
+        rm -rf "${ENTRY}"
+    done
+}
+
 _seed_repo_from_remote() {
     REPO_DIR="$1"
     TMP_ROOT=$(mktemp -d)
@@ -213,6 +227,7 @@ _seed_repo_from_remote() {
     fi
 
     mkdir -p "${REPO_DIR}"
+    _clear_install_tree_preserving_profile "${REPO_DIR}"
     (
         cd "${TMP_REPO}" &&
         tar -cf - --exclude=.git .
