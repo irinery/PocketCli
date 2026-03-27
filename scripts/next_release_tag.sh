@@ -52,7 +52,7 @@ next_release_tag() {
             }
 
             best_patch += 1
-            printf "release/v%d.%d.%d\n", best_major, best_minor, best_patch
+            printf "v%d.%d.%d\n", best_major, best_minor, best_patch
         }
     '
 }

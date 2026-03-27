@@ -26,13 +26,13 @@ assert_next_tag_in_repo() {
     fi
 }
 
-assert_next_tag "release/v1.1.6" v1.1.4 v1.1.5 v1.0.9
-assert_next_tag "release/v1.1.7" release/v1.1.6 release/v1.1.5
-assert_next_tag "release/v1.2.1" v1.1.9 release/v1.2.0 v1.0.8
+assert_next_tag "v1.1.6" v1.1.4 v1.1.5 v1.0.9
+assert_next_tag "v1.1.7" release/v1.1.6 release/v1.1.5
+assert_next_tag "v1.2.1" v1.1.9 release/v1.2.0 v1.0.8
 
 EMPTY_REPO=$(mktemp -d)
 trap 'rm -rf "$EMPTY_REPO"' EXIT INT TERM
 git -C "$EMPTY_REPO" init >/dev/null 2>&1
-assert_next_tag_in_repo "release/v0.0.1" "$EMPTY_REPO"
+assert_next_tag_in_repo "v0.0.1" "$EMPTY_REPO"
 
 printf 'PASS next_release_tag calcula a proxima tag para legadas, novas, mistas e sem tags\n'
