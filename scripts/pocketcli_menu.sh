@@ -378,13 +378,44 @@ _manage_hosts() {
                 case "${DN}" in
                     ''|*[!0-9]*) LAST_MESSAGE='Linha inválida.'; continue ;;
                 esac
-                sed -i "${DN}d" "${HOSTS_FILE}" 2>/dev/null || true
-                LAST_MESSAGE="Linha ${DN} removida."
+                if _remove_host_line "${HOSTS_FILE}" "${DN}"; then
+                    LAST_MESSAGE="Linha ${DN} removida."
+                else
+                    case "$?" in
+                        2) LAST_MESSAGE='Nenhum host salvo para remover.' ;;
+                        3) LAST_MESSAGE="Linha ${DN} não existe." ;;
+                        *) LAST_MESSAGE='Falha ao salvar a remoção do host.' ;;
+                    esac
+                fi
             ;;
             b|B|'') return ;;
             *) LAST_MESSAGE='Escolha inválida em hosts.' ;;
         esac
     done
+}
+
+_remove_host_line() {
+    HOSTS_FILE="$1"
+    LINE_NO="$2"
+
+    [ -f "${HOSTS_FILE}" ] || return 2
+
+    TOTAL_LINES=$(grep -v '^[[:space:]]*#' "${HOSTS_FILE}" | grep -v '^[[:space:]]*$' | awk 'END { print NR + 0 }')
+    [ "${TOTAL_LINES}" -gt 0 ] || return 2
+    [ "${LINE_NO}" -ge 1 ] && [ "${LINE_NO}" -le "${TOTAL_LINES}" ] || return 3
+
+    TMP_FILE=$(mktemp "${HOSTS_FILE}.tmp.XXXXXX") || return 4
+    if awk -v target="${LINE_NO}" '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*$/ { next }
+        { count += 1 }
+        count != target { print }
+    ' "${HOSTS_FILE}" > "${TMP_FILE}" && mv "${TMP_FILE}" "${HOSTS_FILE}"; then
+        return 0
+    fi
+
+    rm -f "${TMP_FILE}"
+    return 4
 }
 
 _pause_for_user() {
