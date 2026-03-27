@@ -477,7 +477,7 @@ _run_action() {
 }
 
 _read_key() {
-    stty -echo -icanon min 1 time 0 < /dev/tty
+    stty -echo -icanon min 1 time 0 < /dev/tty 2>/dev/null || true
     KEY=$(dd bs=1 count=1 2>/dev/null < /dev/tty || true)
     stty sane < /dev/tty 2>/dev/null || true
     printf '%s' "${KEY}"
@@ -528,9 +528,16 @@ while true; do
             INPUT_BUFFER=''
             LAST_MESSAGE='No tmux use Ctrl+S + h/j/k/l para alternar panes sem tocar na tela.'
         ;;
-        l|'')
+        l)
             INPUT_BUFFER=''
             _run_action "${MENU_ACTION}"
+        ;;
+        "$(printf '\r')")
+            INPUT_BUFFER=''
+            _run_action "${MENU_ACTION}"
+        ;;
+        '')
+            true
         ;;
         q)
             INPUT_BUFFER=''
