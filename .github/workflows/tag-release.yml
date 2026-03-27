@@ -32,6 +32,7 @@ jobs:
           if [ -n "${EXISTING_TAG}" ]; then
             printf 'tag=%s\n' "${EXISTING_TAG}" >> "${GITHUB_OUTPUT}"
             printf 'skip=true\n' >> "${GITHUB_OUTPUT}"
+            printf 'release_tag=%s\n' "${EXISTING_TAG}" >> "${GITHUB_OUTPUT}"
             echo "HEAD already tagged with ${EXISTING_TAG}"
             exit 0
           fi
@@ -44,6 +45,7 @@ jobs:
         run: |
           NEXT_TAG=$(sh ./scripts/next_release_tag.sh)
           printf 'tag=%s\n' "${NEXT_TAG}" >> "${GITHUB_OUTPUT}"
+          printf 'release_tag=%s\n' "${NEXT_TAG}" >> "${GITHUB_OUTPUT}"
           echo "Next tag: ${NEXT_TAG}"
 
       - name: Create and push tag
@@ -55,3 +57,36 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag "${NEXT_TAG}" "${GITHUB_SHA}"
           git push origin "${NEXT_TAG}"
+
+      - name: Compute SHA256 checksums
+        run: |
+          echo "── Computing checksums ──"
+          sha256sum bootstrap.sh install.sh > checksums.sha256
+          cat checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.existing.outputs.tag || steps.next.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            bootstrap.sh
+            install.sh
+            checksums.sha256
+          body: |
+            ## PocketCli ${{ steps.existing.outputs.tag || steps.next.outputs.tag }}
+
+            ### Install
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${{ steps.existing.outputs.tag || steps.next.outputs.tag }}/bootstrap.sh | bash
+            ```
+
+            ### Verify checksum (recommended)
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${{ steps.existing.outputs.tag || steps.next.outputs.tag }}/bootstrap.sh -o bootstrap.sh
+            curl -fsSL https://github.com/irinery/PocketCli/releases/download/${{ steps.existing.outputs.tag || steps.next.outputs.tag }}/checksums.sha256 -o checksums.sha256
+            sha256sum -c checksums.sha256
+            bash bootstrap.sh
+            ```
