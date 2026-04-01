@@ -56,6 +56,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 - Habilita Tailscale SSH
 - Inicia ambiente tmux com `htop` + `lazygit`
 - Permite gerenciamento remoto
+- Ajusta automaticamente o tamanho inicial da sessão tmux ao terminal disponível, com fallback seguro em ambientes sem TTY completo
 - Mostra um comparativo entre `tmux`, `starship` e integração de shell antes da escolha
 - Pode preservar a config atual do host, aplicar a do projeto ou alternar entre ambas com `~/.pocketcli/scripts/switch_config.sh`
 
@@ -88,9 +89,9 @@ PocketCli/
 ├── scripts/
 │   ├── install_deps.sh       ← instala pacotes por OS/modo
 │   ├── install_tailscale.sh  ← instala e faz login no Tailscale
-│   ├── start_agent.sh        ← inicia tmux com htop + lazygit
+│   ├── start_agent.sh        ← inicia tmux com sizing adaptativo e fallback para comandos ausentes
 │   ├── start_viewer.sh       ← prepara SSH; `pocket` sem args cai no menu em terminais interativos
-│   └── pocketcli_menu.sh     ← dashboard TUI leve com navegação Vim e telemetria útil
+│   └── pocketcli_menu.sh     ← dashboard TUI com layout responsivo (split, stack, compact) e fallback leve
 │
 └── tools/
     └── fonts.sh          ← instala JetBrainsMono Nerd Font (opcional)
@@ -195,6 +196,16 @@ sh tests/test_bootstrap_install.sh
 ```
 
 Esse teste usa dados mockados para validar o bootstrap inicial, a atualização do clone existente e a orquestração do `install.sh` sem depender de rede ou instalar pacotes reais.
+
+Para validar regressões da interface em cenários de terminal heterogêneo (viewer/agent), execute também:
+
+```bash
+sh tests/test_menu_fallback.sh
+sh tests/test_start_agent_launcher.sh
+go test ./cmd/pocket
+```
+
+Isso cobre layout responsivo do menu shell, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
 
 ---
 
