@@ -29,7 +29,16 @@ cat >/dev/null
 exit 0
 EOS
 
-chmod +x "$MOCKBIN/clear" "$MOCKBIN/tailscale" "$MOCKBIN/jq"
+cat > "$MOCKBIN/stty" <<'EOS'
+#!/usr/bin/env sh
+if [ "${1:-}" = "size" ]; then
+    printf '24 80\n'
+    exit 0
+fi
+exit 0
+EOS
+
+chmod +x "$MOCKBIN/clear" "$MOCKBIN/tailscale" "$MOCKBIN/jq" "$MOCKBIN/stty"
 
 OUTPUT_FILE="$WORKDIR/menu.out"
 
@@ -38,5 +47,21 @@ env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" TERM="dumb" POCKETCLI_MENU_RE
 grep -F 'peer online 2/2 visíveis' "$OUTPUT_FILE" >/dev/null 2>&1
 grep -F 'host foco   ipad-a' "$OUTPUT_FILE" >/dev/null 2>&1
 grep -F 'PocketCli Control Deck' "$OUTPUT_FILE" >/dev/null 2>&1
+
+cat > "$MOCKBIN/stty" <<'EOS'
+#!/usr/bin/env sh
+if [ "${1:-}" = "size" ]; then
+    printf '24 58\n'
+    exit 0
+fi
+exit 0
+EOS
+chmod +x "$MOCKBIN/stty"
+
+NARROW_OUTPUT_FILE="$WORKDIR/menu-narrow.out"
+env HOME="$HOME_DIR" PATH="$MOCKBIN:/usr/bin:/bin" TERM="dumb" POCKETCLI_MENU_RENDER_ONCE="1" sh "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh" >"$NARROW_OUTPUT_FILE" 2>/dev/null || true
+
+grep -F 'PocketCli SSH/tmux' "$NARROW_OUTPUT_FILE" >/dev/null 2>&1
+grep -F 'peer online 2/2 visíveis' "$NARROW_OUTPUT_FILE" >/dev/null 2>&1
 
 printf 'PASS pocketcli_menu falls back to saved hosts when tailscale status is unavailable\n'
