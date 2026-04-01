@@ -16,10 +16,15 @@ CURRENT_INDEX=1
 MENU_ACTION=""
 LAST_MESSAGE="Use j/k para navegar, Enter para abrir, h/l para panes, q para sair."
 INPUT_BUFFER=""
-TERM_WIDTH=$( (stty size < /dev/tty 2>/dev/null || printf '24 80') | awk '{print $2}' )
-[ -z "${TERM_WIDTH}" ] && TERM_WIDTH=80
+TERM_WIDTH=80
+TERM_HEIGHT=24
 PANEL_WIDTH=34
-[ "${TERM_WIDTH}" -lt 76 ] && PANEL_WIDTH=30
+DASHBOARD_LAYOUT="split"
+MESH_TOTAL=""
+MESH_ONLINE=""
+MESH_LOADED=0
+PROBE_CACHE=""
+PROBE_CACHE_TS=0
 
 _menu_items() {
     cat <<'ITEMS'
@@ -47,6 +52,35 @@ _screen_clear() {
     else
         printf '\033[2J\033[H'
     fi
+}
+
+_refresh_terminal_size() {
+    SIZE=$(stty size 2>/dev/null || true)
+    [ -n "${SIZE}" ] || SIZE='24 80'
+    TERM_HEIGHT=$(printf '%s' "${SIZE}" | awk '{print $1}')
+    TERM_WIDTH=$(printf '%s' "${SIZE}" | awk '{print $2}')
+
+    [ -n "${TERM_HEIGHT}" ] || TERM_HEIGHT=24
+    [ -n "${TERM_WIDTH}" ] || TERM_WIDTH=80
+
+    if [ "${TERM_WIDTH}" -ge 92 ]; then
+        DASHBOARD_LAYOUT="split"
+        PANEL_WIDTH=$(( (TERM_WIDTH - 6) / 2 ))
+        [ "${PANEL_WIDTH}" -gt 44 ] && PANEL_WIDTH=44
+        [ "${PANEL_WIDTH}" -lt 28 ] && PANEL_WIDTH=28
+    elif [ "${TERM_WIDTH}" -ge 60 ]; then
+        DASHBOARD_LAYOUT="stack"
+        PANEL_WIDTH=$((TERM_WIDTH - 4))
+    else
+        DASHBOARD_LAYOUT="compact"
+        PANEL_WIDTH=$((TERM_WIDTH - 2))
+    fi
+
+    if [ "${PANEL_WIDTH}" -lt 22 ]; then
+        PANEL_WIDTH=22
+    fi
+
+    return 0
 }
 
 _supports_utf8() {
@@ -180,43 +214,72 @@ _list_hosts() {
     list_known_hosts
 }
 
-_collect_peer_count() {
+_load_mesh_counts() {
+    if [ "${MESH_LOADED}" -eq 1 ]; then
+        return
+    fi
+
+    MESH_TOTAL=""
+    MESH_ONLINE=""
+
     if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+        TS_STATUS=$(with_timeout 3 tailscale status --json 2>/dev/null || true)
         if [ -n "${TS_STATUS}" ]; then
-            printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || printf '0'
-            return
+            MESH_TOTAL=$(printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || true)
+            MESH_ONLINE=$(printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || true)
         fi
     fi
-    COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
-    printf '%s' "${COUNT}"
+
+    if [ -z "${MESH_TOTAL}" ] || [ -z "${MESH_ONLINE}" ]; then
+        HOST_COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
+        MESH_TOTAL="${HOST_COUNT}"
+        MESH_ONLINE="${HOST_COUNT}"
+    fi
+
+    MESH_LOADED=1
+}
+
+_collect_peer_count() {
+    _load_mesh_counts
+    printf '%s' "${MESH_TOTAL}"
 }
 
 _collect_online_count() {
-    if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
-        if [ -n "${TS_STATUS}" ]; then
-            printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || printf '0'
-            return
-        fi
-    fi
-    COUNT=$(_list_hosts 2>/dev/null | awk 'NF {count += 1} END {print count + 0}')
-    printf '%s' "${COUNT}"
+    _load_mesh_counts
+    printf '%s' "${MESH_ONLINE}"
 }
 
 _collect_focus_host() {
     _list_hosts 2>/dev/null | head -1 || true
 }
 
+_now_epoch() {
+    date '+%s' 2>/dev/null || printf '0'
+}
+
 _probe_focus_host() {
+    MODE="$1"
     HOST="$(_collect_focus_host || true)"
     [ -z "${HOST}" ] && { printf 'sem host salvo'; return; }
 
-    if ping_host "${HOST}" 2; then
-        printf '%s OK' "${HOST}"
-    else
-        printf '%s lento/offline' "${HOST}"
+    if [ "${MODE}" = "compact" ]; then
+        printf '%s' "${HOST}"
+        return
     fi
+
+    NOW=$(_now_epoch)
+    if [ "${PROBE_CACHE_TS}" -gt 0 ] && [ $((NOW - PROBE_CACHE_TS)) -lt 15 ] && [ -n "${PROBE_CACHE}" ]; then
+        printf '%s' "${PROBE_CACHE}"
+        return
+    fi
+
+    if ping_host "${HOST}" 2; then
+        PROBE_CACHE="${HOST} OK"
+    else
+        PROBE_CACHE="${HOST} lento/offline"
+    fi
+    PROBE_CACHE_TS="${NOW}"
+    printf '%s' "${PROBE_CACHE}"
 }
 
 _tmux_prefix() {
@@ -228,9 +291,12 @@ _tmux_prefix() {
 }
 
 _render_header() {
+    _refresh_terminal_size
     _screen_clear
     printf '\n'
-    if _supports_utf8; then
+    if [ "${TERM_WIDTH}" -lt 62 ]; then
+        printf '  %bPocketCli%b %bSSH/tmux%b\n' "${C_BOLD}" "${C_NC}" "${C_DIM}" "${C_NC}"
+    elif _supports_utf8; then
         printf '  %b╭──────────────────────────────────────────────────────────────╮%b\n' "${C_CYAN}" "${C_NC}"
         printf '  %b│%b %bPocketCli Control Deck%b %b· SSH rápido para iPad e tmux%b %b│%b\n' "${C_CYAN}" "${C_NC}" "${C_BOLD}" "${C_NC}" "${C_DIM}" "${C_NC}" "${C_CYAN}" "${C_NC}"
         printf '  %b╰──────────────────────────────────────────────────────────────╯%b\n' "${C_CYAN}" "${C_NC}"
@@ -243,6 +309,7 @@ _render_header() {
 }
 
 _render_dashboard() {
+    MESH_LOADED=0
     HOSTNAME=$(_collect_hostname)
     TS_IP=$(_collect_ts_ip)
     [ -z "${TS_IP}" ] && TS_IP='offline'
@@ -253,40 +320,62 @@ _render_dashboard() {
     [ -z "${LOAD}" ] && LOAD='n/a'
     ONLINE=$(_collect_online_count)
     TOTAL=$(_collect_peer_count)
-    PROBE=$(_probe_focus_host)
+    PROBE=$(_probe_focus_host "${DASHBOARD_LAYOUT}")
     TMUX_HINT=$(_tmux_prefix)
 
-    LEFT_FILE=$(mktemp)
-    RIGHT_FILE=$(mktemp)
+    if [ "${DASHBOARD_LAYOUT}" = "split" ]; then
+        TMP_LEFT_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-left.XXXXXX")
+        TMP_RIGHT_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-right.XXXXXX")
 
-    {
-        _box_top 'nó local' "${PANEL_WIDTH}"
-        _box_line "${PANEL_WIDTH}" 'hostname' "${HOSTNAME:-desconhecido}"
-        _box_line "${PANEL_WIDTH}" 'tailscale' "${TS_IP}"
-        _box_line "${PANEL_WIDTH}" 'memória' "${MEM}"
-        _box_line "${PANEL_WIDTH}" 'disco' "${DISK}"
-        _box_line "${PANEL_WIDTH}" 'load 1m' "${LOAD}"
-        _box_bottom "${PANEL_WIDTH}"
-    } > "${LEFT_FILE}"
+        {
+            _box_top 'nó local' "${PANEL_WIDTH}"
+            _box_line "${PANEL_WIDTH}" 'hostname' "${HOSTNAME:-desconhecido}"
+            _box_line "${PANEL_WIDTH}" 'tailscale' "${TS_IP}"
+            _box_line "${PANEL_WIDTH}" 'memória' "${MEM}"
+            _box_line "${PANEL_WIDTH}" 'disco' "${DISK}"
+            _box_line "${PANEL_WIDTH}" 'load 1m' "${LOAD}"
+            _box_bottom "${PANEL_WIDTH}"
+        } > "${TMP_LEFT_FILE}"
 
-    {
-        _box_top 'fluxo ssh/tmux' "${PANEL_WIDTH}"
-        _box_line "${PANEL_WIDTH}" 'peer online' "${ONLINE}/${TOTAL} visíveis"
-        _box_line "${PANEL_WIDTH}" 'host foco' "${PROBE}"
-        _box_line "${PANEL_WIDTH}" 'pane nav' 'h j k l'
-        _box_line "${PANEL_WIDTH}" 'split' '| e -'
-        _box_line "${PANEL_WIDTH}" 'prefixo' "${TMUX_HINT}"
-        _box_bottom "${PANEL_WIDTH}"
-    } > "${RIGHT_FILE}"
+        {
+            _box_top 'fluxo ssh/tmux' "${PANEL_WIDTH}"
+            _box_line "${PANEL_WIDTH}" 'peer online' "${ONLINE}/${TOTAL} visíveis"
+            _box_line "${PANEL_WIDTH}" 'host foco' "${PROBE}"
+            _box_line "${PANEL_WIDTH}" 'pane nav' 'h j k l'
+            _box_line "${PANEL_WIDTH}" 'split' '| e -'
+            _box_line "${PANEL_WIDTH}" 'prefixo' "${TMUX_HINT}"
+            _box_bottom "${PANEL_WIDTH}"
+        } > "${TMP_RIGHT_FILE}"
 
-    paste -d ' ' "${LEFT_FILE}" "${RIGHT_FILE}" | sed 's/^/  /'
-    rm -f "${LEFT_FILE}" "${RIGHT_FILE}"
+        paste -d ' ' "${TMP_LEFT_FILE}" "${TMP_RIGHT_FILE}" | sed 's/^/  /'
+        rm -f "${TMP_LEFT_FILE}" "${TMP_RIGHT_FILE}"
+    else
+        _box_top 'nó local' "${PANEL_WIDTH}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'hostname' "${HOSTNAME:-desconhecido}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'tailscale' "${TS_IP}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'memória' "${MEM}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'disco' "${DISK}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'load 1m' "${LOAD}" | sed 's/^/  /'
+        _box_bottom "${PANEL_WIDTH}" | sed 's/^/  /'
+        printf '\n'
+        _box_top 'fluxo ssh/tmux' "${PANEL_WIDTH}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'peer online' "${ONLINE}/${TOTAL} visíveis" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'host foco' "${PROBE}" | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'pane nav' 'h j k l' | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'split' '| e -' | sed 's/^/  /'
+        _box_line "${PANEL_WIDTH}" 'prefixo' "${TMUX_HINT}" | sed 's/^/  /'
+        _box_bottom "${PANEL_WIDTH}" | sed 's/^/  /'
+    fi
     printf '\n'
 }
 
 _draw_menu() {
     TOTAL=$(_menu_count)
     I=1
+    TITLE_WIDTH=20
+    [ "${TERM_WIDTH}" -lt 72 ] && TITLE_WIDTH=14
+    DESC_WIDTH=$((TERM_WIDTH - TITLE_WIDTH - 18))
+    [ "${DESC_WIDTH}" -lt 12 ] && DESC_WIDTH=12
     printf '  %bAções rápidas%b\n\n' "${C_BOLD}" "${C_NC}"
     while [ "${I}" -le "${TOTAL}" ]; do
         LINE=$(_menu_line "${I}")
@@ -296,16 +385,21 @@ _draw_menu() {
 
         if [ "${I}" -eq "${CURRENT_INDEX}" ]; then
             if _supports_utf8; then POINTER='›'; else POINTER='>'; fi
-            printf '  %b%s%b %b%d.%b %-20s %b%s%b\n' "${C_GREEN}" "${POINTER}" "${C_NC}" "${C_BOLD}" "${I}" "${C_NC}" "${TITLE}" "${C_DIM}" "${DESC}" "${C_NC}"
+            printf '  %b%s%b %b%d.%b %-*s %b%s%b\n' "${C_GREEN}" "${POINTER}" "${C_NC}" "${C_BOLD}" "${I}" "${C_NC}" "${TITLE_WIDTH}" "$(_fit "${TITLE}" "${TITLE_WIDTH}")" "${C_DIM}" "$(_fit "${DESC}" "${DESC_WIDTH}")" "${C_NC}"
             MENU_ACTION="${KEY}"
         else
-            printf '    %b%d.%b %-20s %b%s%b\n' "${C_DIM}" "${I}" "${C_NC}" "${TITLE}" "${C_DIM}" "${DESC}" "${C_NC}"
+            printf '    %b%d.%b %-*s %b%s%b\n' "${C_DIM}" "${I}" "${C_NC}" "${TITLE_WIDTH}" "$(_fit "${TITLE}" "${TITLE_WIDTH}")" "${C_DIM}" "$(_fit "${DESC}" "${DESC_WIDTH}")" "${C_NC}"
         fi
         I=$((I + 1))
     done
     printf '\n'
     printf '  %bAtalhos úteis%b\n' "${C_BOLD}" "${C_NC}"
-    printf '    Enter/l abrir  ·  j/k mover  ·  gg topo  ·  G fim  ·  h foco panes  ·  q sair\n\n'
+    if [ "${TERM_WIDTH}" -lt 72 ]; then
+        printf '    Enter/l abrir  ·  j/k mover  ·  q sair\n'
+        printf '    gg topo  ·  G fim  ·  h foco panes\n\n'
+    else
+        printf '    Enter/l abrir  ·  j/k mover  ·  gg topo  ·  G fim  ·  h foco panes  ·  q sair\n\n'
+    fi
     printf '  %b%s%b\n' "${C_DIM}" "${LAST_MESSAGE}" "${C_NC}"
     [ -n "${INPUT_BUFFER}" ] && printf '  %bSequência:%b %s\n' "${C_DIM}" "${C_NC}" "${INPUT_BUFFER}"
 }
@@ -514,12 +608,17 @@ _read_key() {
     printf '%s' "${KEY}"
 }
 
-trap 'stty sane < /dev/tty 2>/dev/null || true' EXIT INT TERM
+trap 'stty sane 2>/dev/null || true' EXIT INT TERM
 
 if [ "${POCKETCLI_MENU_RENDER_ONCE:-0}" = "1" ]; then
     _render_header
     _render_dashboard
     _draw_menu
+    exit 0
+fi
+
+if [ ! -r /dev/tty ]; then
+    printf '[PocketCli] interactive terminal not available for menu mode.\n' >&2
     exit 0
 fi
 

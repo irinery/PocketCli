@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"pocketcli/internal/ssh"
@@ -28,6 +29,7 @@ type State struct {
 type hostsModel struct {
 	state    State
 	selected *Host
+	width    int
 }
 
 func newHostsModel(hosts []Host) hostsModel {
@@ -60,6 +62,8 @@ func (m hostsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "q", "ctrl+c":
 			return m, tea.Quit
 		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
 	}
 
 	return m, nil
@@ -68,6 +72,11 @@ func (m hostsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m hostsModel) View() string {
 	var b strings.Builder
 	b.WriteString("Pocket hosts\n\n")
+	viewWidth := m.width
+	if viewWidth <= 0 {
+		viewWidth = 80
+	}
+	compact := viewWidth < 64
 
 	for i, host := range m.state.Hosts {
 		cursor := "  "
@@ -80,11 +89,31 @@ func (m hostsModel) View() string {
 			status = "online"
 		}
 
-		fmt.Fprintf(&b, "%s%s  (%s • %s • %s)\n", cursor, host.Name, host.IP, host.OS, status)
+		name := fitText(host.Name, viewWidth-6)
+		if compact {
+			details := fitText(fmt.Sprintf("%s • %s • %s", host.IP, host.OS, status), viewWidth-8)
+			fmt.Fprintf(&b, "%s%s\n", cursor, name)
+			fmt.Fprintf(&b, "   %s\n", details)
+			continue
+		}
+
+		details := fitText(fmt.Sprintf("%s • %s • %s", host.IP, host.OS, status), viewWidth-10-len(name))
+		fmt.Fprintf(&b, "%s%s  (%s)\n", cursor, name, details)
 	}
 
 	b.WriteString("\n↑/↓ ou j/k para navegar • Enter para conectar • Esc para sair\n")
 	return b.String()
+}
+
+func fitText(text string, max int) string {
+	if max <= 1 {
+		return ""
+	}
+	if utf8.RuneCountInString(text) <= max {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:max-1]) + "…"
 }
 
 func toHosts(machines []tailscale.Machine) []Host {
