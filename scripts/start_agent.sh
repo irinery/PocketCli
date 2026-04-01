@@ -78,9 +78,9 @@ fi
 #   |        htop         |     lazygit        |
 #   +---------------------+--------------------+
 # ---------------------------------------------------------------------------
-set -- $(detect_terminal_size)
-TERM_ROWS="$1"
-TERM_COLS="$2"
+TERM_SIZE=$(detect_terminal_size)
+TERM_ROWS=${TERM_SIZE%% *}
+TERM_COLS=${TERM_SIZE#* }
 log_debug "detected terminal size rows=${TERM_ROWS} cols=${TERM_COLS}"
 
 tmux new-session  -d -s "${SESSION}" -x "${TERM_COLS}" -y "${TERM_ROWS}"
