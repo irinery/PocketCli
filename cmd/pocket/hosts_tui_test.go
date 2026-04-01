@@ -82,3 +82,29 @@ func TestRunHostsTUI_NoHosts(t *testing.T) {
 		t.Fatalf("expected no host message, got: %q", out.String())
 	}
 }
+
+func TestHostsModelView_CompactWidthBreaksDetailsLine(t *testing.T) {
+	model := hostsModel{
+		state: State{
+			Hosts: []Host{
+				{Name: "prod-api-very-long-name", IP: "100.64.0.1", OS: "linux", Online: true},
+			},
+		},
+		width: 40,
+	}
+
+	view := model.View()
+	if !strings.Contains(view, "prod-api") {
+		t.Fatalf("expected host name in compact view, got: %q", view)
+	}
+	if !strings.Contains(view, "100.64.0.1") {
+		t.Fatalf("expected details line in compact view, got: %q", view)
+	}
+}
+
+func TestFitText_TruncatesWithEllipsis(t *testing.T) {
+	got := fitText("abcdefghijkl", 6)
+	if got != "abcde…" {
+		t.Fatalf("expected truncated text with ellipsis, got %q", got)
+	}
+}
