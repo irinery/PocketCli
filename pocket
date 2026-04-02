@@ -75,6 +75,16 @@ _cmd_list() {
 }
 
 _cmd_connect() {
+    if [ -x "${SCRIPTS}/ssh/open.sh" ]; then
+        HOST="${1:-}"
+        [ -n "${HOST}" ] || {
+            HOSTS=$(list_known_hosts || true)
+            [ -n "${HOSTS}" ] || die "No known hosts available."
+            HOST=$(printf '%s\n' "${HOSTS}" | head -1)
+        }
+        exec sh "${SCRIPTS}/ssh/open.sh" --run interactive "${HOST}"
+    fi
+
     require tailscale
     HOST="${1:-}"
 
@@ -114,6 +124,12 @@ _cmd_connect() {
 }
 
 _cmd_run() {
+    if [ -x "${SCRIPTS}/ssh/exec.sh" ]; then
+        [ $# -lt 2 ] && die "Usage: pocket run <host> <command>"
+        HOST=$(safe_host "$1"); shift
+        exec sh "${SCRIPTS}/ssh/exec.sh" "${HOST}" "$@"
+    fi
+
     [ $# -lt 2 ] && die "Usage: pocket run <host> <command>"
     HOST=$(safe_host "$1"); shift
     [ -z "${HOST}" ] && die "Invalid hostname."
@@ -122,6 +138,13 @@ _cmd_run() {
 }
 
 _cmd_copy() {
+    if [ -x "${SCRIPTS}/ssh/copy.sh" ]; then
+        [ $# -lt 2 ] && die "Usage: pocket copy <src> <dst>"
+        SRC="$1"
+        DST="$2"
+        exec sh "${SCRIPTS}/ssh/copy.sh" "${SRC}" "${DST}"
+    fi
+
     [ $# -lt 2 ] && die "Usage: pocket copy <src> <dst>"
     require scp
     info "Copying: $1  ->  $2"
@@ -131,17 +154,26 @@ _cmd_copy() {
 
 _cmd_status() { exec sh "${SCRIPTS}/pocket-status.sh"; }
 _cmd_radar()  { exec sh "${POCKETCLI_DIR}/radar.sh"; }
-_cmd_menu()   { exec sh "${SCRIPTS}/pocketcli_menu.sh"; }
+_cmd_menu() {
+    if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+        SESSION_INTENT="viewer" exec sh "${SCRIPTS}/session/manager.sh" viewer
+    fi
+    exec sh "${SCRIPTS}/pocketcli_menu.sh"
+}
 _cmd_doctor() { exec sh "${POCKETCLI_DIR}/tests/test_ish.sh"; }
 
 _persist_command_if_needed() {
     case "${1:-}" in
-        ''|help|-h|--help|version|-v|--version|resume|__restore) return 0 ;;
+        ''|help|-h|--help|version|-v|--version|resume|__restore|session) return 0 ;;
     esac
     pocket_save_command "$@"
 }
 
 _cmd_resume() {
+    if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+        SESSION_INTENT="resume" exec sh "${SCRIPTS}/session/manager.sh" auto
+    fi
+
     require tmux
     SESSION=$(pocket_tmux_session)
 
@@ -161,6 +193,10 @@ _cmd_resume() {
 }
 
 _cmd_restore() {
+    if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+        SESSION_INTENT="resume" exec sh "${SCRIPTS}/session/manager.sh" auto
+    fi
+
     set --
     FILE=$(pocket_last_command_file)
     if [ -f "${FILE}" ] && [ -s "${FILE}" ]; then
@@ -349,7 +385,9 @@ export POCKETCLI_EXPLAIN
 CMD="${1:-}"
 if [ -z "${CMD}" ]; then
     if _has_interactive_tty; then
-        if [ -z "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+        if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+            CMD="session"
+        elif [ -z "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
             CMD="resume"
         else
             CMD="menu"
@@ -372,6 +410,12 @@ fi
 _persist_command_if_needed "${CMD}" "$@"
 
 case "${CMD}" in
+    session)
+        if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+            SESSION_INTENT="boot" exec sh "${SCRIPTS}/session/manager.sh" auto
+        fi
+        _cmd_menu
+    ;;
     connect)                    _cmd_connect "$@" ;;
     list|ls)                    _cmd_list ;;
     run)                        _cmd_run "$@" ;;

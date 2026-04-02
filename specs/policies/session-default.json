@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "restore_policy": "workspace_first",
+  "degraded_menu": "compact"
+}
