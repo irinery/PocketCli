@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "layout_id": "viewer-default",
+  "description": "Menu principal viewer",
+  "mode": "viewer",
+  "requires": {"tmux": false, "tty": true},
+  "entry_action": "menu",
+  "panes": [{"id": "main", "kind": "local", "command": "pocket menu", "focus": true}],
+  "restore_policy": "reopen_layout"
+}
