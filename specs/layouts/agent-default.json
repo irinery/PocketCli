@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "layout_id": "agent-default",
+  "description": "Layout inicial agent",
+  "mode": "agent",
+  "requires": {"tmux": true, "tty": true},
+  "entry_action": "tmux_workspace",
+  "tmux": {"session_name": "pocketcli", "window_name": "main"},
+  "panes": [
+    {"id": "left", "kind": "local", "command": "htop", "focus": true},
+    {"id": "right", "kind": "local", "command": "cd ~/.pocketcli && lazygit"}
+  ],
+  "split": {"direction": "horizontal", "ratio": "50:50"},
+  "restore_policy": "reopen_layout"
+}

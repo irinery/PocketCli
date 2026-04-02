@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "host_key_policy": "accept-new",
+  "connect_timeout_sec": 10,
+  "strict_mode": false,
+  "require_approval_for_unknown": true,
+  "auto_approve_saved_hosts": true,
+  "auto_approve_tailscale_known_hosts": true,
+  "log_all_connections": true
+}
