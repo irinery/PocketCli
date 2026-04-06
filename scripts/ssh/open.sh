@@ -50,7 +50,10 @@ pocket_ssh_run() {
             ;;
         copy)
             pocket_log_event "event=ssh_copy host=${TARGET_HOST}"
-            exec scp -o StrictHostKeyChecking=$(ssh_policy_get host_key_policy) -o ConnectTimeout=$(ssh_policy_get connect_timeout_sec) -r "$@"
+            exec scp \
+                -o "StrictHostKeyChecking=$(ssh_policy_get host_key_policy)" \
+                -o "ConnectTimeout=$(ssh_policy_get connect_timeout_sec)" \
+                -r "$@"
             ;;
         probe)
             pocket_log_event "event=ssh_probe host=${TARGET_HOST}"
