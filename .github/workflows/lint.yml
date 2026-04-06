@@ -30,7 +30,7 @@ jobs:
             | xargs -r shellcheck \
                 --severity=warning \
                 --shell=bash \
-                --exclude=SC1091   # allow 'source' of files not present at lint time
+                --exclude=SC1091,SC2034   # allow dynamic source and sourced-file exported globals
           echo "✔ ShellCheck passed."
 
   syntax:
