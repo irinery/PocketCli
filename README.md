@@ -189,6 +189,37 @@ tmux new -s work
 
 ## Testes
 
+Pré-requisitos para os checks locais em Go:
+
+```bash
+# confirme que o toolchain está disponível
+go version
+gofmt -h >/dev/null
+```
+
+Se `go` ou `gofmt` não estiverem no `PATH`, instale o Go antes de seguir. Em ambientes sandboxados, como Codex, use um `GOCACHE` gravável em `/tmp`.
+
+Para reproduzir localmente o fluxo principal do CI em um único comando, execute:
+
+```bash
+sh scripts/run_local_ci.sh
+```
+
+Esse script:
+- formata os arquivos Go em `cmd/` e `internal/` com `gofmt`
+- executa a shell regression suite
+- roda `go test ./...`
+- gera o binário `./cmd/pocket`
+- executa os smoke tests usando o binário Go recém-gerado
+
+Se precisar rodar manualmente em um ambiente sandboxado, use:
+
+```bash
+env GOCACHE=/tmp/pocketcli-go-build-cache go test ./...
+env GOCACHE=/tmp/pocketcli-go-build-cache go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+env POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
+```
+
 Para validar o fluxo logo após baixar o repositório, execute:
 
 ```bash

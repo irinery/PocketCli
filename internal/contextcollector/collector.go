@@ -39,8 +39,8 @@ var (
 	}
 	blockedContentPattern = regexp.MustCompile(`(?i)(password|token|secret|key)\s*[:=]\s*\S+`)
 	readmeNames           = map[string]struct{}{
-		"readme":    {},
-		"readme.md": {},
+		"readme":     {},
+		"readme.md":  {},
 		"readme.txt": {},
 	}
 	skippedDirs = map[string]struct{}{
@@ -68,13 +68,13 @@ type TaskContext struct {
 }
 
 type ProjectContext struct {
-	Path         string
-	IsGit        bool
-	Branch       *string
-	MainFiles    []MainFile
+	Path          string
+	IsGit         bool
+	Branch        *string
+	MainFiles     []MainFile
 	ReadmeExcerpt *string
-	GitDiffHead  *string
-	GitLog       *string
+	GitDiffHead   *string
+	GitLog        *string
 }
 
 type MainFile struct {
@@ -159,6 +159,9 @@ func Collect(cwd string, session Session) (TaskContext, error) {
 
 	if partial {
 		addNote(&ctx.Notes, "[contexto parcial — itens omitidos]")
+		if compress(&ctx) {
+			partial = true
+		}
 	}
 
 	return ctx, nil
@@ -337,7 +340,7 @@ func compress(ctx *TaskContext) bool {
 			}
 			if shrinkStringField(&ctx.Session.LastCommand, allowed) {
 				partial = true
-				addNote(&ctx.Notes, lastFieldNote("last_command", allowed))
+				upsertFieldNote(&ctx.Notes, "last_command", allowed)
 			}
 		case ctx.Session.LastError != nil:
 			allowed := MaxContextTokens - totalTokenCountWithoutField(*ctx, ctx.Session.LastError)
@@ -346,7 +349,7 @@ func compress(ctx *TaskContext) bool {
 			}
 			if shrinkStringField(&ctx.Session.LastError, allowed) {
 				partial = true
-				addNote(&ctx.Notes, lastFieldNote("last_error", allowed))
+				upsertFieldNote(&ctx.Notes, "last_error", allowed)
 			} else {
 				return partial
 			}
@@ -617,6 +620,18 @@ func addNote(notes *[]string, note string) {
 		}
 	}
 	*notes = append(*notes, note)
+}
+
+func upsertFieldNote(notes *[]string, label string, tokens int) {
+	filtered := (*notes)[:0]
+	for _, note := range *notes {
+		if strings.HasPrefix(note, "["+label+" truncado") {
+			continue
+		}
+		filtered = append(filtered, note)
+	}
+	*notes = filtered
+	*notes = append(*notes, lastFieldNote(label, tokens))
 }
 
 func stringPtr(value string) *string {
