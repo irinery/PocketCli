@@ -1,6 +1,7 @@
 package main
 
 import (
+	stdctx "context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"pocketcli/internal/backend"
+	"pocketcli/internal/contextcollector"
 	"pocketcli/internal/memory"
 )
 
@@ -81,6 +84,19 @@ func TestIntegration_MemorySaveWithoutRecentInteractionReturnsInformativeError(t
 func TestIntegration_AskThenMemorySavePersistsProjectScopedEntry(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubCommandRuntime(t, commandRuntime{
+		LocalClient: fakeCLIBackendClient{
+			complete: func(ctx stdctx.Context, request backend.CompletionRequest) (backend.CompletionResult, error) {
+				return backend.CompletionResult{
+					Model:        "local-test",
+					Content:      "resposta local",
+					TokenUsage:   12,
+					FinishReason: backend.FinishReasonStop,
+				}, nil
+			},
+		},
+		LocalProbe: func(ctx stdctx.Context, collectedContext contextcollector.TaskContext) error { return nil },
+	})
 
 	projectDir := filepath.Join(t.TempDir(), "PocketCli")
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
@@ -123,7 +139,7 @@ func TestIntegration_AskThenMemorySavePersistsProjectScopedEntry(t *testing.T) {
 	}
 }
 
-func TestIntegration_MemorySearchReturnsProjectAndGlobalResults(t *testing.T) {
+func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
@@ -188,12 +204,12 @@ func TestIntegration_MemorySearchReturnsProjectAndGlobalResults(t *testing.T) {
 		_ = os.Chdir(origWD)
 	})
 
-	root := newRootCommand()
-	withArgs(t, []string{"pocket", "memory", "search", "ssh", "timeout"})
-
-	output, err := captureStdout(t, root.Execute)
+	output, err := executeCommand(t, []string{"pocket", "recall", "ssh", "timeout"}, "")
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
+	}
+	if strings.Index(output, "id=project-entry") > strings.Index(output, "id=global-entry") {
+		t.Fatalf("expected project entry before global entry, got %q", output)
 	}
 	if !strings.Contains(output, "id=global-entry") {
 		t.Fatalf("expected global entry in output, got %q", output)
@@ -201,22 +217,35 @@ func TestIntegration_MemorySearchReturnsProjectAndGlobalResults(t *testing.T) {
 	if !strings.Contains(output, "id=project-entry") {
 		t.Fatalf("expected project entry in output, got %q", output)
 	}
+	if !strings.Contains(output, `title="timeout no projeto"`) {
+		t.Fatalf("expected title in output, got %q", output)
+	}
+	if !strings.Contains(output, `summary="ssh travando"`) {
+		t.Fatalf("expected summary in output, got %q", output)
+	}
 	if strings.Contains(output, "id=other-host") {
 		t.Fatalf("did not expect host-scoped entry in project search, got %q", output)
 	}
+
+	globalEntries := readEntriesAtPath(t, filepath.Join(homeDir, ".pocket", "memory", "global.jsonl"))
+	if globalEntries[0].AccessCount != 1 || strings.TrimSpace(globalEntries[0].LastAccessed) == "" {
+		t.Fatalf("expected recall to update access metadata for global entry, got %#v", globalEntries[0])
+	}
+
+	projectEntries := readEntriesAtPath(t, filepath.Join(homeDir, ".pocket", "memory", "project_pocketcli.jsonl"))
+	if projectEntries[0].AccessCount != 1 || strings.TrimSpace(projectEntries[0].LastAccessed) == "" {
+		t.Fatalf("expected recall to update access metadata for project entry, got %#v", projectEntries[0])
+	}
 }
 
-func TestIntegration_MemorySearchReportsWhenNoResultsAreFound(t *testing.T) {
+func TestIntegration_RecallReportsWhenNoResultsAreFound(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	root := newRootCommand()
-	withArgs(t, []string{"pocket", "memory", "search", "sem", "match"})
-
-	output, err := captureStdout(t, root.Execute)
+	output, err := executeCommand(t, []string{"pocket", "recall", "sem", "match"}, "")
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if strings.TrimSpace(output) != "nenhum resultado encontrado" {
+	if strings.TrimSpace(output) != "nenhum resultado encontrado para a query" {
 		t.Fatalf("unexpected output: %q", output)
 	}
 }
@@ -224,15 +253,31 @@ func TestIntegration_MemorySearchReportsWhenNoResultsAreFound(t *testing.T) {
 func TestIntegration_AskWritesAuditLogWithSameSessionID(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	stubCommandRuntime(t, commandRuntime{
+		LocalClient: fakeCLIBackendClient{
+			complete: func(ctx stdctx.Context, request backend.CompletionRequest) (backend.CompletionResult, error) {
+				return backend.CompletionResult{
+					Model:        "local-test",
+					Content:      "resposta local",
+					TokenUsage:   10,
+					FinishReason: backend.FinishReasonStop,
+				}, nil
+			},
+		},
+		LocalProbe: func(ctx stdctx.Context, collectedContext contextcollector.TaskContext) error { return nil },
+	})
 
-	output, err := executeCommand(t, []string{"pocket", "ask", "registrar", "auditoria"}, "")
-	if err != nil {
+	if _, err := executeCommand(t, []string{"pocket", "ask", "registrar", "auditoria"}, ""); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	sessionID := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(output), "session_id="))
-	if sessionID == "" {
-		t.Fatalf("expected session_id in ask output, got %q", output)
+	store, err := newMemoryStore()
+	if err != nil {
+		t.Fatalf("newMemoryStore returned error: %v", err)
+	}
+	lastInteraction, err := store.LoadLastInteraction()
+	if err != nil {
+		t.Fatalf("LoadLastInteraction returned error: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(homeDir, ".pocket", "audit.log"))
@@ -241,10 +286,10 @@ func TestIntegration_AskWritesAuditLogWithSameSessionID(t *testing.T) {
 	}
 
 	line := strings.TrimSpace(string(data))
-	if !strings.Contains(line, " | ask | none | tokens=0 | ") {
+	if !strings.Contains(line, " | ask | local | tokens=10 | ") {
 		t.Fatalf("expected ask audit line, got %q", line)
 	}
-	if !strings.Contains(line, "session_id="+sessionID) {
+	if !strings.Contains(line, "session_id="+lastInteraction.SessionID) {
 		t.Fatalf("expected same session_id in audit line, got %q", line)
 	}
 }
