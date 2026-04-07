@@ -63,8 +63,18 @@ type TaskContext struct {
 	Session     SessionContext
 	System      SystemContext
 	MemoryHits  []string
-	ToolResults []string
+	ToolResults []ToolResult
 	Notes       []string
+}
+
+type ToolResult struct {
+	ToolName   string
+	OK         bool
+	Summary    string
+	Raw        string
+	Artifacts  map[string]any
+	DurationMS int
+	Metadata   map[string]any
 }
 
 type ProjectContext struct {
@@ -113,7 +123,7 @@ func Collect(cwd string, session Session) (TaskContext, error) {
 			OS: runtime.GOOS,
 		},
 		MemoryHits:  []string{},
-		ToolResults: []string{},
+		ToolResults: []ToolResult{},
 		Notes:       []string{},
 	}
 

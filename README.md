@@ -245,6 +245,7 @@ Para validar regressões da interface em cenários de terminal heterogêneo (vie
 sh tests/test_menu_fallback.sh
 sh tests/test_start_agent_launcher.sh
 go test ./cmd/pocket
+go test ./internal/backend
 go test ./internal/memory
 ```
 
