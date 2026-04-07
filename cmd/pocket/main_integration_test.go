@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -12,6 +13,8 @@ import (
 )
 
 func TestIntegration_RootDispatchesHosts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	orig := hostsViewer
 	t.Cleanup(func() { hostsViewer = orig })
 
@@ -35,6 +38,8 @@ func TestIntegration_RootDispatchesHosts(t *testing.T) {
 }
 
 func TestIntegration_RootDispatchesExecAndPropagatesError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	orig := execSSH
 	t.Cleanup(func() { execSSH = orig })
 
@@ -216,6 +221,179 @@ func TestIntegration_MemorySearchReportsWhenNoResultsAreFound(t *testing.T) {
 	}
 }
 
+func TestIntegration_AskWritesAuditLogWithSameSessionID(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	output, err := executeCommand(t, []string{"pocket", "ask", "registrar", "auditoria"}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	sessionID := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(output), "session_id="))
+	if sessionID == "" {
+		t.Fatalf("expected session_id in ask output, got %q", output)
+	}
+
+	data, err := os.ReadFile(filepath.Join(homeDir, ".pocket", "audit.log"))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	line := strings.TrimSpace(string(data))
+	if !strings.Contains(line, " | ask | none | tokens=0 | ") {
+		t.Fatalf("expected ask audit line, got %q", line)
+	}
+	if !strings.Contains(line, "session_id="+sessionID) {
+		t.Fatalf("expected same session_id in audit line, got %q", line)
+	}
+}
+
+func TestIntegration_MemoryCleanDryRunListsCandidatesWithoutDeleting(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	store, err := memory.NewStore()
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	if _, err := store.Write(memory.Entry{
+		ID:           "dry-run",
+		Kind:         memory.KindPattern,
+		Scope:        "global",
+		Title:        "Dry run",
+		Summary:      "Candidate for cleanup.",
+		Body:         "Candidate for cleanup.",
+		Tags:         []string{"cleanup"},
+		Confidence:   0.2,
+		CreatedAt:    "2000-01-01T00:00:00Z",
+		LastAccessed: "2000-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	output, err := executeCommand(t, []string{"pocket", "memory", "clean", "--dry-run"}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(output, "id=dry-run") || !strings.Contains(output, "reasons=low_confidence_stale") {
+		t.Fatalf("unexpected dry-run output: %q", output)
+	}
+
+	entries := readEntriesAtPath(t, filepath.Join(homeDir, ".pocket", "memory", "global.jsonl"))
+	if len(entries) != 1 {
+		t.Fatalf("expected candidate to remain persisted, got %d entries", len(entries))
+	}
+}
+
+func TestIntegration_MemoryCleanPromptsPerEntryAndAllowsRefusal(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	store := memory.NewStoreAt(filepath.Join(homeDir, ".pocket"))
+	if _, err := store.Write(memory.Entry{
+		ID:           "interactive",
+		Kind:         memory.KindPattern,
+		Scope:        "global",
+		Title:        "Interactive",
+		Summary:      "Candidate for cleanup.",
+		Body:         "Candidate for cleanup.",
+		Tags:         []string{"cleanup"},
+		Confidence:   0.2,
+		CreatedAt:    "2000-01-01T00:00:00Z",
+		LastAccessed: "2000-01-01T00:00:00Z",
+	}); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	origNewMemoryStore := newMemoryStore
+	newMemoryStore = func() (*memory.Store, error) { return store, nil }
+	t.Cleanup(func() { newMemoryStore = origNewMemoryStore })
+
+	output, err := executeCommand(t, []string{"pocket", "memory", "clean"}, "n\n")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(output, "mantida id=interactive") {
+		t.Fatalf("expected refusal output, got %q", output)
+	}
+	if !strings.Contains(output, "total_deleted=0") {
+		t.Fatalf("expected zero deletions, got %q", output)
+	}
+
+	entries := readEntriesAtPath(t, filepath.Join(homeDir, ".pocket", "memory", "global.jsonl"))
+	if len(entries) != 1 {
+		t.Fatalf("expected entry to remain persisted, got %d entries", len(entries))
+	}
+}
+
+func TestIntegration_MemoryCleanForceDeletesCandidatesAndShowsTotal(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	store := memory.NewStoreAt(filepath.Join(homeDir, ".pocket"))
+	for _, entry := range []memory.Entry{
+		{
+			ID:           "force-1",
+			Kind:         memory.KindPattern,
+			Scope:        "global",
+			Title:        "Force 1",
+			Summary:      "Candidate one.",
+			Body:         "Candidate one.",
+			Tags:         []string{"cleanup"},
+			Confidence:   0.2,
+			CreatedAt:    "2000-01-01T00:00:00Z",
+			LastAccessed: "2000-01-01T00:00:00Z",
+		},
+		{
+			ID:           "force-2",
+			Kind:         memory.KindPattern,
+			Scope:        "global",
+			Title:        "Force 2",
+			Summary:      "Candidate two.",
+			Body:         "Candidate two.",
+			Tags:         []string{"cleanup"},
+			Confidence:   0.2,
+			CreatedAt:    "2000-01-02T00:00:00Z",
+			LastAccessed: "2000-01-02T00:00:00Z",
+		},
+	} {
+		if _, err := store.Write(entry); err != nil {
+			t.Fatalf("Write returned error: %v", err)
+		}
+	}
+
+	origNewMemoryStore := newMemoryStore
+	newMemoryStore = func() (*memory.Store, error) { return store, nil }
+	t.Cleanup(func() { newMemoryStore = origNewMemoryStore })
+
+	output, err := executeCommand(t, []string{"pocket", "memory", "clean", "--force"}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !strings.Contains(output, "total_deleted=2") {
+		t.Fatalf("expected total_deleted=2, got %q", output)
+	}
+
+	entries := readEntriesAtPath(t, filepath.Join(homeDir, ".pocket", "memory", "global.jsonl"))
+	if len(entries) != 0 {
+		t.Fatalf("expected all candidates deleted, got %d entries", len(entries))
+	}
+}
+
+func TestIntegration_MemoryCleanReportsWhenNoCandidatesExist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	output, err := executeCommand(t, []string{"pocket", "memory", "clean", "--dry-run"}, "")
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if strings.TrimSpace(output) != "nenhuma entrada candidata à remoção" {
+		t.Fatalf("unexpected output: %q", output)
+	}
+}
+
 func captureStdout(t *testing.T, run func() error) (string, error) {
 	t.Helper()
 
@@ -242,4 +420,80 @@ func captureStdout(t *testing.T, run func() error) (string, error) {
 	}
 
 	return string(output), runErr
+}
+
+func executeCommand(t *testing.T, args []string, input string) (string, error) {
+	t.Helper()
+
+	root := newRootCommand()
+	withArgs(t, args)
+
+	origStdout := os.Stdout
+	origStdin := os.Stdin
+
+	outputReader, outputWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe stdout returned error: %v", err)
+	}
+	inputReader, inputWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe stdin returned error: %v", err)
+	}
+
+	if _, err := inputWriter.WriteString(input); err != nil {
+		t.Fatalf("WriteString returned error: %v", err)
+	}
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("Close stdin writer returned error: %v", err)
+	}
+
+	os.Stdout = outputWriter
+	os.Stdin = inputReader
+	defer func() {
+		os.Stdout = origStdout
+		os.Stdin = origStdin
+	}()
+
+	runErr := root.Execute()
+
+	if err := outputWriter.Close(); err != nil {
+		t.Fatalf("Close stdout writer returned error: %v", err)
+	}
+
+	output, err := io.ReadAll(outputReader)
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+
+	return string(output), runErr
+}
+
+func readEntriesAtPath(t *testing.T, path string) []memory.Entry {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 1 && strings.TrimSpace(lines[0]) == "" {
+		return nil
+	}
+
+	entries := make([]memory.Entry, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var entry memory.Entry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("Unmarshal returned error: %v", err)
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries
 }
