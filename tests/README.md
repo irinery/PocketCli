@@ -8,6 +8,7 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - **Integração leve (Go)**: fluxo de dispatch do CLI (`root -> subcommands`) com doubles para dependências externas.
 - **Regressão shell**: scripts em `tests/test_*.sh`.
 - **Smoke orientado ao produto**: scripts em `tests/smoke/test_*.sh`, executados via `pocket` com budgets de tempo por cenário.
+- **Release workflow helpers**: scripts `tests/test_release_*.sh` validam contratos auxiliares usados pelos workflows de tag/release.
 
 ## Runners de CI
 
@@ -24,6 +25,7 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Para rodar só os testes do módulo Router (fase 4), use `go test ./internal/router`.
    - Para rodar só os testes do módulo Backend Contract (fase 5), use `go test ./internal/backend`.
    - Para rodar só os testes de Audit Log e Memory Cleanup (fase 7), use `go test ./internal/audit`, `go test ./internal/memory` e `go test ./cmd/pocket`.
+   - Para rodar os testes da Fase 8 (CLI Commands), use `go test ./cmd/pocket`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
@@ -40,6 +42,7 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 3. **Novo fluxo shell (`scripts/` / `bin/`)**
    - Adicione um script `tests/test_<fluxo>.sh` idempotente.
    - O script passa a ser descoberto automaticamente por `tests/run_all.sh`.
+   - Para o helper de release body usado no workflow de release, rode `sh tests/test_release_body.sh`. Pré-requisitos: shell POSIX; variáveis de ambiente: nenhuma obrigatória.
 
 4. **Novo cenário crítico do CLI (`pocket`)**
    - Adicione um script `tests/smoke/test_<cenario>.sh`.
