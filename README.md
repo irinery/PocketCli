@@ -69,6 +69,9 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket-menu` | Control Deck leve com dashboard local, ações SSH e atalhos prontos para iPad/tmux |
 | `pocket-radar` | Lista máquinas online no Tailscale |
 | `pocket-update` | Atualiza o PocketCli preservando diferenças locais relevantes |
+| `pocket ask` | Registra a última interação local para posterior validação explícita |
+| `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
+| `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
 
 ---
 
@@ -165,6 +168,10 @@ pocket resume
 # Ver máquinas disponíveis
 pocket-radar
 
+# Registrar uma interação e salvar na memória validada
+pocket ask "Persistir decisões do projeto em jsonl por escopo"
+pocket memory save
+
 # Atualizar
 pocket-update
 
@@ -234,6 +241,7 @@ Para validar regressões da interface em cenários de terminal heterogêneo (vie
 sh tests/test_menu_fallback.sh
 sh tests/test_start_agent_launcher.sh
 go test ./cmd/pocket
+go test ./internal/memory
 ```
 
 Isso cobre layout responsivo do menu shell, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
