@@ -24,6 +24,8 @@ func TestRootCommand_NoSubcommandShowsHelpWithoutError(t *testing.T) {
 }
 
 func TestSSHCommand_PropagatesError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	orig := openSSH
 	t.Cleanup(func() { openSSH = orig })
 
@@ -38,6 +40,8 @@ func TestSSHCommand_PropagatesError(t *testing.T) {
 }
 
 func TestExecCommand_JoinsCommandAndCallsExecSSH(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
 	orig := execSSH
 	t.Cleanup(func() { execSSH = orig })
 

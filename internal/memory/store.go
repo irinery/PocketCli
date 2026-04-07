@@ -56,11 +56,12 @@ type LastInteraction struct {
 }
 
 type AskInput struct {
-	Prompt string
-	Kind   string
-	Scope  string
-	Title  string
-	Tags   []string
+	Prompt    string
+	SessionID string
+	Kind      string
+	Scope     string
+	Title     string
+	Tags      []string
 }
 
 type sessionState struct {
@@ -124,9 +125,12 @@ func (s *Store) RecordAsk(input AskInput) (LastInteraction, error) {
 		tags = []string{defaultTag}
 	}
 
-	sessionID, err := s.newID()
-	if err != nil {
-		return LastInteraction{}, err
+	sessionID := strings.TrimSpace(input.SessionID)
+	if sessionID == "" {
+		sessionID, err = s.newID()
+		if err != nil {
+			return LastInteraction{}, err
+		}
 	}
 
 	interaction := LastInteraction{

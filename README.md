@@ -73,6 +73,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
 | `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
 | `pocket memory search [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
+| `pocket memory clean [--dry-run\|--force]` | Lista candidatos à remoção ou executa limpeza manual com confirmação por entrada |
 
 ---
 
@@ -176,6 +177,10 @@ pocket memory save
 # Recuperar memórias relevantes para a query atual
 pocket memory search "ssh timeout"
 
+# Inspecionar ou executar limpeza manual das memórias candidatas
+pocket memory clean --dry-run
+pocket memory clean --force
+
 # Atualizar
 pocket-update
 
@@ -249,6 +254,8 @@ go test ./internal/contextcollector
 go test ./internal/backend
 go test ./internal/tools
 go test ./internal/memory
+go test ./internal/audit
+go test ./cmd/pocket
 ```
 
 Isso cobre layout responsivo do menu shell, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
