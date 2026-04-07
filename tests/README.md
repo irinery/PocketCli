@@ -21,7 +21,9 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Adicione `*_test.go` no mesmo pacote.
    - Evite dependências reais de sistema/rede; use injeção de função para mocks.
    - Para rodar só os testes do módulo Router (fase 4), use `go test ./internal/router`.
+   - Para rodar só os testes do módulo Backend Contract (fase 5), use `go test ./internal/backend`.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
+   - Pré-requisitos do Backend Contract: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:
