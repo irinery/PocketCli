@@ -72,6 +72,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket ask` | Registra a última interação local para posterior validação explícita |
 | `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
 | `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
+| `pocket memory search [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
 
 ---
 
@@ -171,6 +172,9 @@ pocket-radar
 # Registrar uma interação e salvar na memória validada
 pocket ask "Persistir decisões do projeto em jsonl por escopo"
 pocket memory save
+
+# Recuperar memórias relevantes para a query atual
+pocket memory search "ssh timeout"
 
 # Atualizar
 pocket-update
