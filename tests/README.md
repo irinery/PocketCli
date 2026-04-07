@@ -23,10 +23,12 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Para rodar só os testes do Tool Contract (fase 6), use `go test ./internal/tools` e `go test ./internal/contextcollector`.
    - Para rodar só os testes do módulo Router (fase 4), use `go test ./internal/router`.
    - Para rodar só os testes do módulo Backend Contract (fase 5), use `go test ./internal/backend`.
+   - Para rodar só os testes de Audit Log e Memory Cleanup (fase 7), use `go test ./internal/audit`, `go test ./internal/memory` e `go test ./cmd/pocket`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Backend Contract: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
+   - Pré-requisitos do Audit Log e Memory Cleanup: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: `HOME` pode ser apontado para um diretório temporário ao validar fluxos de auditoria em `~/.pocket`.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:
