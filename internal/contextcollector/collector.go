@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"pocketcli/internal/tools"
 )
 
 const (
@@ -67,15 +69,7 @@ type TaskContext struct {
 	Notes       []string
 }
 
-type ToolResult struct {
-	ToolName   string
-	OK         bool
-	Summary    string
-	Raw        string
-	Artifacts  map[string]any
-	DurationMS int
-	Metadata   map[string]any
-}
+type ToolResult = tools.ToolResult
 
 type ProjectContext struct {
 	Path          string
@@ -102,6 +96,10 @@ type SystemContext struct {
 }
 
 func Collect(cwd string, session Session) (TaskContext, error) {
+	return CollectWithOptions(cwd, session, CollectOptions{})
+}
+
+func CollectWithOptions(cwd string, session Session, options CollectOptions) (TaskContext, error) {
 	absPath, err := filepath.Abs(cwd)
 	if err != nil {
 		return TaskContext{}, err
@@ -162,6 +160,10 @@ func Collect(cwd string, session Session) (TaskContext, error) {
 		ctx.Project.GitLog = gitLog
 	}
 	partial = partial || gitPartial
+
+	if err := executeRegisteredTools(&ctx, options); err != nil {
+		return ctx, err
+	}
 
 	if compress(&ctx) {
 		partial = true
@@ -553,6 +555,17 @@ func totalTokenCount(ctx TaskContext) int {
 	for _, file := range ctx.Project.MainFiles {
 		total += approxTokens(file.Path)
 		total += approxTokens(file.Excerpt)
+	}
+	for _, result := range ctx.ToolResults {
+		if !result.OK {
+			continue
+		}
+		total += approxTokens(result.ToolName)
+		if strings.TrimSpace(result.Summary) != "" {
+			total += approxTokens(result.Summary)
+			continue
+		}
+		total += approxTokens(result.Raw)
 	}
 	for _, note := range ctx.Notes {
 		total += approxTokens(note)
