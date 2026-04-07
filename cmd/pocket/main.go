@@ -32,6 +32,8 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 
+	rootCmd.AddCommand(newAskCommand())
+	rootCmd.AddCommand(newMemoryCommand())
 	rootCmd.AddCommand(newHostsCommand())
 	rootCmd.AddCommand(newSSHCommand())
 	rootCmd.AddCommand(newExecCommand())
