@@ -57,6 +57,7 @@ func newMemoryCommand() *cobra.Command {
 
 	cmd.AddCommand(newMemorySaveCommand())
 	cmd.AddCommand(newMemoryDiscardCommand())
+	cmd.AddCommand(newMemorySearchCommand())
 	return cmd
 }
 
@@ -113,6 +114,95 @@ func newMemoryDiscardCommand() *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newMemorySearchCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "search [--project NAME] [--host HOST] <query...>",
+		Short: "Busca memórias relevantes por score determinístico",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := newMemoryStore()
+			if err != nil {
+				return err
+			}
+
+			cwd, err := getWorkingDir()
+			if err != nil {
+				cwd = ""
+			}
+
+			query, ctx, err := parseMemorySearchInput(args, cwd)
+			if err != nil {
+				return err
+			}
+
+			results, err := store.Retrieve(query, ctx)
+			if err != nil {
+				return err
+			}
+
+			if len(results) == 0 {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "nenhum resultado encontrado")
+				return err
+			}
+
+			for _, entry := range results {
+				if _, err := fmt.Fprintf(
+					cmd.OutOrStdout(),
+					"id=%s scope=%s confidence=%.1f accesses=%d title=%s\n",
+					entry.ID,
+					entry.Scope,
+					entry.Confidence,
+					entry.AccessCount,
+					entry.Title,
+				); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+func parseMemorySearchInput(args []string, cwd string) (string, memory.RetrievalContext, error) {
+	ctx := memory.RetrievalContext{WorkingDir: cwd}
+
+	var queryParts []string
+	for idx := 0; idx < len(args); idx++ {
+		arg := args[idx]
+		if !strings.HasPrefix(arg, "--") {
+			queryParts = append(queryParts, arg)
+			continue
+		}
+
+		name, value, consumesNext, err := parseFlagValue(arg)
+		if err != nil {
+			return "", memory.RetrievalContext{}, err
+		}
+		if consumesNext {
+			idx++
+			if idx >= len(args) {
+				return "", memory.RetrievalContext{}, fmt.Errorf("flag %s requer valor", name)
+			}
+			value = args[idx]
+		}
+
+		switch name {
+		case "--project":
+			ctx.Project = value
+		case "--host":
+			ctx.Host = value
+		default:
+			return "", memory.RetrievalContext{}, fmt.Errorf("flag inválida: %s", name)
+		}
+	}
+
+	if len(queryParts) == 0 {
+		return "", memory.RetrievalContext{}, errors.New("nenhuma query informada")
+	}
+
+	return strings.Join(queryParts, " "), ctx, nil
 }
 
 func parseAskInput(args []string, cwd string) (memory.AskInput, error) {
