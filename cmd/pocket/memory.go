@@ -17,43 +17,6 @@ var (
 	getWorkingDir  = os.Getwd
 )
 
-func newAskCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "ask [--kind KIND] [--scope SCOPE] [--title TITLE] [--tags tag1,tag2] <prompt...>",
-		Short: "Registra a última interação local para uso no memory save",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAudited(cmd, "ask", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
-				store, err := newMemoryStore()
-				if err != nil {
-					return commandAudit{}, err
-				}
-
-				cwd, err := getWorkingDir()
-				if err != nil {
-					cwd = ""
-				}
-
-				input, err := parseAskInput(args, cwd)
-				if err != nil {
-					return commandAudit{}, err
-				}
-				input.SessionID = sessionID
-
-				interaction, err := store.RecordAsk(input)
-				if err != nil {
-					return commandAudit{}, err
-				}
-
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "session_id=%s\n", interaction.SessionID); err != nil {
-					return commandAudit{}, err
-				}
-
-				return commandAudit{SessionID: interaction.SessionID}, nil
-			})
-		},
-	}
-}
-
 func newMemoryCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "memory",
@@ -135,55 +98,11 @@ func newMemoryDiscardCommand() *cobra.Command {
 
 func newMemorySearchCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "search [--project NAME] [--host HOST] <query...>",
-		Short: "Busca memórias relevantes por score determinístico",
+		Use:   "search [flags] <query...>",
+		Short: "Alias legado de pocket recall",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAudited(cmd, "memory search", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
-				store, err := newMemoryStore()
-				if err != nil {
-					return commandAudit{}, err
-				}
-
-				cwd, err := getWorkingDir()
-				if err != nil {
-					cwd = ""
-				}
-
-				query, ctx, err := parseMemorySearchInput(args, cwd)
-				if err != nil {
-					return commandAudit{}, err
-				}
-
-				results, err := store.Retrieve(query, ctx)
-				if err != nil {
-					return commandAudit{}, err
-				}
-
-				if len(results) == 0 {
-					if _, err := fmt.Fprintln(cmd.OutOrStdout(), "nenhum resultado encontrado"); err != nil {
-						return commandAudit{}, err
-					}
-					return commandAudit{SessionID: sessionID}, nil
-				}
-
-				for _, entry := range results {
-					if _, err := fmt.Fprintf(
-						cmd.OutOrStdout(),
-						"id=%s scope=%s confidence=%.1f accesses=%d title=%s\n",
-						entry.ID,
-						entry.Scope,
-						entry.Confidence,
-						entry.AccessCount,
-						entry.Title,
-					); err != nil {
-						return commandAudit{}, err
-					}
-				}
-
-				return commandAudit{
-					SessionID: sessionID,
-					MemoryHit: true,
-				}, nil
+			return runAudited(cmd, "recall", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
+				return runRecallCommand(cmd, args, sessionID)
 			})
 		},
 	}
@@ -191,7 +110,7 @@ func newMemorySearchCommand() *cobra.Command {
 
 func newMemoryCleanCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "clean [--dry-run] [--force]",
+		Use:   "clean",
 		Short: "Lista ou remove entradas candidatas à limpeza manual",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAudited(cmd, "memory clean", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
@@ -325,46 +244,6 @@ func shouldDeleteCleanupEntry(answer string) bool {
 	default:
 		return false
 	}
-}
-
-func parseMemorySearchInput(args []string, cwd string) (string, memory.RetrievalContext, error) {
-	ctx := memory.RetrievalContext{WorkingDir: cwd}
-
-	var queryParts []string
-	for idx := 0; idx < len(args); idx++ {
-		arg := args[idx]
-		if !strings.HasPrefix(arg, "--") {
-			queryParts = append(queryParts, arg)
-			continue
-		}
-
-		name, value, consumesNext, err := parseFlagValue(arg)
-		if err != nil {
-			return "", memory.RetrievalContext{}, err
-		}
-		if consumesNext {
-			idx++
-			if idx >= len(args) {
-				return "", memory.RetrievalContext{}, fmt.Errorf("flag %s requer valor", name)
-			}
-			value = args[idx]
-		}
-
-		switch name {
-		case "--project":
-			ctx.Project = value
-		case "--host":
-			ctx.Host = value
-		default:
-			return "", memory.RetrievalContext{}, fmt.Errorf("flag inválida: %s", name)
-		}
-	}
-
-	if len(queryParts) == 0 {
-		return "", memory.RetrievalContext{}, errors.New("nenhuma query informada")
-	}
-
-	return strings.Join(queryParts, " "), ctx, nil
 }
 
 func parseAskInput(args []string, cwd string) (memory.AskInput, error) {

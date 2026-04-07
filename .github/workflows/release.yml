@@ -19,6 +19,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Build release body
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          CUSTOM_NOTES=".github/releases/${RELEASE_TAG}.md"
+          if [ -f "${CUSTOM_NOTES}" ]; then
+            sh ./scripts/release_body.sh "${RELEASE_TAG}" "${CUSTOM_NOTES}" > /tmp/pocket-release-body.md
+          else
+            sh ./scripts/release_body.sh "${RELEASE_TAG}" > /tmp/pocket-release-body.md
+          fi
+
       - name: Compute SHA256 checksums
         id: checksums
         run: |
@@ -33,20 +44,4 @@ jobs:
             bootstrap.sh
             install.sh
             checksums.sha256
-          body: |
-            ## PocketCli ${{ github.ref_name }}
-
-            ### Install
-
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${{ github.ref_name }}/bootstrap.sh | bash
-            ```
-
-            ### Verify checksum (recommended)
-
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${{ github.ref_name }}/bootstrap.sh -o bootstrap.sh
-            curl -fsSL https://github.com/irinery/PocketCli/releases/download/${{ github.ref_name }}/checksums.sha256 -o checksums.sha256
-            sha256sum -c checksums.sha256
-            bash bootstrap.sh
-            ```
+          body_path: /tmp/pocket-release-body.md

@@ -33,6 +33,8 @@ func newRootCommand() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(newAskCommand())
+	rootCmd.AddCommand(newRecallCommand())
+	rootCmd.AddCommand(newContextCommand())
 	rootCmd.AddCommand(newMemoryCommand())
 	rootCmd.AddCommand(newHostsCommand())
 	rootCmd.AddCommand(newSSHCommand())

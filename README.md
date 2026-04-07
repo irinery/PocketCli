@@ -69,10 +69,11 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket-menu` | Control Deck leve com dashboard local, ações SSH e atalhos prontos para iPad/tmux |
 | `pocket-radar` | Lista máquinas online no Tailscale |
 | `pocket-update` | Atualiza o PocketCli preservando diferenças locais relevantes |
-| `pocket ask` | Registra a última interação local para posterior validação explícita |
+| `pocket ask [--mode ...] <prompt...>` | Executa o fluxo completo de contexto, memória, roteamento e backend |
+| `pocket recall [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
+| `pocket context` | Exibe o `TaskContext` coletado sem chamar backend |
 | `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
 | `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
-| `pocket memory search [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
 | `pocket memory clean [--dry-run\|--force]` | Lista candidatos à remoção ou executa limpeza manual com confirmação por entrada |
 
 ---
@@ -170,12 +171,17 @@ pocket resume
 # Ver máquinas disponíveis
 pocket-radar
 
-# Registrar uma interação e salvar na memória validada
+# Executar o fluxo completo de pergunta com fallback automático
 pocket ask "Persistir decisões do projeto em jsonl por escopo"
-pocket memory save
+
+# Inspecionar o contexto bruto coletado antes de chamar qualquer backend
+pocket context
 
 # Recuperar memórias relevantes para a query atual
-pocket memory search "ssh timeout"
+pocket recall "ssh timeout"
+
+# Salvar a interação recente na memória validada
+pocket memory save
 
 # Inspecionar ou executar limpeza manual das memórias candidatas
 pocket memory clean --dry-run
@@ -255,7 +261,26 @@ go test ./internal/backend
 go test ./internal/tools
 go test ./internal/memory
 go test ./internal/audit
+sh tests/test_release_body.sh
+```
+
+Para validar a etapa 8 do CLI isoladamente, execute:
+
+```bash
 go test ./cmd/pocket
+```
+
+Para simular respostas de backend sem depender de um provedor real, você pode exportar uma destas variáveis antes do `pocket ask`:
+
+```bash
+export POCKETCLI_LOCAL_BACKEND_RESPONSE="resposta local de teste"
+export POCKETCLI_REMOTE_BACKEND_RESPONSE="resposta remota de teste"
+```
+
+Ou apontar para um comando local:
+
+```bash
+export POCKETCLI_LOCAL_BACKEND_CMD='ollama run llama3.1'
 ```
 
 Isso cobre layout responsivo do menu shell, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
