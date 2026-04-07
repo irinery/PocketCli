@@ -20,8 +20,11 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 1. **Novo módulo interno (`internal/<modulo>`)**
    - Adicione `*_test.go` no mesmo pacote.
    - Evite dependências reais de sistema/rede; use injeção de função para mocks.
+   - Para rodar só os testes do Tool Contract (fase 6), use `go test ./internal/tools` e `go test ./internal/contextcollector`.
    - Para rodar só os testes do módulo Router (fase 4), use `go test ./internal/router`.
    - Para rodar só os testes do módulo Backend Contract (fase 5), use `go test ./internal/backend`.
+   - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
+   - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Backend Contract: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
 

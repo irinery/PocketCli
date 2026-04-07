@@ -269,8 +269,8 @@ func buildContextSection(taskContext contextcollector.TaskContext) string {
 	if successful := formatSuccessfulToolResults(taskContext.ToolResults); len(successful) > 0 {
 		contextData = append(contextData, "tool_results:\n"+strings.Join(successful, "\n"))
 	}
-	if len(taskContext.Notes) > 0 {
-		contextData = append(contextData, "notes:\n- "+strings.Join(taskContext.Notes, "\n- "))
+	if notes := visibleNotes(taskContext.Notes, taskContext.ToolResults); len(notes) > 0 {
+		contextData = append(contextData, "notes:\n- "+strings.Join(notes, "\n- "))
 	}
 	if len(contextData) > 0 {
 		blocks = append(blocks, strings.Join(contextData, "\n\n"))
@@ -299,15 +299,10 @@ func buildContextSection(taskContext contextcollector.TaskContext) string {
 func formatMissingToolWarnings(results []contextcollector.ToolResult) []string {
 	var warnings []string
 	for idx, result := range results {
-		if result.OK {
+		if !result.WarnAtContextStart() {
 			continue
 		}
-
-		toolName := strings.TrimSpace(result.ToolName)
-		if toolName == "" {
-			toolName = fmt.Sprintf("%d", idx+1)
-		}
-		warnings = append(warnings, fmt.Sprintf("[AVISO: tool %s indisponível — dado ausente]", toolName))
+		warnings = append(warnings, result.Warning(idx))
 	}
 	return warnings
 }
@@ -337,6 +332,24 @@ func formatSuccessfulToolResults(results []contextcollector.ToolResult) []string
 		}
 	}
 	return lines
+}
+
+func visibleNotes(notes []string, results []contextcollector.ToolResult) []string {
+	hiddenWarnings := map[string]struct{}{}
+	for idx, result := range results {
+		if result.WarnAtContextStart() {
+			hiddenWarnings[result.Warning(idx)] = struct{}{}
+		}
+	}
+
+	filtered := make([]string, 0, len(notes))
+	for _, note := range notes {
+		if _, hidden := hiddenWarnings[note]; hidden {
+			continue
+		}
+		filtered = append(filtered, note)
+	}
+	return filtered
 }
 
 func renderSection(title, body string) string {
