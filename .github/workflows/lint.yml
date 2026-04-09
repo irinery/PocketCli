@@ -10,6 +10,7 @@ jobs:
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -21,21 +22,26 @@ jobs:
       - name: Run ShellCheck on all scripts
         run: |
           echo "── Scanning shell scripts ──"
+          # SC1091: source com path dinâmico — intencional no PocketCli
+          # SC2034 NÃO é excluído globalmente: scripts que exportam variáveis
+          #        devem usar `# shellcheck disable=SC2034` inline com comentário.
           find . \
             -not -path './.git/*' \
+            -not -path './vendor/*' \
             -type f \
             \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
-            -print \
             | sort \
             | xargs -r shellcheck \
+                --color=always \
                 --severity=warning \
                 --shell=bash \
-                --exclude=SC1091,SC2034   # allow dynamic source and sourced-file exported globals
+                --exclude=SC1091
           echo "✔ ShellCheck passed."
 
   syntax:
     name: Bash syntax check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -44,14 +50,82 @@ jobs:
       - name: Check bash syntax
         run: |
           echo "── Checking bash syntax ──"
-          ERRORS=0
-          find . \
-            -not -path './.git/*' \
-            -type f \
-            \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
-            -print \
-            | sort \
-            | while IFS= read -r f; do
-                bash -n "${f}" && echo "  ok  ${f}" || { echo "  ✘  ${f}"; ERRORS=$((ERRORS+1)); }
-              done
-          [ "${ERRORS}" -eq 0 ] && echo "✔ All syntax checks passed."
+          # IMPORTANTE: usa process substitution < <(find ...) para manter
+          # o loop no shell corrente. Pipeline (find ... | while) executa em
+          # subshell e a variável FAILED nunca propagaria para o pai.
+          FAILED=0
+          while IFS= read -r f; do
+            if bash -n "${f}" 2>&1; then
+              printf '  ok  %s\n' "${f}"
+            else
+              printf '  ✘   %s\n' "${f}"
+              FAILED=1
+            fi
+          done < <(
+            find . \
+              -not -path './.git/*' \
+              -not -path './vendor/*' \
+              -type f \
+              \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
+            | sort
+          )
+          if [ "${FAILED}" -eq 0 ]; then
+            echo "✔ All syntax checks passed."
+          else
+            echo "✘ One or more scripts failed syntax check."
+            exit 1
+          fi
+
+  shebang:
+    name: Shebang consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check shebang consistency
+        run: |
+          echo "── Checking shebang consistency ──"
+          # Scripts com recursos bash-only (arrays, [[ ]], process substitution)
+          # devem declarar #!/usr/bin/env bash ou #!/bin/bash.
+          # Scripts com #!/bin/sh são tratados como POSIX e validados como tal.
+          FAILED=0
+          while IFS= read -r f; do
+            SHEBANG=$(head -1 "${f}" 2>/dev/null || true)
+            case "${SHEBANG}" in
+              '#!/bin/sh'*)
+                # Revalida com sh para capturar uso acidental de bash-only
+                if ! sh -n "${f}" 2>/dev/null; then
+                  printf '  ✘  sh-shebang mas sintaxe sh inválida: %s\n' "${f}"
+                  FAILED=1
+                else
+                  printf '  ok (sh)    %s\n' "${f}"
+                fi
+                ;;
+              '#!/bin/bash'* | '#!/usr/bin/env bash'*)
+                printf '  ok (bash)  %s\n' "${f}"
+                ;;
+              '')
+                printf '  ⚠  sem shebang: %s\n' "${f}"
+                # Sem shebang não é erro fatal — ShellCheck já cobre isso
+                ;;
+              *)
+                printf '  ok (other) %s  [%s]\n' "${f}" "${SHEBANG}"
+                ;;
+            esac
+          done < <(
+            find . \
+              -not -path './.git/*' \
+              -not -path './vendor/*' \
+              -type f \
+              \( -name "*.sh" -o -name "pocket" -o -name "bootstrap.sh" -o -name "install.sh" \) \
+            | sort
+          )
+          if [ "${FAILED}" -eq 0 ]; then
+            echo "✔ All shebang checks passed."
+          else
+            echo "✘ Shebang inconsistency found."
+            exit 1
+          fi
