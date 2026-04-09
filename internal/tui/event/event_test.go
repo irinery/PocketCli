@@ -123,14 +123,15 @@ func TestT0206TickIntervalEmitsExactlyTwoTicks(t *testing.T) {
 }
 
 func TestT0207FullEventBufferDropsNewestEvent(t *testing.T) {
-	loop, writer, cancel := newStartedLoop(t, nil, 0)
-	defer cancel()
+	loop := New(nil, nil, 0)
+	for i := 0; i < eventBufferSize; i++ {
+		loop.emit(Event{Type: EventKey, Key: KeyEvent{Key: KeyRune, Rune: 'a'}})
+	}
 
-	writeAndClose(t, writer, bytes.Repeat([]byte{'a'}, eventBufferSize+1))
+	loop.emit(Event{Type: EventKey, Key: KeyEvent{Key: KeyRune, Rune: 'b'}})
 
-	events := collectUntilClosed(t, loop.Events(), 500*time.Millisecond)
-	if len(events) != eventBufferSize {
-		t.Fatalf("len(events) = %d, want %d", len(events), eventBufferSize)
+	if got := len(loop.out); got != eventBufferSize {
+		t.Fatalf("len(loop.out) = %d, want %d", got, eventBufferSize)
 	}
 	if dropped := atomic.LoadUint64(&loop.DroppedEvents); dropped != 1 {
 		t.Fatalf("DroppedEvents = %d, want 1", dropped)
