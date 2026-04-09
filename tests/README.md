@@ -27,12 +27,14 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Para rodar só os testes de Audit Log e Memory Cleanup (fase 7), use `go test ./internal/audit`, `go test ./internal/memory` e `go test ./cmd/pocket`.
    - Para rodar os testes da Fase 8 (CLI Commands), use `go test ./cmd/pocket`.
    - Para rodar os testes do módulo TUI Terminal (fase 1), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/terminal`.
+   - Para rodar os testes do módulo TUI EventLoop (fase 2), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/event`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Backend Contract: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Audit Log e Memory Cleanup: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: `HOME` pode ser apontado para um diretório temporário ao validar fluxos de auditoria em `~/.pocket`.
    - Pré-requisitos do TUI Terminal: `/dev/ptmx` acessível e suporte a sinais POSIX (`SIGWINCH`, `SIGINT`, `SIGTERM`). Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
+   - Pré-requisitos do TUI EventLoop: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:
