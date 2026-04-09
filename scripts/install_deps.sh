@@ -28,6 +28,25 @@ esac
 
 printf '[PocketCli] Installing: %s\n' "${PKGS}"
 
+# ---------------------------------------------------------------------------
+_install_lazygit_linux() {
+    printf '[PocketCli] Installing lazygit...\n'
+    LG_VER=$(curl -fsSL "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" \
+        | jq -r '.tag_name' | tr -d 'v')
+    TMP=$(mktemp -d)
+    curl -fsSL \
+        "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VER}/lazygit_${LG_VER}_Linux_x86_64.tar.gz" \
+        -o "${TMP}/lazygit.tar.gz"
+    tar -xzf "${TMP}/lazygit.tar.gz" -C "${TMP}"
+    sudo install "${TMP}/lazygit" /usr/local/bin/lazygit
+    rm -rf "${TMP}"
+}
+
+_install_starship() {
+    printf '[PocketCli] Installing starship...\n'
+    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
+}
+
 case "${OS}" in
 
     alpine|ish)
@@ -73,22 +92,3 @@ case "${OS}" in
 esac
 
 printf '[PocketCli] Dependencies installed.\n'
-
-# ---------------------------------------------------------------------------
-_install_lazygit_linux() {
-    printf '[PocketCli] Installing lazygit...\n'
-    LG_VER=$(curl -fsSL "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" \
-        | jq -r '.tag_name' | tr -d 'v')
-    TMP=$(mktemp -d)
-    curl -fsSL \
-        "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VER}/lazygit_${LG_VER}_Linux_x86_64.tar.gz" \
-        -o "${TMP}/lazygit.tar.gz"
-    tar -xzf "${TMP}/lazygit.tar.gz" -C "${TMP}"
-    sudo install "${TMP}/lazygit" /usr/local/bin/lazygit
-    rm -rf "${TMP}"
-}
-
-_install_starship() {
-    printf '[PocketCli] Installing starship...\n'
-    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
-}
