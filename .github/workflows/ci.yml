@@ -10,6 +10,7 @@ jobs:
   build-and-smoke:
     name: Build and smoke (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +32,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true   # restaura módulos e build cache automaticamente
+
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run shell regression suite
         env:
@@ -44,10 +49,17 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          ${{ matrix.go_test_cmd }}
+          GO_LOG="/tmp/pocket-gotest-${{ matrix.ci_profile }}.log"
+          if ${{ matrix.go_test_cmd }} >"${GO_LOG}" 2>&1; then
+            GO_EXIT=0
+          else
+            GO_EXIT=$?
+          fi
+          cat "${GO_LOG}"
           END_TS=$(date +%s)
           printf '### Go tests (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${GO_EXIT}"
 
       - name: Build pocket Go binary
         env:
@@ -64,11 +76,30 @@ jobs:
           POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_GO_BINARY: /tmp/pocket-go
-        run: sh tests/run_smoke.sh
+        run: |
+          SMOKE_LOG="/tmp/pocket-smoke-${{ matrix.ci_profile }}.log"
+          if sh tests/run_smoke.sh >"${SMOKE_LOG}" 2>&1; then
+            SMOKE_EXIT=0
+          else
+            SMOKE_EXIT=$?
+          fi
+          cat "${SMOKE_LOG}"
+          exit "${SMOKE_EXIT}"
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.ci_profile }}
+          path: |
+            /tmp/pocket-gotest-${{ matrix.ci_profile }}.log
+            /tmp/pocket-smoke-${{ matrix.ci_profile }}.log
+          retention-days: 7
 
   build-and-smoke-alpine:
     name: Build and smoke (alpine)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container:
       image: alpine:3.21
     env:
@@ -83,6 +114,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cache Go modules (alpine)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-mod-alpine-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-mod-alpine-
+
+      - name: Run go vet
+        run: go vet ./cmd/pocket ./internal/...
+
       - name: Run shell regression suite
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
@@ -94,10 +138,17 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go test ./cmd/pocket ./internal/...
+          GO_LOG="/tmp/pocket-gotest-alpine.log"
+          if go test ./cmd/pocket ./internal/... >"${GO_LOG}" 2>&1; then
+            GO_EXIT=0
+          else
+            GO_EXIT=$?
+          fi
+          cat "${GO_LOG}"
           END_TS=$(date +%s)
           printf '### Go tests (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${GO_EXIT}"
 
       - name: Build pocket Go binary
         env:
@@ -113,4 +164,22 @@ jobs:
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_GO_BINARY: /tmp/pocket-go
-        run: sh tests/run_smoke.sh
+        run: |
+          SMOKE_LOG="/tmp/pocket-smoke-alpine.log"
+          if sh tests/run_smoke.sh >"${SMOKE_LOG}" 2>&1; then
+            SMOKE_EXIT=0
+          else
+            SMOKE_EXIT=$?
+          fi
+          cat "${SMOKE_LOG}"
+          exit "${SMOKE_EXIT}"
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-alpine
+          path: |
+            /tmp/pocket-gotest-alpine.log
+            /tmp/pocket-smoke-alpine.log
+          retention-days: 7
