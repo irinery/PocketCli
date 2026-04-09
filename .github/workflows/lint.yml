@@ -95,7 +95,7 @@ jobs:
           while IFS= read -r f; do
             SHEBANG=$(head -1 "${f}" 2>/dev/null || true)
             case "${SHEBANG}" in
-              '#!/bin/sh'*)
+              '#!/bin/sh'* | '#! /bin/sh'* | '#!/usr/bin/env sh'* | '#! /usr/bin/env sh'*)
                 # Revalida com sh para capturar uso acidental de bash-only
                 if ! sh -n "${f}" 2>/dev/null; then
                   printf '  ✘  sh-shebang mas sintaxe sh inválida: %s\n' "${f}"
@@ -104,7 +104,7 @@ jobs:
                   printf '  ok (sh)    %s\n' "${f}"
                 fi
                 ;;
-              '#!/bin/bash'* | '#!/usr/bin/env bash'*)
+              '#!/bin/bash'* | '#! /bin/bash'* | '#!/usr/bin/env bash'* | '#! /usr/bin/env bash'*)
                 printf '  ok (bash)  %s\n' "${f}"
                 ;;
               '')
