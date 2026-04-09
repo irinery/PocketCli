@@ -57,24 +57,30 @@ fi
 
 # Clean shell RC files — iterate without arrays
 for rc in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.profile"; do
-    if [ -f "${rc}" ] && grep -qF "pocketcli" "${rc}" 2>/dev/null; then
-        _info "Cleaning ${rc}..."
-        sed -i.bak '/pocketcli/Id;/PocketCli/d' "${rc}" 2>/dev/null || \
-            sed -i.bak '/pocketcli/d;/PocketCli/d' "${rc}"
-        rm -f "${rc}.bak"
-        _ok "Cleaned ${rc}"
+    if [ -f "${rc}" ]; then
+        if grep -qF "pocketcli" "${rc}" 2>/dev/null; then
+            _info "Cleaning ${rc}..."
+            sed -i.bak '/pocketcli/Id;/PocketCli/d' "${rc}" 2>/dev/null || \
+                sed -i.bak '/pocketcli/d;/PocketCli/d' "${rc}"
+            rm -f "${rc}.bak"
+            _ok "Cleaned ${rc}"
+        fi
     fi
 done
 
 # Remove config files only if created by PocketCli
-if [ -f "${TMUX_CONF}" ] && grep -qF "PocketCli" "${TMUX_CONF}" 2>/dev/null; then
-    rm -f "${TMUX_CONF}"
-    _ok "Removed tmux config."
+if [ -f "${TMUX_CONF}" ]; then
+    if grep -qF "PocketCli" "${TMUX_CONF}" 2>/dev/null; then
+        rm -f "${TMUX_CONF}"
+        _ok "Removed tmux config."
+    fi
 fi
 
-if [ -f "${STARSHIP_CONF}" ] && grep -qF "PocketCli" "${STARSHIP_CONF}" 2>/dev/null; then
-    rm -f "${STARSHIP_CONF}"
-    _ok "Removed starship config."
+if [ -f "${STARSHIP_CONF}" ]; then
+    if grep -qF "PocketCli" "${STARSHIP_CONF}" 2>/dev/null; then
+        rm -f "${STARSHIP_CONF}"
+        _ok "Removed starship config."
+    fi
 fi
 
 echo ""
