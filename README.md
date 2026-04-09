@@ -270,6 +270,12 @@ Para validar a etapa 8 do CLI isoladamente, execute:
 go test ./cmd/pocket
 ```
 
+Para validar o módulo TUI Renderer da fase 3 isoladamente, execute:
+
+```bash
+env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/renderer
+```
+
 Para simular respostas de backend sem depender de um provedor real, você pode exportar uma destas variáveis antes do `pocket ask`:
 
 ```bash
