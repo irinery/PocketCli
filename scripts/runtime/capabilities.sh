@@ -1,28 +1,50 @@
 #!/usr/bin/env sh
 
 pocket_detect_capabilities() {
-    # shellcheck disable=SC2034
-    HAS_TTY=false
-    # shellcheck disable=SC2034
-    [ -t 0 ] && [ -t 1 ] && HAS_TTY=true
+    if [ -t 0 ]; then
+        if [ -t 1 ]; then
+            # shellcheck disable=SC2034
+            HAS_TTY=true
+        else
+            # shellcheck disable=SC2034
+            HAS_TTY=false
+        fi
+    else
+        # shellcheck disable=SC2034
+        HAS_TTY=false
+    fi
 
-    # shellcheck disable=SC2034
-    HAS_TMUX=false
-    # shellcheck disable=SC2034
-    command -v tmux >/dev/null 2>&1 && HAS_TMUX=true
+    if command -v tmux >/dev/null 2>&1; then
+        # shellcheck disable=SC2034
+        HAS_TMUX=true
+    else
+        # shellcheck disable=SC2034
+        HAS_TMUX=false
+    fi
 
-    # shellcheck disable=SC2034
-    HAS_TAILSCALE=false
-    # shellcheck disable=SC2034
-    command -v tailscale >/dev/null 2>&1 && HAS_TAILSCALE=true
+    if command -v tailscale >/dev/null 2>&1; then
+        # shellcheck disable=SC2034
+        HAS_TAILSCALE=true
+    else
+        # shellcheck disable=SC2034
+        HAS_TAILSCALE=false
+    fi
 
-    # shellcheck disable=SC2034
-    HAS_JQ=false
-    # shellcheck disable=SC2034
-    command -v jq >/dev/null 2>&1 && HAS_JQ=true
+    if command -v jq >/dev/null 2>&1; then
+        # shellcheck disable=SC2034
+        HAS_JQ=true
+    else
+        # shellcheck disable=SC2034
+        HAS_JQ=false
+    fi
 
-    # shellcheck disable=SC2034
-    IS_ISH=false
-    # shellcheck disable=SC2034
-    is_ish && IS_ISH=true
+    if is_ish; then
+        # shellcheck disable=SC2034
+        IS_ISH=true
+    else
+        # shellcheck disable=SC2034
+        IS_ISH=false
+    fi
+
+    return 0
 }
