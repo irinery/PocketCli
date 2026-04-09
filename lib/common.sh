@@ -51,8 +51,27 @@ explain_block() {
     done
 }
 
-run_or_warn() { DESC="$1"; shift; "$@" >/dev/null 2>&1 && ok "${DESC}" || warn "${DESC} — skipped"; }
-run_or_die()  { DESC="$1"; shift; "$@" >/dev/null 2>&1 && ok "${DESC}" || die "${DESC} — FAILED"; }
+run_or_warn() {
+    DESC="$1"
+    shift
+
+    if "$@" >/dev/null 2>&1; then
+        ok "${DESC}"
+    else
+        warn "${DESC} — skipped"
+    fi
+}
+
+run_or_die() {
+    DESC="$1"
+    shift
+
+    if "$@" >/dev/null 2>&1; then
+        ok "${DESC}"
+    else
+        die "${DESC} — FAILED"
+    fi
+}
 
 with_timeout() {
     SECS="$1"; shift
@@ -97,10 +116,18 @@ confirm() {
 # is_ish — true if running inside iSH on iPad
 # ---------------------------------------------------------------------------
 is_ish() {
-    [ -f /proc/ish ] && return 0
-    uname -r 2>/dev/null | grep -qi 'ish' && return 0
+    if [ -f /proc/ish ]; then
+        return 0
+    fi
+    if uname -r 2>/dev/null | grep -qi 'ish'; then
+        return 0
+    fi
     # iSH Alpine reports kernel 4.x on x86
-    [ -f /etc/alpine-release ] && uname -r 2>/dev/null | grep -q '^4\.' && return 0
+    if [ -f /etc/alpine-release ]; then
+        if uname -r 2>/dev/null | grep -q '^4\.'; then
+            return 0
+        fi
+    fi
     return 1
 }
 
@@ -109,8 +136,12 @@ is_ish() {
 # Always false on iSH — kernel doesn't support netlink, daemon can't run.
 # ---------------------------------------------------------------------------
 is_tailscale_daemon_running() {
-    is_ish && return 1
-    pgrep tailscaled >/dev/null 2>&1 && return 0
+    if is_ish; then
+        return 1
+    fi
+    if pgrep tailscaled >/dev/null 2>&1; then
+        return 0
+    fi
     return 1
 }
 
@@ -180,8 +211,10 @@ save_known_target() {
     [ -z "${TARGET}" ] && return 1
 
     mkdir -p "$(dirname "${TARGET_FILE}")"
-    if [ -f "${TARGET_FILE}" ] && grep -Fx "${TARGET}" "${TARGET_FILE}" >/dev/null 2>&1; then
-        return 0
+    if [ -f "${TARGET_FILE}" ]; then
+        if grep -Fx "${TARGET}" "${TARGET_FILE}" >/dev/null 2>&1; then
+            return 0
+        fi
     fi
     printf '%s\n' "${TARGET}" >> "${TARGET_FILE}"
 }

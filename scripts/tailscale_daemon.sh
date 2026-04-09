@@ -106,14 +106,18 @@ _daemon_status() {
         echo ""
         info "Saved hosts (pocket menu for interactive selection):"
         HOSTS_FILE="${POCKETCLI_DIR}/hosts"
-        if [ -f "${HOSTS_FILE}" ] && grep -qv '^\s*$' "${HOSTS_FILE}" 2>/dev/null; then
-            grep -v '^\s*#' "${HOSTS_FILE}" | grep -v '^\s*$' \
-                | while IFS= read -r h; do
-                    REACHABLE=""
-                    ping_host "${h}" 2 && REACHABLE=" ${C_GREEN}[reachable]${C_NC}" \
-                                       || REACHABLE=" ${C_YELLOW}[no response]${C_NC}"
-                    printf "  %-25s%b\n" "${h}" "${REACHABLE}"
-                  done
+        if [ -f "${HOSTS_FILE}" ]; then
+            if grep -qv '^\s*$' "${HOSTS_FILE}" 2>/dev/null; then
+                grep -v '^\s*#' "${HOSTS_FILE}" | grep -v '^\s*$' \
+                    | while IFS= read -r h; do
+                        REACHABLE=""
+                        ping_host "${h}" 2 && REACHABLE=" ${C_GREEN}[reachable]${C_NC}" \
+                                           || REACHABLE=" ${C_YELLOW}[no response]${C_NC}"
+                        printf "  %-25s%b\n" "${h}" "${REACHABLE}"
+                      done
+            else
+                info "No saved hosts yet. Use option 2 in pocket menu to add them."
+            fi
         else
             info "No saved hosts yet. Use option 2 in pocket menu to add them."
         fi
@@ -180,9 +184,11 @@ _install_tailscale() {
     if command -v apk >/dev/null 2>&1; then
         if apk add --no-cache tailscale >/dev/null 2>&1; then
             ok "apk add tailscale"
-            apk add --no-cache qrencode 2>/dev/null \
-                && ok "qrencode installed" \
-                || warn "qrencode not available — URL shown as text"
+            if apk add --no-cache qrencode 2>/dev/null; then
+                ok "qrencode installed"
+            else
+                warn "qrencode not available — URL shown as text"
+            fi
             return 0
         fi
         warn "Could not install tailscale via apk"
@@ -211,19 +217,13 @@ _prompt_fallback_targets() {
         return 1
     fi
 
-    printf '
-'
-    printf '  ${C_BOLD}Fallback sem app Tailscale${C_NC}
-'
-    printf '  Informe um host/IP conhecido da tailnet (ex.: 100.113.114.52).
-'
-    printf '  Você pode informar vários valores separados por espaço ou vírgula.
-
-'
+    printf '\n'
+    printf '  %sFallback sem app Tailscale%s\n' "${C_BOLD}" "${C_NC}"
+    printf '  Informe um host/IP conhecido da tailnet (ex.: 100.113.114.52).\n'
+    printf '  Você pode informar vários valores separados por espaço ou vírgula.\n\n'
     printf '  Hosts/IPs: ' > /dev/tty
     IFS= read -r INPUT < /dev/tty || return 1
-    printf '%s
-' "${INPUT}"
+    printf '%s\n' "${INPUT}"
 }
 
 _save_fallback_targets() {
@@ -301,7 +301,7 @@ _full_setup() {
             info "Add hosts with: pocket menu  (option 2)"
         else
             echo ""
-            printf "  ${C_YELLOW}Action required:${C_NC}\n"
+            printf '  %sAction required:%s\n' "${C_YELLOW}" "${C_NC}"
             echo "  1. Install the Tailscale app from the App Store"
             echo "  2. Sign in and enable the VPN"
             echo "  3. Re-run: pocket tailscale-setup"
@@ -376,9 +376,9 @@ _authenticate() {
 _show_auth_url() {
     URL="$1"
     echo ""
-    printf "  ${C_BOLD}+-------------------------------------+${C_NC}\n"
-    printf "  ${C_BOLD}|  Scan QR or open the URL below     |${C_NC}\n"
-    printf "  ${C_BOLD}+-------------------------------------+${C_NC}\n"
+    printf '  %s+-------------------------------------%s\n' "${C_BOLD}" "${C_NC}"
+    printf '  %s|  Scan QR or open the URL below     |%s\n' "${C_BOLD}" "${C_NC}"
+    printf '  %s+-------------------------------------%s\n' "${C_BOLD}" "${C_NC}"
     echo ""
 
     QR_OK=0
@@ -397,8 +397,8 @@ _show_auth_url() {
 
     if [ "${QR_OK}" -eq 0 ]; then
         echo ""
-        printf "  ${C_YELLOW}Open in browser:${C_NC}\n\n"
-        printf "  ${C_CYAN}${C_BOLD}%s${C_NC}\n" "${URL}"
+        printf '  %sOpen in browser:%s\n\n' "${C_YELLOW}" "${C_NC}"
+        printf '  %s%s%s%s\n' "${C_CYAN}" "${C_BOLD}" "${URL}" "${C_NC}"
         echo ""
     fi
 }

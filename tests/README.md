@@ -29,6 +29,9 @@ POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
 
+Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
