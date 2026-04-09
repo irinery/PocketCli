@@ -10,6 +10,7 @@ jobs:
   release:
     name: Publish release
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
 
@@ -19,16 +20,45 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate semver tag format
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # Aceita: vX.Y.Z e release/vX.Y.Z
+          CLEAN_TAG="${RELEASE_TAG#release/}"
+          if ! echo "${CLEAN_TAG}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "✘ Tag '${RELEASE_TAG}' não é semver válido."
+            echo "  Formato esperado: vMAJOR.MINOR.PATCH (ex: v1.2.3)"
+            exit 1
+          fi
+          echo "✔ Tag semver válida: ${CLEAN_TAG}"
+
+      - name: Validate required release files exist
+        run: |
+          MISSING=0
+          for f in bootstrap.sh install.sh; do
+            if [ ! -f "${f}" ]; then
+              echo "✘ Arquivo obrigatório ausente: ${f}"
+              MISSING=1
+            fi
+          done
+          [ "${MISSING}" -eq 0 ] && echo "✔ Arquivos de release presentes."
+          [ "${MISSING}" -eq 0 ] || exit 1
+
       - name: Build release body
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           CUSTOM_NOTES=".github/releases/${RELEASE_TAG}.md"
           if [ -f "${CUSTOM_NOTES}" ]; then
+            echo "ℹ  Usando release notes customizadas: ${CUSTOM_NOTES}"
             sh ./scripts/release_body.sh "${RELEASE_TAG}" "${CUSTOM_NOTES}" > /tmp/pocket-release-body.md
           else
+            echo "ℹ  Sem release notes customizadas — gerando corpo padrão."
             sh ./scripts/release_body.sh "${RELEASE_TAG}" > /tmp/pocket-release-body.md
           fi
+          echo "── Release body preview ──"
+          head -20 /tmp/pocket-release-body.md
 
       - name: Compute SHA256 checksums
         id: checksums
@@ -36,6 +66,7 @@ jobs:
           echo "── Computing checksums ──"
           sha256sum bootstrap.sh install.sh > checksums.sha256
           cat checksums.sha256
+          echo "✔ Checksums computed."
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
