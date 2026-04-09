@@ -18,11 +18,9 @@ jobs:
           - name: linux
             os: ubuntu-latest
             ci_profile: linux
-            go_test_cmd: go test ./...
           - name: macos
             os: macos-latest
             ci_profile: macos
-            go_test_cmd: go test ./...
 
     steps:
       - name: Checkout
@@ -35,14 +33,30 @@ jobs:
           cache: true   # restaura módulos e build cache automaticamente
 
       - name: Run go vet
-        run: go vet ./...
+        run: |
+          VET_LOG="/tmp/pocket-vet-${{ matrix.ci_profile }}.log"
+          if go vet ./... >"${VET_LOG}" 2>&1; then
+            VET_EXIT=0
+          else
+            VET_EXIT=$?
+          fi
+          cat "${VET_LOG}"
+          exit "${VET_EXIT}"
 
       - name: Run shell regression suite
         env:
           POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_TEST_EXCLUDES: test_ish.sh
-        run: sh tests/run_all.sh
+        run: |
+          TEST_LOG="/tmp/pocket-test-${{ matrix.ci_profile }}.log"
+          if sh tests/run_all.sh >"${TEST_LOG}" 2>&1; then
+            TEST_EXIT=0
+          else
+            TEST_EXIT=$?
+          fi
+          cat "${TEST_LOG}"
+          exit "${TEST_EXIT}"
 
       - name: Run Go tests
         env:
@@ -50,7 +64,7 @@ jobs:
         run: |
           START_TS=$(date +%s)
           GO_LOG="/tmp/pocket-gotest-${{ matrix.ci_profile }}.log"
-          if ${{ matrix.go_test_cmd }} >"${GO_LOG}" 2>&1; then
+          if go test ./... >"${GO_LOG}" 2>&1; then
             GO_EXIT=0
           else
             GO_EXIT=$?
@@ -66,10 +80,17 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+          BUILD_LOG="/tmp/pocket-build-${{ matrix.ci_profile }}.log"
+          if go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket >"${BUILD_LOG}" 2>&1; then
+            BUILD_EXIT=0
+          else
+            BUILD_EXIT=$?
+          fi
+          cat "${BUILD_LOG}"
           END_TS=$(date +%s)
           printf '### Build (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${BUILD_EXIT}"
 
       - name: Run pocket smoke tests
         env:
@@ -92,6 +113,9 @@ jobs:
         with:
           name: test-logs-${{ matrix.ci_profile }}
           path: |
+            /tmp/pocket-vet-${{ matrix.ci_profile }}.log
+            /tmp/pocket-build-${{ matrix.ci_profile }}.log
+            /tmp/pocket-test-${{ matrix.ci_profile }}.log
             /tmp/pocket-gotest-${{ matrix.ci_profile }}.log
             /tmp/pocket-smoke-${{ matrix.ci_profile }}.log
           retention-days: 7
@@ -106,6 +130,8 @@ jobs:
       GOMAXPROCS: "1"
       GOMEMLIMIT: "768MiB"
       POCKETCLI_CI_PROFILE: alpine
+      GOCACHE: /root/.cache/go-build
+      GOMODCACHE: /root/go/pkg/mod
 
     steps:
       - name: Install base dependencies
@@ -118,28 +144,44 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
+            /root/.cache/go-build
+            /root/go/pkg/mod
           key: go-mod-alpine-${{ hashFiles('go.sum') }}
           restore-keys: |
             go-mod-alpine-
 
       - name: Run go vet
-        run: go vet ./cmd/pocket ./internal/...
+        run: |
+          VET_LOG="/tmp/pocket-vet-alpine.log"
+          if go vet ./... >"${VET_LOG}" 2>&1; then
+            VET_EXIT=0
+          else
+            VET_EXIT=$?
+          fi
+          cat "${VET_LOG}"
+          exit "${VET_EXIT}"
 
       - name: Run shell regression suite
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_TEST_EXCLUDES: test_ish.sh
-        run: sh tests/run_all.sh
+        run: |
+          TEST_LOG="/tmp/pocket-test-alpine.log"
+          if sh tests/run_all.sh >"${TEST_LOG}" 2>&1; then
+            TEST_EXIT=0
+          else
+            TEST_EXIT=$?
+          fi
+          cat "${TEST_LOG}"
+          exit "${TEST_EXIT}"
 
-      - name: Run focused Go tests
+      - name: Run Go tests
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
           GO_LOG="/tmp/pocket-gotest-alpine.log"
-          if go test ./cmd/pocket ./internal/... >"${GO_LOG}" 2>&1; then
+          if go test ./... >"${GO_LOG}" 2>&1; then
             GO_EXIT=0
           else
             GO_EXIT=$?
@@ -155,10 +197,17 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+          BUILD_LOG="/tmp/pocket-build-alpine.log"
+          if go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket >"${BUILD_LOG}" 2>&1; then
+            BUILD_EXIT=0
+          else
+            BUILD_EXIT=$?
+          fi
+          cat "${BUILD_LOG}"
           END_TS=$(date +%s)
           printf '### Build (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- pocket-go: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${BUILD_EXIT}"
 
       - name: Run pocket smoke tests
         env:
@@ -180,6 +229,9 @@ jobs:
         with:
           name: test-logs-alpine
           path: |
+            /tmp/pocket-vet-alpine.log
+            /tmp/pocket-build-alpine.log
+            /tmp/pocket-test-alpine.log
             /tmp/pocket-gotest-alpine.log
             /tmp/pocket-smoke-alpine.log
           retention-days: 7

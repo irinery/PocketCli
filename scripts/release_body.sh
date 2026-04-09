@@ -4,17 +4,23 @@ set -eu
 
 TAG="${1:-}"
 CUSTOM_FILE="${2:-}"
+DISPLAY_TAG="${RELEASE_DISPLAY_TAG:-${TAG}}"
+COMMIT_SHA="${RELEASE_COMMIT_SHA:-}"
 
 if [ -z "${TAG}" ]; then
     printf 'uso: %s <tag> [custom_file]\n' "$0" >&2
     exit 1
 fi
 
-printf '## PocketCli %s\n\n' "${TAG}"
+printf '## PocketCli %s\n\n' "${DISPLAY_TAG}"
 
 if [ -n "${CUSTOM_FILE}" ] && [ -f "${CUSTOM_FILE}" ]; then
     cat "${CUSTOM_FILE}"
     printf '\n\n'
+fi
+
+if [ -n "${COMMIT_SHA}" ]; then
+    printf 'Commit: `%s`\n\n' "${COMMIT_SHA}"
 fi
 
 cat <<EOF
