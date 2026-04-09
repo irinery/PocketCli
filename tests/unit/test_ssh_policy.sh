@@ -6,6 +6,7 @@ HOME_DIR="$WORKDIR/home"
 mkdir -p "$HOME_DIR"
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/../.." && pwd)
+# shellcheck disable=SC2034 -- consumed by sourced SSH policy helpers below
 POCKETCLI_DIR="$REPO_ROOT"
 HOME="$HOME_DIR"
 

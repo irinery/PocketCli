@@ -49,9 +49,13 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          ${{ matrix.go_test_cmd }} 2>&1 | tee /tmp/pocket-gotest-${{ matrix.ci_profile }}.log
-          # tee não propaga exit code — usar PIPESTATUS (bash) ou verificar
-          GO_EXIT="${PIPESTATUS[0]}"
+          GO_LOG="/tmp/pocket-gotest-${{ matrix.ci_profile }}.log"
+          if ${{ matrix.go_test_cmd }} >"${GO_LOG}" 2>&1; then
+            GO_EXIT=0
+          else
+            GO_EXIT=$?
+          fi
+          cat "${GO_LOG}"
           END_TS=$(date +%s)
           printf '### Go tests (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
@@ -72,7 +76,15 @@ jobs:
           POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_GO_BINARY: /tmp/pocket-go
-        run: sh tests/run_smoke.sh 2>&1 | tee /tmp/pocket-smoke-${{ matrix.ci_profile }}.log
+        run: |
+          SMOKE_LOG="/tmp/pocket-smoke-${{ matrix.ci_profile }}.log"
+          if sh tests/run_smoke.sh >"${SMOKE_LOG}" 2>&1; then
+            SMOKE_EXIT=0
+          else
+            SMOKE_EXIT=$?
+          fi
+          cat "${SMOKE_LOG}"
+          exit "${SMOKE_EXIT}"
 
       - name: Upload test logs on failure
         if: failure()
@@ -126,8 +138,13 @@ jobs:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
         run: |
           START_TS=$(date +%s)
-          go test ./cmd/pocket ./internal/... 2>&1 | tee /tmp/pocket-gotest-alpine.log
-          GO_EXIT="${PIPESTATUS[0]}"
+          GO_LOG="/tmp/pocket-gotest-alpine.log"
+          if go test ./cmd/pocket ./internal/... >"${GO_LOG}" 2>&1; then
+            GO_EXIT=0
+          else
+            GO_EXIT=$?
+          fi
+          cat "${GO_LOG}"
           END_TS=$(date +%s)
           printf '### Go tests (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
           printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
@@ -147,7 +164,15 @@ jobs:
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
           POCKETCLI_GO_BINARY: /tmp/pocket-go
-        run: sh tests/run_smoke.sh 2>&1 | tee /tmp/pocket-smoke-alpine.log
+        run: |
+          SMOKE_LOG="/tmp/pocket-smoke-alpine.log"
+          if sh tests/run_smoke.sh >"${SMOKE_LOG}" 2>&1; then
+            SMOKE_EXIT=0
+          else
+            SMOKE_EXIT=$?
+          fi
+          cat "${SMOKE_LOG}"
+          exit "${SMOKE_EXIT}"
 
       - name: Upload test logs on failure
         if: failure()
