@@ -26,9 +26,13 @@ inventory_refresh() {
         cat > "$(pocket_inventory_file)" <<JSON
 {"schema_version":1,"generated_at":"${NOW}","sources":{"tailscale":${HAS_TAILSCALE},"saved_hosts":true,"fallback_seeds":true},"hosts":[]}
 JSON
+        # shellcheck disable=SC2034
         INVENTORY_LAST_REFRESH_AT="${NOW}"
+        # shellcheck disable=SC2034
         INVENTORY_REFRESH_STATUS="empty"
+        # shellcheck disable=SC2034
         INVENTORY_KNOWN_COUNT=0
+        # shellcheck disable=SC2034
         INVENTORY_ONLINE_COUNT=0
         rm -f "${TMP_FILE}"
         return 0

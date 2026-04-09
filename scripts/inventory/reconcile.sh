@@ -47,8 +47,12 @@ JSON
         echo '}'
     } > "$(pocket_inventory_file)"
 
+    # shellcheck disable=SC2034
     INVENTORY_LAST_REFRESH_AT="${NOW}"
+    # shellcheck disable=SC2034
     INVENTORY_REFRESH_STATUS="ok"
+    # shellcheck disable=SC2034
     INVENTORY_KNOWN_COUNT="${KNOWN_COUNT}"
+    # shellcheck disable=SC2034
     INVENTORY_ONLINE_COUNT="${ONLINE_COUNT}"
 }
