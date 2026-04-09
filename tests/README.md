@@ -16,6 +16,19 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
+
+```sh
+export GOCACHE="${GOCACHE:-/tmp/pocketcli-go-build-cache}"
+go vet ./...
+sh tests/run_all.sh
+go test ./...
+go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
+POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
+```
+
+Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
@@ -50,16 +63,16 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 3. **Novo fluxo shell (`scripts/` / `bin/`)**
    - Adicione um script `tests/test_<fluxo>.sh` idempotente.
    - O script passa a ser descoberto automaticamente por `tests/run_all.sh`.
-   - Para o helper de release body usado no workflow de release, rode `sh tests/test_release_body.sh`. Pré-requisitos: shell POSIX; variáveis de ambiente: nenhuma obrigatória.
+   - Para o helper de release body usado no workflow de release, rode `sh tests/test_release_body.sh`. Pré-requisitos: shell POSIX; variáveis de ambiente opcionais: `RELEASE_DISPLAY_TAG` e `RELEASE_COMMIT_SHA`.
 
 4. **Novo cenário crítico do CLI (`pocket`)**
    - Adicione um script `tests/smoke/test_<cenario>.sh`.
    - Faça o teste entrar pelo comando `pocket`, com mocks explícitos para dependências externas.
    - Se o cenário for sensível a performance, defina ou ajuste o budget em `tests/lib/ci.sh`.
 
-## Perfil de CI “viewer-ish”
+## Perfil de CI “alpine”
 
-O workflow inclui o job `viewer-ish-sim`, que simula um ambiente próximo do viewer/iSH:
+O workflow inclui o job `build-and-smoke-alpine`, que simula um ambiente próximo do viewer/iSH:
 
 - container Alpine;
 - sem instalar Tailscale real;

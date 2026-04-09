@@ -6,6 +6,10 @@ on:
       - 'v*'
       - 'release/v*'
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Publish release
@@ -49,13 +53,27 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          CUSTOM_NOTES=".github/releases/${RELEASE_TAG}.md"
-          if [ -f "${CUSTOM_NOTES}" ]; then
+          CLEAN_TAG="${RELEASE_TAG#release/}"
+          RAW_NOTES=".github/releases/${RELEASE_TAG}.md"
+          CLEAN_NOTES=".github/releases/${CLEAN_TAG}.md"
+          RELEASE_COMMIT_SHA=$(git rev-list -n 1 "${RELEASE_TAG}")
+
+          if [ -f "${RAW_NOTES}" ]; then
+            CUSTOM_NOTES="${RAW_NOTES}"
+          elif [ -f "${CLEAN_NOTES}" ]; then
+            CUSTOM_NOTES="${CLEAN_NOTES}"
+          else
+            CUSTOM_NOTES=""
+          fi
+
+          if [ -n "${CUSTOM_NOTES}" ]; then
             echo "ℹ  Usando release notes customizadas: ${CUSTOM_NOTES}"
-            sh ./scripts/release_body.sh "${RELEASE_TAG}" "${CUSTOM_NOTES}" > /tmp/pocket-release-body.md
+            RELEASE_DISPLAY_TAG="${CLEAN_TAG}" RELEASE_COMMIT_SHA="${RELEASE_COMMIT_SHA}" \
+              sh ./scripts/release_body.sh "${RELEASE_TAG}" "${CUSTOM_NOTES}" > /tmp/pocket-release-body.md
           else
             echo "ℹ  Sem release notes customizadas — gerando corpo padrão."
-            sh ./scripts/release_body.sh "${RELEASE_TAG}" > /tmp/pocket-release-body.md
+            RELEASE_DISPLAY_TAG="${CLEAN_TAG}" RELEASE_COMMIT_SHA="${RELEASE_COMMIT_SHA}" \
+              sh ./scripts/release_body.sh "${RELEASE_TAG}" > /tmp/pocket-release-body.md
           fi
           echo "── Release body preview ──"
           head -20 /tmp/pocket-release-body.md

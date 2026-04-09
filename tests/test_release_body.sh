@@ -34,4 +34,9 @@ assert_contains "$CUSTOM_OUTPUT" "### Destaques"
 assert_contains "$CUSTOM_OUTPUT" "release customizada"
 assert_contains "$CUSTOM_OUTPUT" "checksums.sha256"
 
+TRACE_OUTPUT=$(RELEASE_DISPLAY_TAG="v1.2.0" RELEASE_COMMIT_SHA="abc123def456" sh "$SCRIPT" "release/v1.2.0")
+assert_contains "$TRACE_OUTPUT" "## PocketCli v1.2.0"
+assert_contains "$TRACE_OUTPUT" 'Commit: `abc123def456`'
+assert_contains "$TRACE_OUTPUT" "https://raw.githubusercontent.com/irinery/PocketCli/release/v1.2.0/bootstrap.sh"
+
 printf 'PASS release_body gera corpo padrao e aceita descricao customizada por arquivo\n'
