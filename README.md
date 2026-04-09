@@ -254,6 +254,7 @@ Para validar regressões da interface em cenários de terminal heterogêneo (vie
 
 ```bash
 sh tests/test_menu_fallback.sh
+sh tests/test_menu_incremental_render.sh
 sh tests/test_start_agent_launcher.sh
 go test ./cmd/pocket
 go test ./internal/contextcollector
@@ -295,7 +296,7 @@ Ou apontar para um comando local:
 export POCKETCLI_LOCAL_BACKEND_CMD='ollama run llama3.1'
 ```
 
-Isso cobre layout responsivo do menu shell, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
+Isso cobre layout responsivo do menu shell, diff incremental das linhas navegáveis, fallback de launcher em ausência de TTY completo e renderização adaptativa da TUI em Go.
 
 ---
 
