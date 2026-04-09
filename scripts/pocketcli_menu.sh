@@ -47,11 +47,13 @@ _menu_line() {
 }
 
 _screen_clear() {
-    if command -v clear >/dev/null 2>&1 && clear >/dev/null 2>&1; then
-        printf ''
-    else
-        printf '\033[2J\033[H'
+    if command -v clear >/dev/null 2>&1; then
+        if clear >/dev/null 2>&1; then
+            printf ''
+            return 0
+        fi
     fi
+    printf '\033[2J\033[H'
 }
 
 _refresh_terminal_size() {
@@ -222,11 +224,13 @@ _load_mesh_counts() {
     MESH_TOTAL=""
     MESH_ONLINE=""
 
-    if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-        TS_STATUS=$(with_timeout 3 tailscale status --json 2>/dev/null || true)
-        if [ -n "${TS_STATUS}" ]; then
-            MESH_TOTAL=$(printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || true)
-            MESH_ONLINE=$(printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || true)
+    if command -v tailscale >/dev/null 2>&1; then
+        if command -v jq >/dev/null 2>&1; then
+            TS_STATUS=$(with_timeout 3 tailscale status --json 2>/dev/null || true)
+            if [ -n "${TS_STATUS}" ]; then
+                MESH_TOTAL=$(printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || true)
+                MESH_ONLINE=$(printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || true)
+            fi
         fi
     fi
 
@@ -401,7 +405,10 @@ _draw_menu() {
         printf '    Enter/l abrir  ·  j/k mover  ·  gg topo  ·  G fim  ·  h foco panes  ·  q sair\n\n'
     fi
     printf '  %b%s%b\n' "${C_DIM}" "${LAST_MESSAGE}" "${C_NC}"
-    [ -n "${INPUT_BUFFER}" ] && printf '  %bSequência:%b %s\n' "${C_DIM}" "${C_NC}" "${INPUT_BUFFER}"
+    if [ -n "${INPUT_BUFFER}" ]; then
+        printf '  %bSequência:%b %s\n' "${C_DIM}" "${C_NC}" "${INPUT_BUFFER}"
+    fi
+    return 0
 }
 
 _pick_host() {
@@ -555,7 +562,7 @@ _run_action() {
                 "Sessão ${HOST} encerrada. Pronto para a próxima conexão." \
                 "Falha ao conectar em ${HOST} (exit %s)." \
                 '\n  Pressione Enter para voltar...' \
-                sh -c 'printf "\n  Conectando em %s...\n\n" "$1"; exec ssh "$1"' sh "${HOST}"
+                sh -c "printf '\n  Conectando em %s...\n\n' \"\$1\"; exec ssh \"\$1\"" sh "${HOST}"
         ;;
         radar)
             if ! command -v tailscale >/dev/null 2>&1; then
@@ -591,7 +598,7 @@ _run_action() {
                 'PocketCli atualizado com sucesso.' \
                 'Falha ao atualizar PocketCli (exit %s).' \
                 '\n  Pressione Enter para voltar...' \
-                sh -c 'printf "\n  Atualizando PocketCli...\n\n"; exec "$1/pocket" update' sh "${HOME}/.pocketcli"
+                sh -c "printf '\n  Atualizando PocketCli...\n\n'; exec \"\$1/pocket\" update" sh "${HOME}/.pocketcli"
         ;;
         exit)
             _screen_clear
