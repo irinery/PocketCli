@@ -32,6 +32,9 @@ Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell PO
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
