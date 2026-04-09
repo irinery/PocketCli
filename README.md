@@ -276,6 +276,12 @@ Para validar o módulo TUI Renderer da fase 3 isoladamente, execute:
 env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/renderer
 ```
 
+Para validar o módulo TUI Runtime da fase 4 isoladamente, execute:
+
+```bash
+env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/runtime
+```
+
 Para simular respostas de backend sem depender de um provedor real, você pode exportar uma destas variáveis antes do `pocket ask`:
 
 ```bash

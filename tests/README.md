@@ -29,6 +29,7 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Para rodar os testes do módulo TUI Terminal (fase 1), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/terminal`.
    - Para rodar os testes do módulo TUI EventLoop (fase 2), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/event`.
    - Para rodar os testes do módulo TUI Renderer (fase 3), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/renderer`.
+   - Para rodar os testes do módulo TUI Runtime (fase 4), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/runtime`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
@@ -37,6 +38,7 @@ Este diretório concentra testes de regressão shell e serve como referência pa
    - Pré-requisitos do TUI Terminal: `/dev/ptmx` acessível e suporte a sinais POSIX (`SIGWINCH`, `SIGINT`, `SIGTERM`). Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI EventLoop: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI Renderer: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
+   - Pré-requisitos do TUI Runtime: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:
