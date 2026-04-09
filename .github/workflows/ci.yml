@@ -43,11 +43,40 @@ jobs:
           cat "${VET_LOG}"
           exit "${VET_EXIT}"
 
+      - name: Run menu regression suite
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          MENU_LOG="/tmp/pocket-menu-${{ matrix.ci_profile }}.log"
+          MENU_EXIT=0
+          : > "${MENU_LOG}"
+          for TEST_SCRIPT in \
+            tests/test_menu_fallback.sh \
+            tests/test_menu_incremental_render.sh \
+            tests/test_menu_no_hosts.sh \
+            tests/test_menu_remove_host.sh
+          do
+            TEST_NAME=$(basename "${TEST_SCRIPT}")
+            printf '==> %s\n' "${TEST_NAME}" >> "${MENU_LOG}"
+            if sh "${TEST_SCRIPT}" >> "${MENU_LOG}" 2>&1; then
+              :
+            else
+              MENU_EXIT=$?
+              break
+            fi
+          done
+          cat "${MENU_LOG}"
+          END_TS=$(date +%s)
+          printf '### Menu regressions (%s)\n' "${{ matrix.ci_profile }}" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${MENU_EXIT}"
+
       - name: Run shell regression suite
         env:
           POCKETCLI_CI_PROFILE: ${{ matrix.ci_profile }}
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
-          POCKETCLI_TEST_EXCLUDES: test_ish.sh
+          POCKETCLI_TEST_EXCLUDES: test_ish.sh test_menu_fallback.sh test_menu_incremental_render.sh test_menu_no_hosts.sh test_menu_remove_host.sh
         run: |
           TEST_LOG="/tmp/pocket-test-${{ matrix.ci_profile }}.log"
           if sh tests/run_all.sh >"${TEST_LOG}" 2>&1; then
@@ -114,6 +143,7 @@ jobs:
           name: test-logs-${{ matrix.ci_profile }}
           path: |
             /tmp/pocket-vet-${{ matrix.ci_profile }}.log
+            /tmp/pocket-menu-${{ matrix.ci_profile }}.log
             /tmp/pocket-build-${{ matrix.ci_profile }}.log
             /tmp/pocket-test-${{ matrix.ci_profile }}.log
             /tmp/pocket-gotest-${{ matrix.ci_profile }}.log
@@ -161,10 +191,39 @@ jobs:
           cat "${VET_LOG}"
           exit "${VET_EXIT}"
 
+      - name: Run menu regression suite
+        env:
+          POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
+        run: |
+          START_TS=$(date +%s)
+          MENU_LOG="/tmp/pocket-menu-alpine.log"
+          MENU_EXIT=0
+          : > "${MENU_LOG}"
+          for TEST_SCRIPT in \
+            tests/test_menu_fallback.sh \
+            tests/test_menu_incremental_render.sh \
+            tests/test_menu_no_hosts.sh \
+            tests/test_menu_remove_host.sh
+          do
+            TEST_NAME=$(basename "${TEST_SCRIPT}")
+            printf '==> %s\n' "${TEST_NAME}" >> "${MENU_LOG}"
+            if sh "${TEST_SCRIPT}" >> "${MENU_LOG}" 2>&1; then
+              :
+            else
+              MENU_EXIT=$?
+              break
+            fi
+          done
+          cat "${MENU_LOG}"
+          END_TS=$(date +%s)
+          printf '### Menu regressions (alpine)\n' >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          printf -- '- total: %ss\n' "$((END_TS - START_TS))" >> "${POCKETCLI_CI_SUMMARY_FILE}"
+          exit "${MENU_EXIT}"
+
       - name: Run shell regression suite
         env:
           POCKETCLI_CI_SUMMARY_FILE: ${{ github.step_summary }}
-          POCKETCLI_TEST_EXCLUDES: test_ish.sh
+          POCKETCLI_TEST_EXCLUDES: test_ish.sh test_menu_fallback.sh test_menu_incremental_render.sh test_menu_no_hosts.sh test_menu_remove_host.sh
         run: |
           TEST_LOG="/tmp/pocket-test-alpine.log"
           if sh tests/run_all.sh >"${TEST_LOG}" 2>&1; then
@@ -230,6 +289,7 @@ jobs:
           name: test-logs-alpine
           path: |
             /tmp/pocket-vet-alpine.log
+            /tmp/pocket-menu-alpine.log
             /tmp/pocket-build-alpine.log
             /tmp/pocket-test-alpine.log
             /tmp/pocket-gotest-alpine.log

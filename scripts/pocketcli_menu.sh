@@ -25,6 +25,13 @@ MESH_ONLINE=""
 MESH_LOADED=0
 PROBE_CACHE=""
 PROBE_CACHE_TS=0
+MENU_RENDERED=0
+MENU_START_ROW=1
+MENU_STATE_FILE=""
+LAST_TERM_WIDTH=""
+LAST_TERM_HEIGHT=""
+LAST_PANEL_WIDTH=""
+LAST_DASHBOARD_LAYOUT=""
 
 _menu_items() {
     cat <<'ITEMS'
@@ -54,6 +61,58 @@ _screen_clear() {
         fi
     fi
     printf '\033[2J\033[H'
+}
+
+_cursor_move() {
+    printf '\033[%s;%sH' "$1" "$2"
+}
+
+_clear_line() {
+    printf '\033[2K'
+}
+
+_line_count_file() {
+    awk 'END { print NR + 0 }' "$1"
+}
+
+_ensure_menu_state_file() {
+    if [ -n "${MENU_STATE_FILE}" ] && [ -f "${MENU_STATE_FILE}" ]; then
+        return 0
+    fi
+
+    MENU_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu-state.XXXXXX")
+    : > "${MENU_STATE_FILE}"
+}
+
+_store_block_file() {
+    SRC_FILE="$1"
+    DST_FILE="$2"
+    cat "${SRC_FILE}" > "${DST_FILE}"
+}
+
+_emit_block_diff() {
+    OLD_FILE="$1"
+    NEW_FILE="$2"
+    START_ROW="$3"
+
+    OLD_LINES=$(_line_count_file "${OLD_FILE}")
+    NEW_LINES=$(_line_count_file "${NEW_FILE}")
+    MAX_LINES="${OLD_LINES}"
+    [ "${NEW_LINES}" -gt "${MAX_LINES}" ] && MAX_LINES="${NEW_LINES}"
+
+    I=1
+    while [ "${I}" -le "${MAX_LINES}" ]; do
+        OLD_LINE=$(sed -n "${I}p" "${OLD_FILE}" 2>/dev/null || true)
+        NEW_LINE=$(sed -n "${I}p" "${NEW_FILE}" 2>/dev/null || true)
+
+        if [ "${OLD_LINE}" != "${NEW_LINE}" ]; then
+            _cursor_move $((START_ROW + I - 1)) 1
+            _clear_line
+            printf '%s' "${NEW_LINE}"
+        fi
+
+        I=$((I + 1))
+    done
 }
 
 _refresh_terminal_size() {
@@ -295,8 +354,6 @@ _tmux_prefix() {
 }
 
 _render_header() {
-    _refresh_terminal_size
-    _screen_clear
     printf '\n'
     if [ "${TERM_WIDTH}" -lt 62 ]; then
         printf '  %bPocketCli%b %bSSH/tmux%b\n' "${C_BOLD}" "${C_NC}" "${C_DIM}" "${C_NC}"
@@ -310,6 +367,12 @@ _render_header() {
         printf '  %b+--------------------------------------------------------------+%b\n' "${C_CYAN}" "${C_NC}"
     fi
     printf '\n'
+}
+
+_render_header_screen() {
+    _refresh_terminal_size
+    _screen_clear
+    _render_header
 }
 
 _render_dashboard() {
@@ -411,6 +474,84 @@ _draw_menu() {
     return 0
 }
 
+_position_menu_cursor() {
+    _cursor_move $((MENU_START_ROW + CURRENT_INDEX + 1)) 3
+}
+
+_render_menu_block_to_file() {
+    TARGET_FILE="$1"
+    _draw_menu > "${TARGET_FILE}"
+}
+
+_render_frame_prefix_to_file() {
+    TARGET_FILE="$1"
+    {
+        _render_header
+        _render_dashboard
+    } > "${TARGET_FILE}"
+}
+
+_remember_frame_geometry() {
+    LAST_TERM_WIDTH="${TERM_WIDTH}"
+    LAST_TERM_HEIGHT="${TERM_HEIGHT}"
+    LAST_PANEL_WIDTH="${PANEL_WIDTH}"
+    LAST_DASHBOARD_LAYOUT="${DASHBOARD_LAYOUT}"
+}
+
+_frame_geometry_changed() {
+    [ "${MENU_RENDERED}" -eq 1 ] || return 0
+    [ "${TERM_WIDTH}" = "${LAST_TERM_WIDTH}" ] || return 0
+    [ "${TERM_HEIGHT}" = "${LAST_TERM_HEIGHT}" ] || return 0
+    [ "${PANEL_WIDTH}" = "${LAST_PANEL_WIDTH}" ] || return 0
+    [ "${DASHBOARD_LAYOUT}" = "${LAST_DASHBOARD_LAYOUT}" ] || return 0
+    return 1
+}
+
+_render_full_frame() {
+    _refresh_terminal_size
+    _ensure_menu_state_file
+
+    PREFIX_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-frame.XXXXXX")
+    MENU_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu.XXXXXX")
+
+    _render_frame_prefix_to_file "${PREFIX_FILE}"
+    _render_menu_block_to_file "${MENU_FILE}"
+
+    MENU_START_ROW=$(( $(_line_count_file "${PREFIX_FILE}") + 1 ))
+
+    _screen_clear
+    cat "${PREFIX_FILE}"
+    cat "${MENU_FILE}"
+
+    _store_block_file "${MENU_FILE}" "${MENU_STATE_FILE}"
+    _remember_frame_geometry
+    MENU_RENDERED=1
+    _position_menu_cursor
+
+    rm -f "${PREFIX_FILE}" "${MENU_FILE}"
+}
+
+_render_menu_incremental() {
+    _refresh_terminal_size
+    _ensure_menu_state_file
+
+    if _frame_geometry_changed; then
+        _render_full_frame
+        return 0
+    fi
+
+    MENU_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu.XXXXXX")
+    _render_menu_block_to_file "${MENU_FILE}"
+    _emit_block_diff "${MENU_STATE_FILE}" "${MENU_FILE}" "${MENU_START_ROW}"
+    _store_block_file "${MENU_FILE}" "${MENU_STATE_FILE}"
+    _position_menu_cursor
+    rm -f "${MENU_FILE}"
+}
+
+_cleanup_menu_state() {
+    [ -n "${MENU_STATE_FILE}" ] && rm -f "${MENU_STATE_FILE}" 2>/dev/null || true
+}
+
 _pick_host() {
     HOSTS=$(_list_hosts 2>/dev/null || true)
 
@@ -439,7 +580,7 @@ _pick_host() {
 
 _manage_hosts() {
     while true; do
-        _render_header
+        _render_header_screen
         printf '  %bHosts favoritos%b\n\n' "${C_BOLD}" "${C_NC}"
         HOSTS_FILE="${POCKETCLI_DIR}/hosts"
         if [ -f "${HOSTS_FILE}" ]; then
@@ -532,7 +673,7 @@ _run_with_pause() {
     PAUSE_MESSAGE=${3:-'\n  Pressione Enter para voltar...'}
     shift 3
 
-    _render_header
+    _render_header_screen
 
     set +e
     "$@"
@@ -566,12 +707,12 @@ _run_action() {
         ;;
         radar)
             if ! command -v tailscale >/dev/null 2>&1; then
-                _render_header
+                _render_header_screen
                 printf '\n  Tailscale não instalado. Rode: pocket tailscale-setup\n'
                 LAST_MESSAGE='Radar indisponível sem tailscale.'
                 _pause_for_user '\n  Pressione Enter para voltar...'
             elif ! is_tailscale_daemon_running 2>/dev/null && ! is_ish; then
-                _render_header
+                _render_header_screen
                 printf '\n  tailscaled não está rodando. Rode: pocket tailscale-start\n'
                 LAST_MESSAGE='Inicie o daemon para usar o radar.'
                 _pause_for_user '\n  Pressione Enter para voltar...'
@@ -615,12 +756,10 @@ _read_key() {
     printf '%s' "${KEY}"
 }
 
-trap 'stty sane 2>/dev/null || true' EXIT INT TERM
+trap '_cleanup_menu_state; stty sane 2>/dev/null || true' EXIT INT TERM
 
 if [ "${POCKETCLI_MENU_RENDER_ONCE:-0}" = "1" ]; then
-    _render_header
-    _render_dashboard
-    _draw_menu
+    _render_full_frame
     exit 0
 fi
 
@@ -629,13 +768,18 @@ if [ ! -r /dev/tty ]; then
     exit 0
 fi
 
+RENDER_MODE=full
+
 while true; do
-    _render_header
-    _render_dashboard
-    _draw_menu
+    case "${RENDER_MODE}" in
+        full) _render_full_frame ;;
+        menu) _render_menu_incremental ;;
+        *) _render_full_frame ;;
+    esac
 
     KEY=$(_read_key)
     TOTAL=$(_menu_count)
+    NEXT_RENDER=menu
 
     case "${KEY}" in
         j)
@@ -668,10 +812,12 @@ while true; do
         l)
             INPUT_BUFFER=''
             _run_action "${MENU_ACTION}"
+            NEXT_RENDER=full
         ;;
         "$(printf '\r')")
             INPUT_BUFFER=''
             _run_action "${MENU_ACTION}"
+            NEXT_RENDER=full
         ;;
         '')
             true
@@ -686,6 +832,7 @@ while true; do
                 CURRENT_INDEX=${KEY}
                 _run_action "$( _menu_line "${CURRENT_INDEX}" | cut -d'|' -f1 )"
                 INPUT_BUFFER=''
+                NEXT_RENDER=full
             else
                 LAST_MESSAGE="Atalho ${KEY} não existe."
             fi
@@ -695,4 +842,6 @@ while true; do
             LAST_MESSAGE='Tecla não mapeada. Use j/k, Enter, q, gg, G ou h.'
         ;;
     esac
+
+    RENDER_MODE="${NEXT_RENDER}"
 done
