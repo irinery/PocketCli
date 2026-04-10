@@ -271,6 +271,12 @@ Para validar a etapa 8 do CLI isoladamente, execute:
 go test ./cmd/pocket
 ```
 
+Para validar isoladamente a etapa 01 da TUI de hosts (loop de input em raw mode, navegação `j/k`, seleção com `l`/Enter e descarte de sequências ESC), execute:
+
+```bash
+env GOCACHE=/tmp/pocketcli-go-build-cache go test ./cmd/pocket -run 'TestT01|TestHostPicker'
+```
+
 Para validar o módulo TUI Renderer da fase 3 isoladamente, execute:
 
 ```bash
