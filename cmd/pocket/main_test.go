@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"pocketcli/internal/connect"
 )
 
 func withArgs(t *testing.T, args []string) {
@@ -57,6 +61,45 @@ func TestExecCommand_JoinsCommandAndCallsExecSSH(t *testing.T) {
 	}
 	if gotHost != "prod-api" || gotCmd != "uname -a" {
 		t.Fatalf("unexpected call: host=%q cmd=%q", gotHost, gotCmd)
+	}
+}
+
+func TestConnectCommand_UsesOrchestrator(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	orig := newConnectOrchestrator
+	t.Cleanup(func() { newConnectOrchestrator = orig })
+
+	called := false
+	newConnectOrchestrator = func() *connect.Orchestrator {
+		orchestrator := connect.New()
+		orchestrator.Out = &bytes.Buffer{}
+		orchestrator.Err = &bytes.Buffer{}
+		orchestrator.ResolveHostFunc = func(ctx context.Context, host string) (connect.HostInfo, error) {
+			called = true
+			return connect.HostInfo{
+				Name:      host,
+				IP:        "100.64.0.10",
+				Online:    true,
+				Reachable: true,
+				Trust:     connect.TrustObserved,
+				Source:    connect.SourceTailscale,
+				Action:    connect.ActionInteractive,
+			}, nil
+		}
+		orchestrator.ApprovalFunc = func(ctx context.Context, info connect.HostInfo) (bool, error) {
+			return false, nil
+		}
+		orchestrator.LookupPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+		return orchestrator
+	}
+
+	cmd := newConnectCommand()
+	if err := cmd.RunE(cmd, []string{"devcenter"}); err != nil {
+		t.Fatalf("RunE returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected orchestrator to resolve host")
 	}
 }
 

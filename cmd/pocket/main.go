@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -19,10 +18,12 @@ var (
 func main() {
 	root := newRootCommand()
 	if err := root.Execute(); err != nil {
-		if errors.Is(err, errHostsTUIInterrupted) {
-			os.Exit(1)
+		if shouldPrintError(err) {
+			fmt.Fprintln(os.Stderr, err)
 		}
-		fmt.Fprintln(os.Stderr, err)
+		if code, ok := exitCodeForError(err); ok {
+			os.Exit(code)
+		}
 		os.Exit(1)
 	}
 }
@@ -41,8 +42,10 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newContextCommand())
 	rootCmd.AddCommand(newMemoryCommand())
 	rootCmd.AddCommand(newHostsCommand())
+	rootCmd.AddCommand(newConnectCommand())
 	rootCmd.AddCommand(newSSHCommand())
 	rootCmd.AddCommand(newExecCommand())
+	rootCmd.AddCommand(newConnectPaneCommand())
 
 	return rootCmd
 }

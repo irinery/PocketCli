@@ -69,6 +69,7 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket-menu` | Control Deck leve com dashboard local, ações SSH e atalhos prontos para iPad/tmux |
 | `pocket-radar` | Lista máquinas online no Tailscale |
 | `pocket-update` | Atualiza o PocketCli preservando diferenças locais relevantes |
+| `pocket connect <host>` | Resolve o host, pede aprovação, cria/reusa sessão tmux `pocket_<host>` e entrega o SSH no pane principal |
 | `pocket ask [--mode ...] <prompt...>` | Executa o fluxo completo de contexto, memória, roteamento e backend |
 | `pocket recall [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
 | `pocket context` | Exibe o `TaskContext` coletado sem chamar backend |
@@ -164,6 +165,9 @@ pocket-menu
 
 # Abrir o menu principal padrão do PocketCli
 pocket
+
+# Resolver host, aprovar sessão e cair numa tmux `pocket_<host>`
+pocket connect devcenter
 
 # Forçar a recriação/anexação da sessão tmux persistente
 pocket resume
@@ -269,6 +273,12 @@ Para validar a etapa 8 do CLI isoladamente, execute:
 
 ```bash
 go test ./cmd/pocket
+```
+
+Para validar isoladamente a etapa 02 do orquestrador `pocket connect` (resolução do host, aprovação, tmux e logging de sessão), execute:
+
+```bash
+env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/connect ./cmd/pocket
 ```
 
 Para validar isoladamente a etapa 01 da TUI de hosts (loop de input em raw mode, navegação `j/k`, seleção com `l`/Enter e descarte de sequências ESC), execute:
