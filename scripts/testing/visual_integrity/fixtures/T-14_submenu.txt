@@ -20,3 +20,4 @@
 
   Atalhos úteis
     Enter/l abrir  ·  j/k mover  ·  q/Backspace voltar
+  Use q para voltar às ações rápidas.
