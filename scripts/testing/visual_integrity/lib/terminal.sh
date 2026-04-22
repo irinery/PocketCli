@@ -43,7 +43,7 @@ vi_start_session() {
     VI_MENU_ERR="${REPORT_DIR:-${VI_WORKDIR}}/menu-${VI_SESSION}.err"
 
     tmux new-session -d -x "${cols}" -y "${rows}" -s "${VI_SESSION}" \
-        "env HOME='${VI_HOME}' PATH='${VI_HOME}/.pocketcli:${PATH}' TERM=screen-256color LANG=C.UTF-8 LC_ALL=C.UTF-8 POCKETCLI_TUI_TEST_MODE=1 POCKETCLI_DIRECT_MENU=1 POCKET_TUI_DEBUG=${POCKET_TUI_DEBUG:-0} EXIT_FILE='${VI_EXIT_FILE}' MENU_ERR='${VI_MENU_ERR}' bash -lc '\"${VI_HOME}/.pocketcli/pocket\" menu 2>\"\$MENU_ERR\"; rc=\$?; printf \"%s\\n\" \"\$rc\" > \"\$EXIT_FILE\"; printf \"\\nVISUAL_TEST_PROMPT$ \"; sleep 30'"
+        "env HOME='${VI_HOME}' PATH='${VI_HOME}/.pocketcli:${PATH}' TERM=screen-256color LANG=C LC_ALL=C POCKETCLI_TUI_TEST_MODE=1 POCKETCLI_TUI_TEST_ASCII=1 POCKETCLI_DIRECT_MENU=1 POCKET_TUI_DEBUG=${POCKET_TUI_DEBUG:-0} EXIT_FILE='${VI_EXIT_FILE}' MENU_ERR='${VI_MENU_ERR}' bash -lc '\"${VI_HOME}/.pocketcli/pocket\" menu 2>\"\$MENU_ERR\"; rc=\$?; printf \"%s\\n\" \"\$rc\" > \"\$EXIT_FILE\"; printf \"\\nVISUAL_TEST_PROMPT$ \"; sleep 30'"
 }
 
 vi_stop_session() {

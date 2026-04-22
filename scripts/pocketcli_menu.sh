@@ -173,7 +173,8 @@ _refresh_terminal_size() {
 }
 
 _supports_utf8() {
-    [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ] && return 0
+    [ "${POCKETCLI_TUI_TEST_ASCII:-0}" = "1" ] && return 1
+    [ "${POCKETCLI_TUI_TEST_UTF8:-0}" = "1" ] && return 0
     case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
         *UTF-8*|*utf8*|*utf-8*) return 0 ;;
         *) return 1 ;;
@@ -187,13 +188,15 @@ _trim() {
 _fit() {
     TEXT=$(printf '%s' "$1" | tr '\n' ' ')
     WIDTH="$2"
-    printf '%s' "${TEXT}" | awk -v width="${WIDTH}" '
+    ELLIPSIS='…'
+    [ "${POCKETCLI_TUI_TEST_ASCII:-0}" = "1" ] && ELLIPSIS='.'
+    printf '%s' "${TEXT}" | awk -v width="${WIDTH}" -v ellipsis="${ELLIPSIS}" '
         {
             text=$0
             if (length(text) <= width) {
                 printf "%s", text
             } else if (width > 1) {
-                printf "%s…", substr(text, 1, width - 1)
+                printf "%s%s", substr(text, 1, width - 1), ellipsis
             }
         }
     '
