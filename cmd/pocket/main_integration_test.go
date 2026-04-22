@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pocketcli/internal/backend"
 	"pocketcli/internal/contextcollector"
@@ -147,6 +148,7 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 	if err := os.MkdirAll(filepath.Join(projectDir, ".git"), 0o755); err != nil {
 		t.Fatalf("MkdirAll returned error: %v", err)
 	}
+	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	store, err := memory.NewStore()
 	if err != nil {
@@ -163,7 +165,7 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 			Body:       "erro remoto",
 			Tags:       []string{"ssh"},
 			Confidence: 1.0,
-			CreatedAt:  "2026-04-05T18:00:00Z",
+			CreatedAt:  createdAt,
 		},
 		{
 			ID:         "project-entry",
@@ -174,7 +176,7 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 			Body:       "ssh travando",
 			Tags:       []string{"timeout"},
 			Confidence: 1.0,
-			CreatedAt:  "2026-04-05T18:00:00Z",
+			CreatedAt:  createdAt,
 		},
 		{
 			ID:         "other-host",
@@ -185,7 +187,7 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 			Body:       "erro remoto",
 			Tags:       []string{"ssh", "timeout"},
 			Confidence: 1.0,
-			CreatedAt:  "2026-04-05T18:00:00Z",
+			CreatedAt:  createdAt,
 		},
 	} {
 		if _, err := store.Write(entry); err != nil {
@@ -208,14 +210,16 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if strings.Index(output, "id=project-entry") > strings.Index(output, "id=global-entry") {
-		t.Fatalf("expected project entry before global entry, got %q", output)
-	}
-	if !strings.Contains(output, "id=global-entry") {
+	projectIndex := strings.Index(output, "id=project-entry")
+	globalIndex := strings.Index(output, "id=global-entry")
+	if globalIndex < 0 {
 		t.Fatalf("expected global entry in output, got %q", output)
 	}
-	if !strings.Contains(output, "id=project-entry") {
+	if projectIndex < 0 {
 		t.Fatalf("expected project entry in output, got %q", output)
+	}
+	if projectIndex > globalIndex {
+		t.Fatalf("expected project entry before global entry, got %q", output)
 	}
 	if !strings.Contains(output, `title="timeout no projeto"`) {
 		t.Fatalf("expected title in output, got %q", output)

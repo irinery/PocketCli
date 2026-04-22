@@ -35,6 +35,14 @@ Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de a
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar a integridade visual interativa do `pocket menu`, rode:
+
+```sh
+bash scripts/testing/visual_integrity/run_tests.sh
+```
+
+Pré-requisitos: `bash`, `tmux` e `tput`/`ncurses` no `PATH`. A suíte provisiona um terminal tmux headless, executa `pocket menu`, captura snapshots e compara com fixtures em `scripts/testing/visual_integrity/fixtures/`. Para regenerar fixtures depois de uma mudança intencional de layout, rode `POCKETCLI_VISUAL_RECORD=1 bash scripts/testing/visual_integrity/run_tests.sh`.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
