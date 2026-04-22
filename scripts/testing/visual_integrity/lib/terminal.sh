@@ -86,6 +86,28 @@ vi_snapshot() {
     rm -f "${alt_output}"
 }
 
+vi_wait_for_text() {
+    local rows="$1"
+    local text="$2"
+    local attempts="${3:-10}"
+    local output_dir="${ACTUAL_DIR:-${VI_WORKDIR:-/tmp}}"
+    local tmp="${output_dir}/startup-wait-${VI_SESSION}.txt"
+    local i=0
+
+    while [[ "${i}" -lt "${attempts}" ]]; do
+        vi_snapshot "${rows}" "${tmp}"
+        if grep -F "${text}" "${tmp}" >/dev/null 2>&1; then
+            rm -f "${tmp}"
+            return 0
+        fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+
+    rm -f "${tmp}"
+    return 1
+}
+
 vi_exit_code() {
     if [[ -f "${VI_EXIT_FILE}" ]]; then
         cat "${VI_EXIT_FILE}"

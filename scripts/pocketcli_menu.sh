@@ -595,7 +595,7 @@ _draw_radar_submenu() {
 
     printf '\n'
     printf '  %bAtalhos úteis%b\n' "${C_BOLD}" "${C_NC}"
-    printf '    Enter/l abrir  ·  j/k mover  ·  q/Backspace voltar\n\n'
+    printf '    Enter/l abrir  ·  j/k mover  ·  q/Backspace voltar\n'
     printf '  %b%s%b\n' "${C_DIM}" "Use q para voltar às ações rápidas." "${C_NC}"
 }
 

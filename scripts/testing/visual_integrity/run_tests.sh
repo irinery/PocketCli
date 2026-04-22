@@ -67,7 +67,7 @@ start_menu() {
     local cols="$1"
     local rows="$2"
     vi_start_session "${cols}" "${rows}"
-    sleep 0.5
+    vi_wait_for_text "${rows}" "PocketCli Control Deck" 20 || true
 }
 
 stop_menu() {
