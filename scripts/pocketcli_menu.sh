@@ -10,10 +10,22 @@ set -eu
 POCKETCLI_DIR="${HOME}/.pocketcli"
 . "${POCKETCLI_DIR}/lib/common.sh"
 
+TUI_ENGINE_FILE="${POCKETCLI_DIR}/scripts/layout/tui_engine.sh"
+if [ -r "${TUI_ENGINE_FILE}" ]; then
+    # shellcheck disable=SC1090 # Installed path is resolved from POCKETCLI_DIR.
+    . "${TUI_ENGINE_FILE}"
+    HAVE_TUI_ENGINE=1
+else
+    HAVE_TUI_ENGINE=0
+fi
+
 export PATH="${POCKETCLI_DIR}:${PATH}"
 
 CURRENT_INDEX=1
+CURRENT_SCREEN="main"
+SUB_INDEX=1
 MENU_ACTION=""
+SUB_ACTION=""
 LAST_MESSAGE="Use j/k para navegar, Enter para abrir, h/l para panes, q para sair."
 INPUT_BUFFER=""
 TERM_WIDTH=80
@@ -28,6 +40,7 @@ PROBE_CACHE_TS=0
 MENU_RENDERED=0
 MENU_START_ROW=1
 MENU_STATE_FILE=""
+MENU_PREFIX_STATE_FILE=""
 LAST_TERM_WIDTH=""
 LAST_TERM_HEIGHT=""
 LAST_PANEL_WIDTH=""
@@ -84,6 +97,15 @@ _ensure_menu_state_file() {
     : > "${MENU_STATE_FILE}"
 }
 
+_ensure_menu_prefix_file() {
+    if [ -n "${MENU_PREFIX_STATE_FILE}" ] && [ -f "${MENU_PREFIX_STATE_FILE}" ]; then
+        return 0
+    fi
+
+    MENU_PREFIX_STATE_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu-prefix.XXXXXX")
+    : > "${MENU_PREFIX_STATE_FILE}"
+}
+
 _store_block_file() {
     SRC_FILE="$1"
     DST_FILE="$2"
@@ -116,15 +138,21 @@ _emit_block_diff() {
 }
 
 _refresh_terminal_size() {
-    SIZE=$(stty size 2>/dev/null || true)
-    [ -n "${SIZE}" ] || SIZE='24 80'
-    TERM_HEIGHT=$(printf '%s' "${SIZE}" | awk '{print $1}')
-    TERM_WIDTH=$(printf '%s' "${SIZE}" | awk '{print $2}')
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_refresh_size
+        TERM_HEIGHT="${TUI_ROWS}"
+        TERM_WIDTH="${TUI_COLS}"
+    else
+        SIZE=$(stty size < /dev/tty 2>/dev/null || stty size 2>/dev/null || true)
+        [ -n "${SIZE}" ] || SIZE='24 80'
+        TERM_HEIGHT=$(printf '%s' "${SIZE}" | awk '{print $1}')
+        TERM_WIDTH=$(printf '%s' "${SIZE}" | awk '{print $2}')
+    fi
 
     [ -n "${TERM_HEIGHT}" ] || TERM_HEIGHT=24
     [ -n "${TERM_WIDTH}" ] || TERM_WIDTH=80
 
-    if [ "${TERM_WIDTH}" -ge 92 ]; then
+    if [ "${TERM_WIDTH}" -ge 72 ]; then
         DASHBOARD_LAYOUT="split"
         PANEL_WIDTH=$(( (TERM_WIDTH - 6) / 2 ))
         [ "${PANEL_WIDTH}" -gt 44 ] && PANEL_WIDTH=44
@@ -145,6 +173,7 @@ _refresh_terminal_size() {
 }
 
 _supports_utf8() {
+    [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ] && return 0
     case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
         *UTF-8*|*utf8*|*utf-8*) return 0 ;;
         *) return 1 ;;
@@ -238,10 +267,18 @@ _box_line() {
 }
 
 _collect_hostname() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf 'test-node.local'
+        return
+    fi
     hostname 2>/dev/null | tr -cd '[:alnum:]-. '
 }
 
 _collect_mem() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf '512MB/1024MB'
+        return
+    fi
     if command -v free >/dev/null 2>&1; then
         free -m | awk '/^Mem:/ { printf "%sMB/%sMB", $3, $2 }'
     elif command -v vm_stat >/dev/null 2>&1; then
@@ -260,14 +297,26 @@ _collect_mem() {
 }
 
 _collect_disk() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf '10G livre / 20G total'
+        return
+    fi
     df -h / 2>/dev/null | awk 'NR==2 { print $4 " livre / " $2 " total" }'
 }
 
 _collect_load() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf '0.00'
+        return
+    fi
     uptime 2>/dev/null | awk -F'load average[s]*:' '{print $2}' | cut -d',' -f1 | tr -d ' '
 }
 
 _collect_ts_ip() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf '100.64.0.1'
+        return
+    fi
     get_tailscale_ip 2>/dev/null | head -1
 }
 
@@ -282,6 +331,13 @@ _load_mesh_counts() {
 
     MESH_TOTAL=""
     MESH_ONLINE=""
+
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        MESH_TOTAL=5
+        MESH_ONLINE=3
+        MESH_LOADED=1
+        return
+    fi
 
     if command -v tailscale >/dev/null 2>&1; then
         if command -v jq >/dev/null 2>&1; then
@@ -313,6 +369,10 @@ _collect_online_count() {
 }
 
 _collect_focus_host() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf 'apple-tv'
+        return
+    fi
     _list_hosts 2>/dev/null | head -1 || true
 }
 
@@ -324,6 +384,11 @@ _probe_focus_host() {
     MODE="$1"
     HOST="$(_collect_focus_host || true)"
     [ -z "${HOST}" ] && { printf 'sem host salvo'; return; }
+
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf '%s OK' "${HOST}"
+        return
+    fi
 
     if [ "${MODE}" = "compact" ]; then
         printf '%s' "${HOST}"
@@ -346,6 +411,10 @@ _probe_focus_host() {
 }
 
 _tmux_prefix() {
+    if [ "${POCKETCLI_TUI_TEST_MODE:-0}" = "1" ]; then
+        printf 'Ctrl+S tmux'
+        return
+    fi
     if [ -n "${TMUX:-}" ]; then
         printf 'Ctrl+S ativo'
     else
@@ -354,7 +423,6 @@ _tmux_prefix() {
 }
 
 _render_header() {
-    printf '\n'
     if [ "${TERM_WIDTH}" -lt 62 ]; then
         printf '  %bPocketCli%b %bSSH/tmux%b\n' "${C_BOLD}" "${C_NC}" "${C_DIM}" "${C_NC}"
     elif _supports_utf8; then
@@ -366,7 +434,6 @@ _render_header() {
         printf '  %b|%b %bPocketCli Control Deck%b %b- SSH rapido para iPad e tmux%b %b|%b\n' "${C_CYAN}" "${C_NC}" "${C_BOLD}" "${C_NC}" "${C_DIM}" "${C_NC}" "${C_CYAN}" "${C_NC}"
         printf '  %b+--------------------------------------------------------------+%b\n' "${C_CYAN}" "${C_NC}"
     fi
-    printf '\n'
 }
 
 _render_header_screen() {
@@ -461,7 +528,7 @@ _draw_menu() {
     done
     printf '\n'
     printf '  %bAtalhos úteis%b\n' "${C_BOLD}" "${C_NC}"
-    if [ "${TERM_WIDTH}" -lt 72 ]; then
+    if [ "${TERM_WIDTH}" -lt 88 ]; then
         printf '    Enter/l abrir  ·  j/k mover  ·  q sair\n'
         printf '    gg topo  ·  G fim  ·  h foco panes\n\n'
     else
@@ -474,13 +541,79 @@ _draw_menu() {
     return 0
 }
 
+_radar_submenu_items() {
+    cat <<'ITEMS'
+radar-run|Executar radar|Abrir listagem completa de peers
+back|Voltar|Retornar às ações rápidas
+ITEMS
+}
+
+_radar_submenu_count() {
+    _radar_submenu_items | awk 'END { print NR }'
+}
+
+_radar_submenu_line() {
+    IDX="$1"
+    _radar_submenu_items | sed -n "${IDX}p"
+}
+
+_draw_radar_submenu() {
+    ONLINE=$(_collect_online_count)
+    TOTAL=$(_collect_peer_count)
+    TS_IP=$(_collect_ts_ip)
+    [ -z "${TS_IP}" ] && TS_IP='offline'
+    FOCUS=$(_probe_focus_host "${DASHBOARD_LAYOUT}")
+    TITLE_WIDTH=18
+    DESC_WIDTH=$((TERM_WIDTH - TITLE_WIDTH - 18))
+    [ "${DESC_WIDTH}" -lt 12 ] && DESC_WIDTH=12
+
+    printf '  %bRadar da malha%b\n\n' "${C_BOLD}" "${C_NC}"
+    printf '    peers       %s/%s visíveis\n' "${ONLINE}" "${TOTAL}"
+    printf '    tailscale   %s\n' "${TS_IP}"
+    printf '    foco        %s\n\n' "${FOCUS}"
+
+    TOTAL_ITEMS=$(_radar_submenu_count)
+    I=1
+    while [ "${I}" -le "${TOTAL_ITEMS}" ]; do
+        LINE=$(_radar_submenu_line "${I}")
+        KEY=$(printf '%s' "${LINE}" | cut -d'|' -f1)
+        TITLE=$(printf '%s' "${LINE}" | cut -d'|' -f2)
+        DESC=$(printf '%s' "${LINE}" | cut -d'|' -f3)
+
+        if [ "${I}" -eq "${SUB_INDEX}" ]; then
+            if _supports_utf8; then POINTER='›'; else POINTER='>'; fi
+            printf '  %b%s%b %b%d.%b %-*s %b%s%b\n' "${C_GREEN}" "${POINTER}" "${C_NC}" "${C_BOLD}" "${I}" "${C_NC}" "${TITLE_WIDTH}" "$(_fit "${TITLE}" "${TITLE_WIDTH}")" "${C_DIM}" "$(_fit "${DESC}" "${DESC_WIDTH}")" "${C_NC}"
+            SUB_ACTION="${KEY}"
+        else
+            printf '    %b%d.%b %-*s %b%s%b\n' "${C_DIM}" "${I}" "${C_NC}" "${TITLE_WIDTH}" "$(_fit "${TITLE}" "${TITLE_WIDTH}")" "${C_DIM}" "$(_fit "${DESC}" "${DESC_WIDTH}")" "${C_NC}"
+        fi
+        I=$((I + 1))
+    done
+
+    printf '\n'
+    printf '  %bAtalhos úteis%b\n' "${C_BOLD}" "${C_NC}"
+    printf '    Enter/l abrir  ·  j/k mover  ·  q/Backspace voltar\n\n'
+    printf '  %b%s%b\n' "${C_DIM}" "Use q para voltar às ações rápidas." "${C_NC}"
+}
+
+_draw_current_screen() {
+    case "${CURRENT_SCREEN}" in
+        radar) _draw_radar_submenu ;;
+        *) _draw_menu ;;
+    esac
+}
+
 _position_menu_cursor() {
-    _cursor_move $((MENU_START_ROW + CURRENT_INDEX + 1)) 3
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_cursor_move $((MENU_START_ROW + CURRENT_INDEX + 1)) 3
+    else
+        _cursor_move $((MENU_START_ROW + CURRENT_INDEX + 1)) 3
+    fi
 }
 
 _render_menu_block_to_file() {
     TARGET_FILE="$1"
-    _draw_menu > "${TARGET_FILE}"
+    _draw_current_screen > "${TARGET_FILE}"
 }
 
 _render_frame_prefix_to_file() {
@@ -510,39 +643,51 @@ _frame_geometry_changed() {
 _render_full_frame() {
     _refresh_terminal_size
     _ensure_menu_state_file
+    _ensure_menu_prefix_file
 
     PREFIX_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-frame.XXXXXX")
     MENU_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu.XXXXXX")
+    FRAME_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-full-frame.XXXXXX")
 
     _render_frame_prefix_to_file "${PREFIX_FILE}"
     _render_menu_block_to_file "${MENU_FILE}"
 
     MENU_START_ROW=$(( $(_line_count_file "${PREFIX_FILE}") + 1 ))
 
-    _screen_clear
-    cat "${PREFIX_FILE}"
-    cat "${MENU_FILE}"
+    cat "${PREFIX_FILE}" "${MENU_FILE}" > "${FRAME_FILE}"
 
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_render_frame "${FRAME_FILE}"
+    else
+        _screen_clear
+        cat "${FRAME_FILE}"
+    fi
+
+    _store_block_file "${PREFIX_FILE}" "${MENU_PREFIX_STATE_FILE}"
     _store_block_file "${MENU_FILE}" "${MENU_STATE_FILE}"
     _remember_frame_geometry
     MENU_RENDERED=1
     _position_menu_cursor
 
-    rm -f "${PREFIX_FILE}" "${MENU_FILE}"
+    rm -f "${PREFIX_FILE}" "${MENU_FILE}" "${FRAME_FILE}"
 }
 
 _render_menu_incremental() {
     _refresh_terminal_size
     _ensure_menu_state_file
 
-    if _frame_geometry_changed; then
+    if [ "${CURRENT_SCREEN}" != "main" ] || _frame_geometry_changed; then
         _render_full_frame
         return 0
     fi
 
     MENU_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-menu.XXXXXX")
     _render_menu_block_to_file "${MENU_FILE}"
-    _emit_block_diff "${MENU_STATE_FILE}" "${MENU_FILE}" "${MENU_START_ROW}"
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_render_diff "${MENU_FILE}" "${MENU_START_ROW}" "${MENU_STATE_FILE}"
+    else
+        _emit_block_diff "${MENU_STATE_FILE}" "${MENU_FILE}" "${MENU_START_ROW}"
+    fi
     _store_block_file "${MENU_FILE}" "${MENU_STATE_FILE}"
     _position_menu_cursor
     rm -f "${MENU_FILE}"
@@ -550,23 +695,28 @@ _render_menu_incremental() {
 
 _cleanup_menu_state() {
     [ -n "${MENU_STATE_FILE}" ] && rm -f "${MENU_STATE_FILE}" 2>/dev/null || true
+    [ -n "${MENU_PREFIX_STATE_FILE}" ] && rm -f "${MENU_PREFIX_STATE_FILE}" 2>/dev/null || true
+}
+
+tui_app_cleanup() {
+    _cleanup_menu_state
 }
 
 _pick_host() {
     HOSTS=$(_list_hosts 2>/dev/null || true)
 
-    echo ""
+    printf '\n' > /dev/tty
     if [ -n "${HOSTS}" ]; then
-        printf '  %bHosts disponíveis%b\n\n' "${C_BOLD}" "${C_NC}"
+        printf '  %bHosts disponíveis%b\n\n' "${C_BOLD}" "${C_NC}" > /dev/tty
         I=1
         printf '%s\n' "${HOSTS}" | while IFS= read -r h; do
-            printf '    %d)  %s\n' "${I}" "${h}"
+            printf '    %d)  %s\n' "${I}" "${h}" > /dev/tty
             I=$((I + 1))
         done
-        echo ""
-        printf '  Número ou hostname: '
+        printf '\n' > /dev/tty
+        printf '  Número ou hostname: ' > /dev/tty
     else
-        printf '  Hostname (ex: server-01): '
+        printf '  Hostname (ex: server-01): ' > /dev/tty
     fi
 
     read -r INPUT < /dev/tty
@@ -579,6 +729,7 @@ _pick_host() {
 }
 
 _manage_hosts() {
+    _leave_tui_for_action
     while true; do
         _render_header_screen
         printf '  %bHosts favoritos%b\n\n' "${C_BOLD}" "${C_NC}"
@@ -630,7 +781,7 @@ _manage_hosts() {
                     esac
                 fi
             ;;
-            b|B|'') return ;;
+            b|B|'') _enter_tui || return 1; return ;;
             *) LAST_MESSAGE='Escolha inválida em hosts.' ;;
         esac
     done
@@ -660,6 +811,21 @@ _remove_host_line() {
     return 4
 }
 
+_enter_tui() {
+    if [ "${HAVE_TUI_ENGINE:-0}" -ne 1 ]; then
+        printf '[PocketCli] TUI engine not found at %s.\n' "${TUI_ENGINE_FILE}" >&2
+        return 1
+    fi
+    [ "${TUI_INITIALIZED:-0}" -eq 1 ] && return 0
+    tui_init
+}
+
+_leave_tui_for_action() {
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_suspend
+    fi
+}
+
 _pause_for_user() {
     MESSAGE=${1:-'  Pressione Enter para voltar...'}
     printf '%b' "${MESSAGE}"
@@ -673,6 +839,7 @@ _run_with_pause() {
     PAUSE_MESSAGE=${3:-'\n  Pressione Enter para voltar...'}
     shift 3
 
+    _leave_tui_for_action
     _render_header_screen
 
     set +e
@@ -691,31 +858,38 @@ _run_with_pause() {
     fi
 
     _pause_for_user "${PAUSE_MESSAGE}"
+    _enter_tui || return 1
     return 0
 }
 
 _run_action() {
     case "$1" in
         connect)
-            HOST=$(_pick_host) || { LAST_MESSAGE='Conexão cancelada.'; return; }
-            [ -z "${HOST}" ] && { LAST_MESSAGE='Nenhum host selecionado.'; return; }
+            _leave_tui_for_action
+            _render_header_screen
+            HOST=$(_pick_host) || { LAST_MESSAGE='Conexão cancelada.'; _enter_tui || return 1; return; }
+            [ -z "${HOST}" ] && { LAST_MESSAGE='Nenhum host selecionado.'; _enter_tui || return 1; return; }
             _run_with_pause \
                 "Sessão ${HOST} encerrada. Pronto para a próxima conexão." \
                 "Falha ao conectar em ${HOST} (exit %s)." \
                 '\n  Pressione Enter para voltar...' \
                 sh -c "printf '\n  Conectando em %s...\n\n' \"\$1\"; exec ssh \"\$1\"" sh "${HOST}"
         ;;
-        radar)
+        radar-run)
             if ! command -v tailscale >/dev/null 2>&1; then
+                _leave_tui_for_action
                 _render_header_screen
                 printf '\n  Tailscale não instalado. Rode: pocket tailscale-setup\n'
                 LAST_MESSAGE='Radar indisponível sem tailscale.'
                 _pause_for_user '\n  Pressione Enter para voltar...'
+                _enter_tui || return 1
             elif ! is_tailscale_daemon_running 2>/dev/null && ! is_ish; then
+                _leave_tui_for_action
                 _render_header_screen
                 printf '\n  tailscaled não está rodando. Rode: pocket tailscale-start\n'
                 LAST_MESSAGE='Inicie o daemon para usar o radar.'
                 _pause_for_user '\n  Pressione Enter para voltar...'
+                _enter_tui || return 1
             else
                 _run_with_pause \
                     'Radar executado.' \
@@ -723,6 +897,10 @@ _run_action() {
                     '\n  Pressione Enter para voltar...' \
                     sh "${HOME}/.pocketcli/radar.sh"
             fi
+        ;;
+        radar)
+            CURRENT_SCREEN="radar"
+            SUB_INDEX=1
         ;;
         status)
             _run_with_pause \
@@ -742,6 +920,7 @@ _run_action() {
                 sh -c "printf '\n  Atualizando PocketCli...\n\n'; exec \"\$1/pocket\" update" sh "${HOME}/.pocketcli"
         ;;
         exit)
+            _leave_tui_for_action
             _screen_clear
             printf '\n  Até logo.\n\n'
             exit 0
@@ -750,44 +929,29 @@ _run_action() {
 }
 
 _read_key() {
+    if [ "${HAVE_TUI_ENGINE:-0}" -eq 1 ] && [ "${TUI_INITIALIZED:-0}" -eq 1 ]; then
+        tui_read_key
+        return
+    fi
+
     stty -echo -icanon min 1 time 0 < /dev/tty 2>/dev/null || true
     KEY=$(dd bs=1 count=1 2>/dev/null < /dev/tty || true)
     stty sane < /dev/tty 2>/dev/null || true
     printf '%s' "${KEY}"
 }
 
-trap '_cleanup_menu_state; stty sane 2>/dev/null || true' EXIT INT TERM
-
-if [ "${POCKETCLI_MENU_RENDER_ONCE:-0}" = "1" ]; then
-    _render_full_frame
-    exit 0
-fi
-
-if [ ! -r /dev/tty ]; then
-    printf '[PocketCli] interactive terminal not available for menu mode.\n' >&2
-    exit 0
-fi
-
-RENDER_MODE=full
-
-while true; do
-    case "${RENDER_MODE}" in
-        full) _render_full_frame ;;
-        menu) _render_menu_incremental ;;
-        *) _render_full_frame ;;
-    esac
-
-    KEY=$(_read_key)
+_handle_main_key() {
+    KEY="$1"
     TOTAL=$(_menu_count)
     NEXT_RENDER=menu
 
     case "${KEY}" in
-        j)
+        j|DOWN)
             INPUT_BUFFER=''
             CURRENT_INDEX=$((CURRENT_INDEX + 1))
             [ "${CURRENT_INDEX}" -gt "${TOTAL}" ] && CURRENT_INDEX=1
         ;;
-        k)
+        k|UP)
             INPUT_BUFFER=''
             CURRENT_INDEX=$((CURRENT_INDEX - 1))
             [ "${CURRENT_INDEX}" -lt 1 ] && CURRENT_INDEX=${TOTAL}
@@ -805,22 +969,17 @@ while true; do
             INPUT_BUFFER=''
             CURRENT_INDEX=${TOTAL}
         ;;
-        h)
+        h|LEFT)
             INPUT_BUFFER=''
             LAST_MESSAGE='No tmux use Ctrl+S + h/j/k/l para alternar panes sem tocar na tela.'
         ;;
-        l)
-            INPUT_BUFFER=''
-            _run_action "${MENU_ACTION}"
-            NEXT_RENDER=full
-        ;;
-        "$(printf '\r')")
+        l|RIGHT|ENTER)
             INPUT_BUFFER=''
             _run_action "${MENU_ACTION}"
             NEXT_RENDER=full
         ;;
         '')
-            true
+            NEXT_RENDER=none
         ;;
         q)
             INPUT_BUFFER=''
@@ -839,8 +998,85 @@ while true; do
         ;;
         *)
             INPUT_BUFFER=''
-            LAST_MESSAGE='Tecla não mapeada. Use j/k, Enter, q, gg, G ou h.'
+            NEXT_RENDER=none
         ;;
+    esac
+    return 0
+}
+
+_handle_radar_key() {
+    KEY="$1"
+    TOTAL=$(_radar_submenu_count)
+    NEXT_RENDER=full
+
+    case "${KEY}" in
+        j|DOWN)
+            SUB_INDEX=$((SUB_INDEX + 1))
+            [ "${SUB_INDEX}" -gt "${TOTAL}" ] && SUB_INDEX=1
+        ;;
+        k|UP)
+            SUB_INDEX=$((SUB_INDEX - 1))
+            [ "${SUB_INDEX}" -lt 1 ] && SUB_INDEX=${TOTAL}
+        ;;
+        q|BACKSPACE|LEFT)
+            CURRENT_SCREEN="main"
+            NEXT_RENDER=full
+        ;;
+        l|RIGHT|ENTER)
+            case "${SUB_ACTION}" in
+                radar-run)
+                    _run_action radar-run
+                    NEXT_RENDER=full
+                ;;
+                back)
+                    CURRENT_SCREEN="main"
+                    NEXT_RENDER=full
+                ;;
+            esac
+        ;;
+        '')
+            NEXT_RENDER=none
+        ;;
+        *)
+            NEXT_RENDER=none
+        ;;
+    esac
+    return 0
+}
+
+if [ "${POCKETCLI_MENU_RENDER_ONCE:-0}" = "1" ]; then
+    _render_full_frame
+    exit 0
+fi
+
+if { ! stty -g < /dev/tty >/dev/null 2>&1; } && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+    printf '[PocketCli] interactive terminal not available for menu mode.\n' >&2
+    exit 0
+fi
+
+_enter_tui || exit 1
+
+RENDER_MODE=full
+
+while true; do
+    if [ "${TUI_RESIZE_PENDING:-0}" -eq 1 ]; then
+        TUI_RESIZE_PENDING=0
+        MENU_RENDERED=0
+        RENDER_MODE=full
+    fi
+
+    case "${RENDER_MODE}" in
+        full) _render_full_frame ;;
+        menu) _render_menu_incremental ;;
+        none) true ;;
+        *) _render_full_frame ;;
+    esac
+
+    KEY=$(_read_key)
+
+    case "${CURRENT_SCREEN}" in
+        radar) _handle_radar_key "${KEY}" ;;
+        *) _handle_main_key "${KEY}" ;;
     esac
 
     RENDER_MODE="${NEXT_RENDER}"
