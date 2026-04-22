@@ -92,7 +92,7 @@ assert_prefix_unchanged() {
 assert_single_highlight() {
     local file="$1"
     local count
-    count=$(grep -o '›' "${file}" 2>/dev/null | wc -l | tr -d ' ')
+    count=$(grep -E '^[[:space:]]*[›>][[:space:]]+[0-9]+\.' "${file}" 2>/dev/null | wc -l | tr -d ' ')
     [[ "${count}" == "1" ]]
 }
 
