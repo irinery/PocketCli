@@ -35,29 +35,13 @@ Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de a
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 
-Para validar isoladamente o Security Gate, rode `sh tests/test_security_scanners.sh`.
-Pré-requisitos: `bash`, shell POSIX, `awk`, `sed`, `find`, `stat`, `chmod`, `mktemp` e `git`. Variáveis opcionais: `REPO_ROOT` para apontar os scanners para outro diretório, `SECURITY_RESULTS_DIR` para o diretório de saídas individuais e `SECURITY_REPORT_FILE` para o relatório consolidado.
-
-Para validar isoladamente a política de comandos remotos das Fases 04/05, rode:
+Para validar a integridade visual interativa do `pocket menu`, rode:
 
 ```sh
-env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/commandpolicy ./internal/remoteaccess ./cmd/pocket
-sh tests/test_remote_command_policy.sh
+bash scripts/testing/visual_integrity/run_tests.sh
 ```
 
-Pré-requisitos: toolchain Go suportado pelo projeto, shell POSIX, `awk`, `grep`, `mktemp` e `tr`. Variáveis de ambiente: nenhuma obrigatória; use `GOCACHE` quando o ambiente não puder escrever no cache padrão do Go.
-
-Para validar isoladamente a Skill Layer PocketWiki -> PocketCli, rode:
-
-```sh
-shellcheck scripts/skills/*.sh
-sh tests/test_skill_layer_schema.sh
-sh tests/test_skill_layer_guardrails.sh
-sh tests/test_skill_layer_dispatcher.sh
-sh tests/test_skill_layer_audit.sh
-```
-
-Pré-requisitos: `bash`, `python3`, `shellcheck`, shell POSIX, `grep`, `find`, `mktemp`, `wc`, `chmod` e `tr`. Os testes usam mocks de `ansible-playbook` e `timeout`; para execução real da skill layer em Agent, instale `ansible`/`ansible-core` e mantenha `inventory.ini` em `~/.pocketcli/ansible/`.
+Pré-requisitos: `bash`, `tmux` e `tput`/`ncurses` no `PATH`. A suíte provisiona um terminal tmux headless, executa `pocket menu`, captura snapshots e compara com fixtures em `scripts/testing/visual_integrity/fixtures/`. Para regenerar fixtures depois de uma mudança intencional de layout, rode `POCKETCLI_VISUAL_RECORD=1 bash scripts/testing/visual_integrity/run_tests.sh`.
 
 ## Como plugar novos testes por módulo
 
