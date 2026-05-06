@@ -1,0 +1,37 @@
+---
+- name: PocketCli log tail
+  hosts: all
+  gather_facts: false
+  vars:
+    tail_lines: "{{ lines | default('50') | int }}"
+    blocked_log_paths:
+      - /etc/shadow
+      - /etc/passwd
+      - /etc/sudoers
+  tasks:
+    - name: Validate log_path
+      ansible.builtin.fail:
+        msg: "path_not_allowed:{{ log_path | default('') }}"
+      when:
+        - log_path is not defined or not log_path.startswith('/var/log') or log_path in blocked_log_paths
+
+    - name: Validate line count
+      ansible.builtin.fail:
+        msg: "invalid_lines"
+      when: tail_lines < 1 or tail_lines > 500
+
+    - name: Tail log file
+      ansible.builtin.command: "tail -n {{ tail_lines }} {{ log_path }}"
+      changed_when: false
+      register: tailed_log
+
+    - name: Build log tail result
+      ansible.builtin.set_fact:
+        result:
+          lines: "{{ tailed_log.stdout_lines }}"
+          total_returned: "{{ tailed_log.stdout_lines | length }}"
+          changed: false
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg: "{{ result | to_json }}"

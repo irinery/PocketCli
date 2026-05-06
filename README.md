@@ -75,6 +75,8 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
 | `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
 | `pocket memory clean [--dry-run\|--force]` | Lista candidatos à remoção ou executa limpeza manual com confirmação por entrada |
+| `pocket exec [--json] [--timeout N] [--requested-by human\|llm_plan] [--session-id ID] [--approve] <host> <command...>` | Executa comando remoto via SSH/Tailscale SSH com allowlist, blocklist, timeout, truncamento e auditoria JSONL |
+| `scripts/skills/skill_endpoint.sh [request.json]` | Endpoint local para `skill_request` do PocketWiki, com schema, guard rails, dispatcher Ansible e audit log JSONL |
 
 ---
 
@@ -112,6 +114,8 @@ PocketCli/
 | `git` | controle de versão |
 | `curl` | downloads |
 | `jq` | parsing JSON |
+| `python3` | validação JSON e fallback de timeout na Skill Layer |
+| `ansible` / `ansible-core` | execução de playbooks da Skill Layer no modo Agent |
 | `tmux` | sessões de terminal |
 | `zsh` | shell principal |
 | `fzf` | menus interativos |
@@ -249,6 +253,16 @@ sh tests/test_bootstrap_install.sh
 ```
 
 Esse teste usa dados mockados para validar o bootstrap inicial, a atualização do clone existente e a orquestração do `install.sh` sem depender de rede ou instalar pacotes reais.
+
+Para validar a Skill Layer localmente sem Ansible real, execute:
+
+```bash
+shellcheck scripts/skills/*.sh
+sh tests/test_skill_layer_schema.sh
+sh tests/test_skill_layer_guardrails.sh
+sh tests/test_skill_layer_dispatcher.sh
+sh tests/test_skill_layer_audit.sh
+```
 
 Para validar regressões da interface em cenários de terminal heterogêneo (viewer/agent), execute também:
 

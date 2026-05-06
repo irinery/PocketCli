@@ -18,7 +18,7 @@ MODE="${2:-}"
 #   It's installed separately + conditionally by tailscale_daemon.sh.
 # ---------------------------------------------------------------------------
 VIEWER_PKGS="git curl jq tmux zsh"
-AGENT_PKGS="git curl jq tmux zsh ripgrep htop"
+AGENT_PKGS="git curl jq tmux zsh ripgrep htop python3 ansible"
 
 case "${MODE}" in
     viewer) PKGS="${VIEWER_PKGS}" ;;
@@ -44,7 +44,10 @@ _install_lazygit_linux() {
 
 _install_starship() {
     printf '[PocketCli] Installing starship...\n'
-    curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
+    TMP=$(mktemp -d)
+    curl -fsSL https://starship.rs/install.sh -o "${TMP}/starship-install.sh"
+    sh "${TMP}/starship-install.sh" -- --yes
+    rm -rf "${TMP}"
 }
 
 case "${OS}" in
