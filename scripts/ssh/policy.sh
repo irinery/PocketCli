@@ -59,7 +59,7 @@ ssh_command_policy_evaluate() {
             printf '%s|%s|%s|%s\n' blocked destructive false remote_code_execution
             return 0
             ;;
-        *"rm -rf /"*|*"rm -rf /*"*|*"mkfs"*|*"dd if="*|*":(){ :|:& };:"*|*"chmod -r 777 /"*|*"chown -r"*|*"shutdown"*|*"reboot"*|*"halt"*|*"poweroff"*|*"truncate -s 0 /etc"*|*"/dev/null"*)
+        *"rm -rf /"*|*"mkfs"*|*"dd if="*|*":(){ :|:& };:"*|*"chmod -r 777 /"*|*"chown -r"*|*"shutdown"*|*"reboot"*|*"halt"*|*"poweroff"*|*"truncate -s 0 /etc"*|*"/dev/null"*)
             printf '%s|%s|%s|%s\n' blocked destructive false destructive_command
             return 0
             ;;
