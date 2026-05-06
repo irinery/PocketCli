@@ -1,0 +1,69 @@
+---
+- name: PocketCli safe disk cleanup
+  hosts: all
+  gather_facts: false
+  vars:
+    threshold_gb_value: "{{ threshold_gb | default('5') | int }}"
+    allowed_cleanup_paths:
+      - /var/log
+      - /tmp
+      - /var/cache
+    blocked_cleanup_paths:
+      - /
+      - /etc
+      - /usr
+      - /bin
+      - /sbin
+      - /boot
+      - /root
+      - /home
+  tasks:
+    - name: Validate target_path
+      ansible.builtin.fail:
+        msg: "path_not_allowed:{{ target_path | default('') }}"
+      when:
+        - target_path is not defined or target_path not in allowed_cleanup_paths or target_path in blocked_cleanup_paths
+
+    - name: Validate threshold_gb
+      ansible.builtin.fail:
+        msg: "invalid_threshold_gb"
+      when: threshold_gb_value < 1 or threshold_gb_value > 100
+
+    - name: Check available space before cleanup
+      ansible.builtin.command: "df -Pk {{ target_path }}"
+      changed_when: false
+      register: cleanup_df_before
+
+    - name: Find old log files
+      ansible.builtin.find:
+        paths: "{{ target_path }}"
+        patterns: "*.log"
+        age: 7d
+        recurse: false
+        file_type: file
+      register: cleanup_candidates
+      when: ((cleanup_df_before.stdout_lines[1].split()[3] | int) / 1048576) < threshold_gb_value
+
+    - name: Remove old log files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ cleanup_candidates.files | default([]) }}"
+      register: cleanup_removed
+
+    - name: Check available space after cleanup
+      ansible.builtin.command: "df -Pk {{ target_path }}"
+      changed_when: false
+      register: cleanup_df_after
+
+    - name: Build cleanup result
+      ansible.builtin.set_fact:
+        result:
+          files_removed: "{{ cleanup_candidates.files | default([]) | map(attribute='path') | list }}"
+          bytes_freed: "{{ cleanup_candidates.files | default([]) | map(attribute='size') | sum | int }}"
+          available_after_gb: "{{ ((cleanup_df_after.stdout_lines[1].split()[3] | int) / 1048576) | round(2) }}"
+          changed: "{{ (cleanup_candidates.files | default([]) | length) > 0 }}"
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg: "{{ result | to_json }}"

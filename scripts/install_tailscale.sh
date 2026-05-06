@@ -45,7 +45,10 @@ case "${OS}" in
 
     debian|wsl|linux)
         log_debug "installing tailscale via upstream script"
-        curl -fsSL https://tailscale.com/install.sh | sh
+        TMP=$(mktemp -d)
+        curl -fsSL https://tailscale.com/install.sh -o "${TMP}/tailscale-install.sh"
+        sh "${TMP}/tailscale-install.sh"
+        rm -rf "${TMP}"
     ;;
 
     alpine)
