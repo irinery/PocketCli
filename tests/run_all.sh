@@ -13,7 +13,10 @@ FAIL_COUNT=0
 printf 'Running shell regression suite for profile=%s\n' "$(ci_profile)"
 ci_summary "### Shell regression ($(ci_profile))"
 
-for TEST_SCRIPT in $(find "${REPO_ROOT}/tests" -maxdepth 1 -type f -name 'test_*.sh' | sort); do
+TEST_LIST=$(mktemp)
+find "${REPO_ROOT}/tests" -maxdepth 1 -type f -name 'test_*.sh' | sort > "${TEST_LIST}"
+
+while IFS= read -r TEST_SCRIPT; do
     TEST_NAME=$(basename "${TEST_SCRIPT}")
     if ci_is_excluded "${TEST_NAME}"; then
         printf 'SKIP %s\n' "${TEST_NAME}"
@@ -28,7 +31,8 @@ for TEST_SCRIPT in $(find "${REPO_ROOT}/tests" -maxdepth 1 -type f -name 'test_*
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
     rm -f "${LOG_FILE}"
-done
+done < "${TEST_LIST}"
+rm -f "${TEST_LIST}"
 
 TOTAL_END=$(ci_now_seconds)
 TOTAL_DURATION=$((TOTAL_END - TOTAL_START))
@@ -42,4 +46,3 @@ if [ "${TOTAL_DURATION}" -gt "${TOTAL_BUDGET}" ]; then
 fi
 
 [ "${FAIL_COUNT}" -eq 0 ]
-

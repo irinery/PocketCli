@@ -260,8 +260,11 @@ _setup_install_fallback() {
         return 1
     fi
 
+    TARGETS_FILE=$(mktemp)
+    printf '%s\n' "${RAW_TARGETS}" | tr ',;' '  ' | tr ' ' '\n' > "${TARGETS_FILE}"
+
     REACHABLE=1
-    for target in $(printf '%s' "${RAW_TARGETS}" | tr ',;' '  '); do
+    while IFS= read -r target || [ -n "${target}" ]; do
         target=$(safe_host "${target}")
         [ -z "${target}" ] && continue
         info "Testing reachability for ${target}..."
@@ -271,7 +274,8 @@ _setup_install_fallback() {
         else
             warn "${target} did not respond, but it was saved for later fallback scans"
         fi
-    done
+    done < "${TARGETS_FILE}"
+    rm -f "${TARGETS_FILE}"
 
     if [ "${REACHABLE}" -eq 0 ]; then
         info "Use 'pocket scan' or 'pocket radar' to continue without tailscale status."

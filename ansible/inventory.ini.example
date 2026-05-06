@@ -1,0 +1,2 @@
+[pocketcli_test]
+localhost ansible_connection=local
