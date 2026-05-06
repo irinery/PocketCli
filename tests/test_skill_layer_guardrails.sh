@@ -86,7 +86,7 @@ run_guard() {
 
 req="${WORKDIR}/request.json"
 out="${WORKDIR}/guard.out"
-token="abcdefghijklmnopqrstuvwxyz012345"
+approval_token="abcdefghijklmnopqrstuvwxyz012345"
 
 write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f701" "disk_check" "srv-prod-01" "read"
 run_guard "${req}" "${out}" || fail T-11
@@ -108,17 +108,17 @@ write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f705" "disk_cleanup_safe
 run_guard "${req}" "${out}" && fail T-15
 assert_field "${out}" reason execute_requires_confirmation_token
 
-write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f706" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"/var/log"}' "${token}"
+write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f706" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"/var/log"}' "${approval_token}"
 run_guard "${req}" "${out}" || fail T-16
 assert_field "${out}" decision ALLOW
 lock_path=$(json_field "${out}" lock_path)
 bash "${REPO_ROOT}/scripts/skills/guard_rails.sh" release "${lock_path}" >/dev/null 2>&1 || true
 
-write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f707" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"../../../etc/passwd"}' "${token}"
+write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f707" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"../../../etc/passwd"}' "${approval_token}"
 run_guard "${req}" "${out}" && fail T-17
 assert_field "${out}" reason path_traversal_attempt:target_path
 
-write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f708" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"safe$(date)"}' "${token}"
+write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f708" "disk_cleanup_safe" "srv-prod-01" "execute" '{"target_path":"safe$(date)"}' "${approval_token}"
 run_guard "${req}" "${out}" && fail T-18
 assert_field "${out}" reason injection_attempt:params
 
@@ -139,10 +139,10 @@ write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f711" "service_status" "
 run_guard "${req}" "${out}" || fail T-21
 assert_field "${out}" decision ALLOW
 
-write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f712" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${token}"
+write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f712" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${approval_token}"
 run_guard "${req}" "${out}" || fail T-22-first
 for n in 13 14 15 16 17 18 19 20 21; do
-    write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f7${n}" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${token}"
+    write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f7${n}" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${approval_token}"
     run_guard "${req}" "${out}" && fail "T-22-${n}"
     assert_field "${out}" reason concurrent_execute_limit:host
 done

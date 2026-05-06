@@ -43,6 +43,9 @@ is_shell_script_file() {
 is_sensitive_name() {
     local path base lower
     path=$1
+    if security_is_shell_scope "$path"; then
+        return 1
+    fi
     base=$(basename -- "$path")
     lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
 

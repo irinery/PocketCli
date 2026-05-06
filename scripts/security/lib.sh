@@ -34,21 +34,21 @@ security_file_size() {
     local file
     file=$1
 
-    if stat -f %z "$file" 2>/dev/null; then
+    if stat -c %s "$file" 2>/dev/null; then
         return 0
     fi
-    stat -c %s "$file" 2>/dev/null
+    stat -f %z "$file" 2>/dev/null
 }
 
 security_file_mode() {
     local file mode
     file=$1
 
-    if mode=$(stat -f %Lp "$file" 2>/dev/null); then
+    if mode=$(stat -c %a "$file" 2>/dev/null); then
         printf '0%s\n' "$mode"
         return 0
     fi
-    if mode=$(stat -c %a "$file" 2>/dev/null); then
+    if mode=$(stat -f %Lp "$file" 2>/dev/null); then
         printf '0%s\n' "$mode"
         return 0
     fi

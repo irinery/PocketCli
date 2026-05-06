@@ -143,7 +143,7 @@ run_endpoint() {
 
 req="${WORKDIR}/request.json"
 out="${WORKDIR}/endpoint.out"
-token="abcdefghijklmnopqrstuvwxyz012345"
+approval_token="abcdefghijklmnopqrstuvwxyz012345"
 
 write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f733" "disk_check" "srv-prod-01" "diagnose"
 run_endpoint "${req}" "${out}" success || fail T-33
@@ -171,7 +171,7 @@ run_endpoint "${req}" "${out}" success 1 && fail T-37
 assert_field "${out}" status timeout
 assert_field "${out}" error execution_timeout_60s
 
-write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f738" "service_restart_safe" "srv-prod-01" "execute" '{"service_name":"nginx"}' "${token}"
+write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f738" "service_restart_safe" "srv-prod-01" "execute" '{"service_name":"nginx"}' "${approval_token}"
 run_endpoint "${req}" "${out}" changed || fail T-38
 assert_field "${out}" status success
 assert_field "${out}" changed true
@@ -181,8 +181,8 @@ run_endpoint "${req}" "${out}" missing_result && fail T-39
 assert_field "${out}" status error
 assert_field "${out}" error missing_pocket_result_task
 
-write_request "${WORKDIR}/request-a.json" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f740" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${token}"
-write_request "${WORKDIR}/request-b.json" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f741" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${token}"
+write_request "${WORKDIR}/request-a.json" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f740" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${approval_token}"
+write_request "${WORKDIR}/request-b.json" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f741" "service_restart_safe" "srv-prod-02" "execute" '{"service_name":"nginx"}' "${approval_token}"
 run_endpoint "${WORKDIR}/request-a.json" "${WORKDIR}/endpoint-a.out" sleep_changed &
 first_pid=$!
 i=0

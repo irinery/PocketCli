@@ -171,7 +171,6 @@ func TestIntegration_RecallReturnsProjectAndGlobalResultsOrderedByScore(t *testi
 	if err != nil {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
-	createdAt := time.Now().UTC().Format(time.RFC3339)
 
 	for _, entry := range []memory.Entry{
 		{
