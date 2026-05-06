@@ -1,0 +1,4 @@
+interface:
+  display_name: "Regra Agente Contrato Técnico"
+  short_description: "Converte contrato técnico em checklist verificável para implementação e PR"
+  default_prompt: "Aplique o contrato técnico do agente: extraia regras verificáveis, gere checklist por escopo e valide conformidade com evidências de arquivos e comandos."

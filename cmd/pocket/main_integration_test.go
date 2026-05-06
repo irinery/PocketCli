@@ -14,6 +14,7 @@ import (
 	"pocketcli/internal/backend"
 	"pocketcli/internal/contextcollector"
 	"pocketcli/internal/memory"
+	"pocketcli/internal/remoteaccess"
 )
 
 func TestIntegration_RootDispatchesHosts(t *testing.T) {
@@ -44,23 +45,39 @@ func TestIntegration_RootDispatchesHosts(t *testing.T) {
 func TestIntegration_RootDispatchesExecAndPropagatesError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	orig := execSSH
-	t.Cleanup(func() { execSSH = orig })
+	orig := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = orig })
 
-	execSSH = func(host, remoteCmd string) error {
-		if host != "node-1" || remoteCmd != "echo hi" {
-			t.Fatalf("unexpected dispatch args host=%q cmd=%q", host, remoteCmd)
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := remoteaccess.NewExecutor()
+		executor.Logger = nil
+		executor.Resolver = func(ctx stdctx.Context, alias string) (remoteaccess.RemoteHost, error) {
+			return remoteaccess.RemoteHost{
+				Alias:        alias,
+				Hostname:     alias,
+				AccessMethod: remoteaccess.AccessMethodSSH,
+				OSFamily:     remoteaccess.OSFamilyLinux,
+				SSHPort:      22,
+				Enabled:      true,
+			}, nil
 		}
-		return errors.New("remote failed")
+		executor.Probe = func(ctx stdctx.Context, host remoteaccess.RemoteHost) error { return nil }
+		executor.Runner = func(ctx stdctx.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			if gotHost, gotCmd := args[len(args)-2], args[len(args)-1]; gotHost != "node-1" || gotCmd != "uptime" {
+				t.Fatalf("unexpected dispatch args host=%q cmd=%q", gotHost, gotCmd)
+			}
+			return remoteaccess.RunOutput{ExitCode: 1, Stderr: "remote failed"}, errors.New("remote failed")
+		}
+		return executor
 	}
 
 	root := newRootCommand()
 	origArgs := os.Args
-	os.Args = []string{"pocket", "exec", "node-1", "echo", "hi"}
+	os.Args = []string{"pocket", "exec", "node-1", "uptime"}
 	t.Cleanup(func() { os.Args = origArgs })
 
 	err := root.Execute()
-	if err == nil || err.Error() != "remote failed" {
+	if err == nil || err.Error() != "remote command failed: exit_code=1" {
 		t.Fatalf("expected dispatched error, got %v", err)
 	}
 }

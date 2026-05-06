@@ -13,15 +13,30 @@ ssh "$HOST" 'sh -s' <<'EOF'
 
 if ! command -v docker >/dev/null 2>&1
 then
-curl -fsSL https://get.docker.com | sh
+docker_installer=$(mktemp) || exit 1
+if curl -fsSL -o "$docker_installer" https://get.docker.com
+then
+sh "$docker_installer"
+else
+rm -f "$docker_installer"
+exit 1
+fi
+rm -f "$docker_installer"
 fi
 
 if ! command -v tailscale >/dev/null 2>&1
 then
-curl -fsSL https://tailscale.com/install.sh | sh
+tailscale_installer=$(mktemp) || exit 1
+if curl -fsSL -o "$tailscale_installer" https://tailscale.com/install.sh
+then
+sh "$tailscale_installer"
+else
+rm -f "$tailscale_installer"
+exit 1
+fi
+rm -f "$tailscale_installer"
 fi
 
 mkdir -p ~/.pocketcli
 
 EOF
-

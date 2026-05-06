@@ -12,7 +12,10 @@ FAIL_COUNT=0
 printf 'Running pocket smoke suite for profile=%s\n' "$(ci_profile)"
 ci_summary "### Smoke tests ($(ci_profile))"
 
-for TEST_SCRIPT in $(find "${REPO_ROOT}/tests/smoke" -type f -name 'test_*.sh' | sort); do
+TEST_LIST=$(mktemp)
+find "${REPO_ROOT}/tests/smoke" -type f -name 'test_*.sh' | sort > "${TEST_LIST}"
+
+while IFS= read -r TEST_SCRIPT; do
     TEST_NAME=$(basename "${TEST_SCRIPT}")
     BUDGET=$(ci_smoke_budget "${TEST_NAME}")
     LOG_FILE=$(mktemp)
@@ -23,7 +26,8 @@ for TEST_SCRIPT in $(find "${REPO_ROOT}/tests/smoke" -type f -name 'test_*.sh' |
         FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
     rm -f "${LOG_FILE}"
-done
+done < "${TEST_LIST}"
+rm -f "${TEST_LIST}"
 
 TOTAL_END=$(ci_now_seconds)
 TOTAL_DURATION=$((TOTAL_END - TOTAL_START))
@@ -32,4 +36,3 @@ printf '\nSmoke summary: %s passed, %s failed, %ss total\n' "${PASS_COUNT}" "${F
 ci_summary "- total: ${TOTAL_DURATION}s"
 
 [ "${FAIL_COUNT}" -eq 0 ]
-

@@ -1,0 +1,54 @@
+---
+- name: PocketCli safe service restart
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Validate service_name
+      ansible.builtin.fail:
+        msg: "invalid_service_name"
+      when: service_name is not defined or service_name is not match('^[a-z0-9_-]{1,64}$')
+
+    - name: Check service before restart
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      changed_when: false
+      failed_when: false
+      register: service_before
+
+    - name: Refuse restart when service is not active
+      ansible.builtin.fail:
+        msg: "service_not_active"
+      when: service_before.stdout | trim != "active"
+
+    - name: Restart service
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+      register: service_restart
+
+    - name: Wait for active service
+      ansible.builtin.command: "systemctl is-active {{ service_name }}"
+      changed_when: false
+      failed_when: false
+      register: service_after
+      retries: 15
+      delay: 1
+      until: service_after.stdout | trim == "active"
+
+    - name: Query new service pid
+      ansible.builtin.command: "systemctl show {{ service_name }} --property=MainPID --value"
+      changed_when: false
+      failed_when: false
+      register: service_pid
+
+    - name: Build restart result
+      ansible.builtin.set_fact:
+        result:
+          restarted: true
+          state: "{{ 'active' if service_after.stdout | trim == 'active' else 'failed' }}"
+          new_pid: "{{ None if (service_pid.stdout | default('0') | int) == 0 else (service_pid.stdout | int) }}"
+          error: "{{ None if service_after.stdout | trim == 'active' else 'service_failed_to_start' }}"
+          changed: "{{ service_restart.changed | default(true) }}"
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg: "{{ result | to_json }}"

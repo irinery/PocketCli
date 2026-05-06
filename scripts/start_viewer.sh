@@ -18,7 +18,7 @@ if ! grep -qF "ForwardAgent" "${SSH_CONFIG}" 2>/dev/null; then
 
 # PocketCli
 Host *
-    ForwardAgent yes
+    ForwardAgent no
     ServerAliveInterval 60
     ServerAliveCountMax 3
 SSHEOF

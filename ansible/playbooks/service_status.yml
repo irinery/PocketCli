@@ -1,0 +1,29 @@
+---
+- name: PocketCli service status
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Validate service_name
+      ansible.builtin.fail:
+        msg: "invalid_service_name"
+      when: service_name is not defined or service_name is not match('^[a-z0-9_-]{1,64}$')
+
+    - name: Query service state
+      ansible.builtin.command: "systemctl show {{ service_name }} --property=ActiveState,SubState,MainPID,UnitFileState,ActiveEnterTimestampMonotonic --value"
+      changed_when: false
+      failed_when: false
+      register: service_show
+
+    - name: Build service status result
+      ansible.builtin.set_fact:
+        result:
+          name: "{{ service_name }}"
+          state: "{{ 'not_found' if service_show.rc != 0 else service_show.stdout_lines[0] | default('unknown') }}"
+          enabled: "{{ (service_show.stdout_lines[3] | default('disabled')) == 'enabled' }}"
+          pid: "{{ None if service_show.rc != 0 or (service_show.stdout_lines[2] | default('0') | int) == 0 else (service_show.stdout_lines[2] | int) }}"
+          uptime_seconds: null
+          changed: false
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg: "{{ result | to_json }}"
