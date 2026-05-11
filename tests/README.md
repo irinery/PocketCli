@@ -35,6 +35,21 @@ Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de a
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar isoladamente o contrato da Fase 01 do módulo Ansible, rode `sh tests/test_ansible_adapter.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `wc`, `dd` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`, então não exige Ansible real instalado. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 02 do módulo Ansible, rode `sh tests/test_ansible_inventory.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `jq` ou `python3`, e `chmod`. O teste usa mocks locais de `tailscale`, `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 03 do módulo Ansible, rode `sh tests/test_ansible_registry.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `ln` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 04 do módulo Ansible, rode `sh tests/test_ansible_wiki_hook.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `tr` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 05 do módulo Ansible, rode `sh tests/test_ansible_init.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e `chmod`. Variáveis de ambiente: nenhuma obrigatória.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
