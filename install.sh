@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# shellcheck disable=SC2016,SC2094
 # =============================================================================
 # PocketCli — install.sh
 # Orchestrates the full installation flow.
@@ -26,19 +27,18 @@ die()     { printf '[PocketCli] ERROR: %s\n' "$*" >&2; exit 1; }
 prompt_choice() {
     VAR_NAME="$1"
     PROMPT="$2"
+    ANSWER="${3:-}"
+
+    if [ -z "${ANSWER}" ]; then
+        printf '%s' "$PROMPT"
+        read -r ANSWER < /dev/tty
+    fi
 
     case "$VAR_NAME" in
-        ''|*[!A-Za-z0-9_]*|[0-9]*)
-            die "Invalid variable name for prompt_choice: $VAR_NAME"
-        ;;
+        MODE_CHOICE) MODE_CHOICE="$ANSWER" ;;
+        AGENT_CONFIG_CHOICE) AGENT_CONFIG_CHOICE="$ANSWER" ;;
+        *) die "Invalid variable name for prompt_choice: $VAR_NAME" ;;
     esac
-
-    if [ -n "${3:-}" ]; then
-        eval "$VAR_NAME=\$3"
-    else
-        printf '%s' "$PROMPT"
-        eval "read -r $VAR_NAME < /dev/tty"
-    fi
 }
 
 backup_file() {

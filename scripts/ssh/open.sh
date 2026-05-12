@@ -14,6 +14,29 @@ pocket_ssh_run() {
     HOST_INPUT="$2"
     shift 2
 
+    if [ "${ACTION}" = "exec" ]; then
+        REMOTE_COMMAND=$(ssh_command_policy_normalize "$*")
+        POLICY_RESULT=$(ssh_command_policy_evaluate "${REMOTE_COMMAND}")
+        POLICY_DECISION=${POLICY_RESULT%%|*}
+        POLICY_REST=${POLICY_RESULT#*|}
+        POLICY_RISK=${POLICY_REST%%|*}
+        POLICY_REST=${POLICY_REST#*|}
+        POLICY_REST=${POLICY_REST#*|}
+        POLICY_REASON=${POLICY_REST:-}
+
+        case "${POLICY_DECISION}" in
+            allow)
+                ;;
+            pending_approval)
+                die "Remote command requires approval (${POLICY_RISK}): ${REMOTE_COMMAND}"
+                ;;
+            *)
+                [ -n "${POLICY_REASON}" ] || POLICY_REASON="blocked"
+                die "Remote command blocked (${POLICY_REASON}): ${REMOTE_COMMAND}"
+                ;;
+        esac
+    fi
+
     pocket_runtime_context_boot "${POCKETCLI_MODE:-auto}"
     inventory_refresh || true
 

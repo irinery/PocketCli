@@ -1,6 +1,6 @@
 #! /usr/bin/env sh
 
-tailscale status --json | jq -r '.Peer[].HostName' | while read HOST
+tailscale status --json | jq -r '.Peer[].HostName' | while IFS= read -r HOST
 do
 
 	SAFE_HOST=$(printf "%s" "$HOST" | tr -cd '[:alnum:].-')
