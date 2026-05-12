@@ -56,6 +56,18 @@ extract_yaml_line() {
 basic_yaml_check() {
     FILE="$1"
     awk '
+        /^[[:space:]]*$/ {
+            next
+        }
+        /^[[:space:]]*#/ {
+            next
+        }
+        /^[[:space:]]*---[[:space:]]*$/ {
+            next
+        }
+        /^[[:space:]]*-[[:space:]]/ {
+            next
+        }
         index($0, "[") && !index($0, "]") {
             print NR
             exit 1
