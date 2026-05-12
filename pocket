@@ -156,7 +156,7 @@ _cmd_copy() {
 _cmd_status() { exec sh "${SCRIPTS}/pocket-status.sh"; }
 _cmd_radar()  { exec sh "${POCKETCLI_DIR}/radar.sh"; }
 _cmd_menu() {
-    if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+    if [ "${POCKETCLI_DIRECT_MENU:-0}" != "1" ] && [ -x "${SCRIPTS}/session/manager.sh" ]; then
         SESSION_INTENT="viewer" exec sh "${SCRIPTS}/session/manager.sh" viewer
     fi
     exec sh "${SCRIPTS}/pocketcli_menu.sh"

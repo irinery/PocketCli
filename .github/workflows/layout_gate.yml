@@ -1,0 +1,50 @@
+name: Layout Gate - pocket menu TUI
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+jobs:
+  visual-integrity:
+    name: Visual Integrity Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bash tmux expect ncurses-bin
+          tmux -V
+          tput -V
+
+      - name: Run visual integrity suite
+        id: suite
+        run: bash scripts/testing/visual_integrity/run_tests.sh
+        timeout-minutes: 2
+
+      - name: Publish Job Summary
+        if: always()
+        run: |
+          if [ -f scripts/testing/visual_integrity/reports/summary.md ]; then
+            cat scripts/testing/visual_integrity/reports/summary.md >> "${GITHUB_STEP_SUMMARY}"
+          else
+            {
+              echo "## Layout Gate - Resultado"
+              echo
+              echo "> Relatorio nao gerado. Verifique os logs do step anterior."
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload failure reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-failure-reports-${{ github.run_id }}
+          path: scripts/testing/visual_integrity/reports/
+          retention-days: 7
