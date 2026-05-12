@@ -43,6 +43,21 @@ bash scripts/testing/visual_integrity/run_tests.sh
 
 Pré-requisitos: `bash`, `tmux` e `tput`/`ncurses` no `PATH`. A suíte provisiona um terminal tmux headless, executa `pocket menu`, captura snapshots e compara com fixtures em `scripts/testing/visual_integrity/fixtures/`. Para regenerar fixtures depois de uma mudança intencional de layout, rode `POCKETCLI_VISUAL_RECORD=1 bash scripts/testing/visual_integrity/run_tests.sh`.
 
+Para validar isoladamente o contrato da Fase 01 do módulo Ansible, rode `sh tests/test_ansible_adapter.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `wc`, `dd` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`, então não exige Ansible real instalado. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 02 do módulo Ansible, rode `sh tests/test_ansible_inventory.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `jq` ou `python3`, e `chmod`. O teste usa mocks locais de `tailscale`, `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 03 do módulo Ansible, rode `sh tests/test_ansible_registry.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `ln` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 04 do módulo Ansible, rode `sh tests/test_ansible_wiki_hook.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `wc`, `tr` e `chmod`. O teste usa mocks locais de `ansible` e `ansible-playbook`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o contrato da Fase 05 do módulo Ansible, rode `sh tests/test_ansible_init.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e `chmod`. Variáveis de ambiente: nenhuma obrigatória.
+
 ## Como plugar novos testes por módulo
 
 1. **Novo módulo interno (`internal/<modulo>`)**
