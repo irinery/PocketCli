@@ -462,7 +462,194 @@ for key, value in (data.get("Peer") or {}).items():
     print(f"{name}\t{ip}\t{node_id}")
 PY
     else
-        fail "jq ou python3 é necessário para ler tailscale status --json" 1
+        awk '
+            function object_at(text, start,    i, char, depth, in_string, escaped) {
+                depth = 0
+                in_string = 0
+                escaped = 0
+                for (i = start; i <= length(text); i++) {
+                    char = substr(text, i, 1)
+                    if (in_string == 1) {
+                        if (escaped == 1) {
+                            escaped = 0
+                        } else if (char == "\\") {
+                            escaped = 1
+                        } else if (char == "\"") {
+                            in_string = 0
+                        }
+                        continue
+                    }
+                    if (char == "\"") {
+                        in_string = 1
+                    } else if (char == "{") {
+                        depth++
+                    } else if (char == "}") {
+                        depth--
+                        if (depth == 0) {
+                            object_end = i
+                            return substr(text, start, i - start + 1)
+                        }
+                    }
+                }
+                object_end = length(text)
+                return substr(text, start)
+            }
+            function object_after_key(text, key,    pattern, pos, char) {
+                pattern = "\"" key "\""
+                pos = index(text, pattern)
+                if (pos == 0) {
+                    return ""
+                }
+                pos += length(pattern)
+                while (pos <= length(text) && substr(text, pos, 1) != ":") {
+                    pos++
+                }
+                while (pos <= length(text) && substr(text, pos, 1) != "{") {
+                    pos++
+                }
+                if (pos > length(text)) {
+                    return ""
+                }
+                return object_at(text, pos)
+            }
+            function string_value(text, key,    pattern, pos, char, escaped, value) {
+                pattern = "\"" key "\""
+                pos = index(text, pattern)
+                if (pos == 0) {
+                    return ""
+                }
+                pos += length(pattern)
+                while (pos <= length(text) && substr(text, pos, 1) != ":") {
+                    pos++
+                }
+                while (pos <= length(text) && substr(text, pos, 1) != "\"") {
+                    pos++
+                }
+                pos++
+                escaped = 0
+                value = ""
+                while (pos <= length(text)) {
+                    char = substr(text, pos, 1)
+                    if (escaped == 1) {
+                        value = value char
+                        escaped = 0
+                    } else if (char == "\\") {
+                        escaped = 1
+                    } else if (char == "\"") {
+                        return value
+                    } else {
+                        value = value char
+                    }
+                    pos++
+                }
+                return value
+            }
+            function first_array_string(text, key,    pattern, pos, char, escaped, value) {
+                pattern = "\"" key "\""
+                pos = index(text, pattern)
+                if (pos == 0) {
+                    return ""
+                }
+                pos += length(pattern)
+                while (pos <= length(text) && substr(text, pos, 1) != "[") {
+                    pos++
+                }
+                while (pos <= length(text) && substr(text, pos, 1) != "\"") {
+                    pos++
+                }
+                pos++
+                escaped = 0
+                value = ""
+                while (pos <= length(text)) {
+                    char = substr(text, pos, 1)
+                    if (escaped == 1) {
+                        value = value char
+                        escaped = 0
+                    } else if (char == "\\") {
+                        escaped = 1
+                    } else if (char == "\"") {
+                        return value
+                    } else {
+                        value = value char
+                    }
+                    pos++
+                }
+                return value
+            }
+            function skip_ws(text, pos) {
+                while (pos <= length(text) && substr(text, pos, 1) ~ /^[[:space:]]$/) {
+                    pos++
+                }
+                return pos
+            }
+            function parse_peer_key(text, start,    pos, char, escaped, value) {
+                pos = start + 1
+                escaped = 0
+                value = ""
+                while (pos <= length(text)) {
+                    char = substr(text, pos, 1)
+                    if (escaped == 1) {
+                        value = value char
+                        escaped = 0
+                    } else if (char == "\\") {
+                        escaped = 1
+                    } else if (char == "\"") {
+                        key_end = pos
+                        return value
+                    } else {
+                        value = value char
+                    }
+                    pos++
+                }
+                key_end = start
+                return value
+            }
+            {
+                json = json $0
+            }
+            END {
+                peers = object_after_key(json, "Peer")
+                if (peers == "") {
+                    exit 0
+                }
+                peers = substr(peers, 2, length(peers) - 2)
+                pos = 1
+                while (pos <= length(peers)) {
+                    if (substr(peers, pos, 1) != "\"") {
+                        pos++
+                        continue
+                    }
+                    peer_key = parse_peer_key(peers, pos)
+                    pos = skip_ws(peers, key_end + 1)
+                    if (substr(peers, pos, 1) != ":") {
+                        pos++
+                        continue
+                    }
+                    pos = skip_ws(peers, pos + 1)
+                    if (substr(peers, pos, 1) != "{") {
+                        pos++
+                        continue
+                    }
+                    peer_object = object_at(peers, pos)
+                    pos = object_end + 1
+                    host = string_value(peer_object, "HostName")
+                    if (host == "") {
+                        host = string_value(peer_object, "DNSName")
+                    }
+                    if (host == "") {
+                        host = peer_key
+                    }
+                    ip = first_array_string(peer_object, "TailscaleIPs")
+                    id = string_value(peer_object, "ID")
+                    if (id == "") {
+                        id = peer_key
+                    }
+                    if (host != "" && ip != "") {
+                        printf "%s\t%s\t%s\n", host, ip, id
+                    }
+                }
+            }
+        ' "${JSON_FILE}" > "${RAW_RECORDS}"
     fi
 }
 
