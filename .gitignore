@@ -1,0 +1,30 @@
+.DS_Store
+
+# Local project folders
+ansible/
+skills/
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+.direnv/
+
+# Private keys and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+authorized_keys
+known_hosts
+
+# Local runtime artifacts
+*.log
+tmp/
+.cache/
