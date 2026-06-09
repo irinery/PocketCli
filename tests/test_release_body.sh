@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# shellcheck disable=SC2016
 set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
@@ -27,7 +28,8 @@ EOF
 
 DEFAULT_OUTPUT=$(sh "$SCRIPT" "v1.2.0")
 assert_contains "$DEFAULT_OUTPUT" "## PocketCli v1.2.0"
-assert_contains "$DEFAULT_OUTPUT" "curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/v1.2.0/bootstrap.sh | bash"
+assert_contains "$DEFAULT_OUTPUT" "curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/v1.2.0/bootstrap.sh -o bootstrap.sh"
+assert_contains "$DEFAULT_OUTPUT" "sh bootstrap.sh"
 
 CUSTOM_OUTPUT=$(sh "$SCRIPT" "v1.2.0" "$CUSTOM_FILE")
 assert_contains "$CUSTOM_OUTPUT" "### Destaques"

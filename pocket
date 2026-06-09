@@ -29,6 +29,7 @@ _cmd_help() {
     printf "  ${C_CYAN}run${C_NC}      <host> <cmd>    Run command remotely\n"
     printf "  ${C_CYAN}copy${C_NC}     <src>  <dst>    scp wrapper (host:path)\n"
     printf "  ${C_CYAN}fleet${C_NC}    <sub>  [args]   Commands across machines\n"
+    printf "  ${C_CYAN}ansible${C_NC}  <sub>  [args]   Run Ansible playbooks through PocketCli\n"
     printf "  ${C_CYAN}status${C_NC}                   Local node status\n"
     printf "  ${C_CYAN}radar${C_NC}                    Radar dashboard\n"
     printf "  ${C_CYAN}menu${C_NC}                     Interactive menu\n"
@@ -155,7 +156,7 @@ _cmd_copy() {
 _cmd_status() { exec sh "${SCRIPTS}/pocket-status.sh"; }
 _cmd_radar()  { exec sh "${POCKETCLI_DIR}/radar.sh"; }
 _cmd_menu() {
-    if [ -x "${SCRIPTS}/session/manager.sh" ]; then
+    if [ "${POCKETCLI_DIRECT_MENU:-0}" != "1" ] && [ -x "${SCRIPTS}/session/manager.sh" ]; then
         SESSION_INTENT="viewer" exec sh "${SCRIPTS}/session/manager.sh" viewer
     fi
     exec sh "${SCRIPTS}/pocketcli_menu.sh"
@@ -211,6 +212,10 @@ _cmd_restore() {
 
 _cmd_fleet() {
     exec sh "${SCRIPTS}/fleet.sh" "$@"
+}
+
+_cmd_ansible() {
+    exec sh "${POCKETCLI_DIR}/lib/ansible_adapter.sh" "$@"
 }
 
 _cmd_ts() {
@@ -421,6 +426,7 @@ case "${CMD}" in
     run)                        _cmd_run "$@" ;;
     copy|cp)                    _cmd_copy "$@" ;;
     fleet)                      _cmd_fleet "$@" ;;
+    ansible)                    _cmd_ansible "$@" ;;
     scan)                       exec sh "${POCKETCLI_DIR}/discovery/pocketcli-scan.sh" ;;
     status)                     _cmd_status ;;
     radar)                      _cmd_radar ;;

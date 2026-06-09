@@ -28,3 +28,7 @@ known_hosts
 *.log
 tmp/
 .cache/
+
+# Generated visual test reports
+scripts/testing/visual_integrity/reports/*
+!scripts/testing/visual_integrity/reports/.gitignore

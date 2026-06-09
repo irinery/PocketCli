@@ -11,10 +11,11 @@ import (
 type PositionalArgs func(cmd *Command, args []string) error
 
 type Command struct {
-	Use   string
-	Short string
-	Args  PositionalArgs
-	RunE  func(cmd *Command, args []string) error
+	Use    string
+	Short  string
+	Hidden bool
+	Args   PositionalArgs
+	RunE   func(cmd *Command, args []string) error
 
 	parent   *Command
 	children []*Command
@@ -80,6 +81,9 @@ func (c *Command) Help() error {
 	if len(c.children) > 0 {
 		fmt.Fprintln(w, "\nCommands:")
 		for _, child := range c.children {
+			if child.Hidden {
+				continue
+			}
 			fmt.Fprintf(w, "  %s\t%s\n", child.commandName(), child.Short)
 		}
 	}

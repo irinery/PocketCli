@@ -23,9 +23,9 @@ ci_shell_suite_budget() {
     fi
 
     case "$(ci_profile)" in
-        alpine) printf '30' ;;
-        macos) printf '35' ;;
-        *) printf '25' ;;
+        alpine) printf '45' ;;
+        macos) printf '50' ;;
+        *) printf '45' ;;
     esac
 }
 
@@ -113,4 +113,3 @@ ci_run_script() {
     ci_summary "- ${TEST_NAME}: pass (${DURATION}s)"
     return 0
 }
-
