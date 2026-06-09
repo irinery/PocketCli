@@ -1,50 +1,62 @@
 #!/usr/bin/env sh
 
+pocket_capability_has() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 pocket_detect_capabilities() {
-    if [ -t 0 ]; then
-        if [ -t 1 ]; then
-            # shellcheck disable=SC2034
-            HAS_TTY=true
-        else
-            # shellcheck disable=SC2034
-            HAS_TTY=false
-        fi
-    else
-        # shellcheck disable=SC2034
-        HAS_TTY=false
-    fi
+    HAS_TTY=false
+    [ -t 0 ] && HAS_TTY=true
 
-    if command -v tmux >/dev/null 2>&1; then
-        # shellcheck disable=SC2034
-        HAS_TMUX=true
-    else
-        # shellcheck disable=SC2034
-        HAS_TMUX=false
-    fi
+    HAS_TMUX=false
+    pocket_capability_has tmux && HAS_TMUX=true
 
-    if command -v tailscale >/dev/null 2>&1; then
-        # shellcheck disable=SC2034
-        HAS_TAILSCALE=true
-    else
-        # shellcheck disable=SC2034
-        HAS_TAILSCALE=false
-    fi
+    HAS_TAILSCALE=false
+    pocket_capability_has tailscale && HAS_TAILSCALE=true
 
-    if command -v jq >/dev/null 2>&1; then
-        # shellcheck disable=SC2034
-        HAS_JQ=true
-    else
-        # shellcheck disable=SC2034
-        HAS_JQ=false
-    fi
+    HAS_SSH=false
+    pocket_capability_has ssh && HAS_SSH=true
 
-    if is_ish; then
-        # shellcheck disable=SC2034
+    HAS_SCP=false
+    pocket_capability_has scp && HAS_SCP=true
+
+    HAS_JQ=false
+    pocket_capability_has jq && HAS_JQ=true
+
+    HAS_FZF=false
+    pocket_capability_has fzf && HAS_FZF=true
+
+    HAS_RG=false
+    pocket_capability_has rg && HAS_RG=true
+
+    HAS_GIT=false
+    pocket_capability_has git && HAS_GIT=true
+
+    HAS_GO=false
+    pocket_capability_has go && HAS_GO=true
+
+    IS_ISH=false
+    if command -v is_ish >/dev/null 2>&1 && is_ish; then
         IS_ISH=true
-    else
-        # shellcheck disable=SC2034
-        IS_ISH=false
+    fi
+}
+
+pocket_capabilities_json() {
+    COLS="${COLUMNS:-80}"
+    ROWS="${LINES:-24}"
+    pocket_detect_capabilities
+
+    LAYOUT=plain
+    if [ "${HAS_TTY}" = true ]; then
+        if [ "${COLS}" -ge 92 ] 2>/dev/null; then
+            LAYOUT=split
+        elif [ "${COLS}" -ge 60 ] 2>/dev/null; then
+            LAYOUT=stack
+        else
+            LAYOUT=compact
+        fi
     fi
 
-    return 0
+    printf '{"schema_version":1,"terminal":{"cols":%s,"rows":%s,"tui_layout":"%s"},"capabilities":{"has_tty":%s,"has_tmux":%s,"has_tailscale":%s,"has_ssh":%s,"has_scp":%s,"has_jq":%s,"has_fzf":%s,"has_rg":%s,"has_git":%s,"has_go":%s}}\n' \
+        "${COLS}" "${ROWS}" "${LAYOUT}" "${HAS_TTY}" "${HAS_TMUX}" "${HAS_TAILSCALE}" "${HAS_SSH}" "${HAS_SCP}" "${HAS_JQ}" "${HAS_FZF}" "${HAS_RG}" "${HAS_GIT}" "${HAS_GO}"
 }
