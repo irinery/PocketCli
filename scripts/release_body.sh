@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# shellcheck disable=SC2016
 
 set -eu
 
@@ -27,7 +28,8 @@ cat <<EOF
 ### Install
 
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${TAG}/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/${TAG}/bootstrap.sh -o bootstrap.sh
+sh bootstrap.sh
 \`\`\`
 
 ### Verify checksum (recommended)
