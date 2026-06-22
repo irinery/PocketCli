@@ -29,6 +29,14 @@ go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
 POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 ```
 
+Para reproduzir o bloco paralelo usado pelo GitHub Actions (`go vet`, regressões de menu e regressões shell), rode:
+
+```sh
+POCKETCLI_CI_PROFILE=macos sh scripts/ci/run_static_shell_gates.sh
+```
+
+Pré-requisitos: toolchain Go, shell POSIX e os mesmos comandos auxiliares exigidos pelas suítes shell. Variáveis opcionais: `POCKETCLI_CI_PROFILE`, `POCKETCLI_TEST_EXCLUDES` e `POCKETCLI_CI_SUMMARY_FILE`.
+
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
 
 Os testes da skill layer (`test_skill_layer_*.sh`) também exigem `python3`; o job Alpine instala essa dependência explicitamente antes da suíte.
