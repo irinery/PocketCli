@@ -71,12 +71,109 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 | `pocket-update` | Atualiza o PocketCli preservando diferenças locais relevantes |
 | `pocket ask [--mode ...] <prompt...>` | Executa o fluxo completo de contexto, memória, roteamento e backend |
 | `pocket recall [--project NOME] [--host HOST] <query...>` | Busca memórias relevantes em `global`, projeto Git atual e host opcional |
-| `pocket context` | Exibe o `TaskContext` coletado sem chamar backend |
+| `pocket context [--json]` | Exibe ou serializa o contexto coletado sem chamar backend |
 | `pocket memory save [id]` | Salva a interação recente ou revalida memória existente |
 | `pocket memory discard <id>` | Reduz confidence de uma memória sem apagá-la |
 | `pocket memory clean [--dry-run\|--force]` | Lista candidatos à remoção ou executa limpeza manual com confirmação por entrada |
+| `pocket capabilities [--json]` | Detecta modo efetivo, TTY, layout TUI e dependências disponíveis |
+| `pocket actions [--json]` | Resolve ações disponíveis para menu/TUI com base nas capacidades locais |
+| `pocket ledger search [--json]` | Busca eventos operacionais locais por sessão, host e janela de tempo |
+| `pocket ledger rebuild-index` | Reconstrói o índice local de sessões do ledger |
+| `pocket insights list [--json]` | Mostra insights operacionais calculados a partir de capabilities e ledger |
+| `pocket insights explain <id>` | Explica um insight específico com evidências e ação recomendada |
+| `pocket hosts [--json]` | Lista hosts conhecidos em modo TUI ou inventário JSON |
+| `pocket ssh <host>` | Abre sessão SSH interativa |
 | `pocket exec [--json] [--timeout N] [--requested-by human\|llm_plan] [--session-id ID] [--approve] <host> <command...>` | Executa comando remoto via SSH/Tailscale SSH com allowlist, blocklist, timeout, truncamento e auditoria JSONL |
+| `pocket exec --prepare <host> <command...>` | Cria envelope de execução para comando que precisa de aprovação |
+| `pocket approve <envelope_id>` | Emite token temporário para um envelope |
+| `pocket fleet plan --selector <selector> -- <command...>` | Cria plano de execução em múltiplos hosts |
+| `pocket fleet exec --plan-id <id>` | Executa plano fleet salvo, validando token quando necessário |
+| `pocket doctor [--json]` | Roda checks locais do runtime |
+| `pocket eval insights --fixtures <dir>` | Valida fixtures de insights |
 | `scripts/skills/skill_endpoint.sh [request.json]` | Endpoint local para `skill_request` do PocketWiki, com schema, guard rails, dispatcher Ansible e audit log JSONL |
+
+---
+
+## Runtime operacional
+
+O PocketCli agora mantém um runtime local leve, sem depender do PocketWiki ou de middleware externo para funcionar:
+
+- capabilities cache em `~/.local/share/pocketcli/capabilities.json`
+- ledger JSONL em `~/.local/share/pocketcli/ledger/events/`
+- envelopes em `~/.local/share/pocketcli/envelopes/`
+- approvals temporários em `~/.local/share/pocketcli/approvals/`
+- planos fleet em `~/.local/share/pocketcli/fleet/plans/`
+
+Isso permite rodar o PocketCli sozinho no iSH/iPad, mas também deixa uma base limpa para compor com PocketWiki e MiddlewareAuth depois.
+
+---
+
+## Execução segura por envelope
+
+Comando simples e read-only roda direto:
+
+```bash
+pocket exec prod-api uptime
+pocket exec homelab df -h
+```
+
+Comando com risco operacional cria um envelope antes de executar:
+
+```bash
+pocket exec --prepare prod-api sudo systemctl restart nginx
+```
+
+O JSON retornado contém `envelope_id`, host, comando, decisão de safety e os próximos comandos sugeridos. Depois:
+
+```bash
+pocket approve <envelope_id>
+pocket exec --envelope-id <envelope_id> --approval-token <token>
+```
+
+Quando `--envelope-id` é usado, o PocketCli executa o host e comando salvos no envelope. Ele não aceita host/comando extra nesse modo, justamente para evitar aprovar uma coisa e executar outra.
+
+---
+
+## Fleet
+
+Fleet usa o mesmo modelo de safety do `exec`, mas aplicado a vários hosts:
+
+```bash
+# todos os hosts conhecidos
+pocket fleet plan --selector all -- uptime
+
+# host específico
+pocket fleet plan --selector host:prod-api -- df -h
+
+# por origem/tag do inventário
+pocket fleet plan --selector tag:saved -- hostname
+```
+
+Se o plano exigir aprovação, o JSON do plano traz `requires_approval=true` e `envelope_id`:
+
+```bash
+pocket approve <envelope_id>
+pocket fleet exec --plan-id <plan_id> --approval-token <token>
+```
+
+Para comandos seguros, dá para executar direto:
+
+```bash
+pocket fleet exec --selector all -- uptime
+```
+
+---
+
+## Possibilidades práticas
+
+Alguns usos que ficam possíveis com o runtime novo:
+
+- usar `pocket capabilities --json` para a TUI esconder ações indisponíveis no iSH;
+- usar `pocket actions --json` como registry declarativo para menu, atalhos e futuras integrações;
+- usar `pocket ledger search --host-id <host>` para investigar falhas recentes sem depender de backend;
+- usar `pocket insights list` para detectar ausência de SSH/Tailscale, fallback de backend ou host instável;
+- usar `pocket ask --explain-context` para debugar o contexto antes de gastar chamada em LLM;
+- usar `pocket fleet plan` para revisar impacto antes de rodar comando em várias máquinas.
 
 ---
 
@@ -174,12 +271,17 @@ pocket resume
 
 # Ver máquinas disponíveis
 pocket-radar
+pocket hosts --json
 
 # Executar o fluxo completo de pergunta com fallback automático
 pocket ask "Persistir decisões do projeto em jsonl por escopo"
 
+# Ver o contexto compilado que seria enviado ao backend, sem chamar LLM
+pocket ask --explain-context "por que esse host caiu?"
+
 # Inspecionar o contexto bruto coletado antes de chamar qualquer backend
 pocket context
+pocket context --json
 
 # Recuperar memórias relevantes para a query atual
 pocket recall "ssh timeout"
@@ -190,6 +292,48 @@ pocket memory save
 # Inspecionar ou executar limpeza manual das memórias candidatas
 pocket memory clean --dry-run
 pocket memory clean --force
+
+# Detectar capacidades e modo efetivo do runtime
+pocket capabilities
+pocket capabilities --json
+
+# Ver ações que a TUI/menu pode oferecer neste ambiente
+pocket actions
+pocket actions --include-disabled --json
+
+# Rodar checks locais
+pocket doctor
+pocket doctor --json
+
+# Ver insights derivados do histórico local
+pocket insights list
+pocket insights list --scope active --limit 5 --json
+
+# Consultar o ledger operacional
+pocket ledger search --since "$(date +%F)" --limit 20
+pocket ledger search --host-id prod-api --json
+
+# Executar comando read-only direto via SSH
+pocket exec prod-api uptime
+
+# Preparar execução que exige aprovação
+pocket exec --prepare prod-api sudo systemctl restart nginx
+
+# Aprovar o envelope retornado pelo prepare
+pocket approve <envelope_id>
+
+# Executar exatamente o comando salvo no envelope aprovado
+pocket exec --envelope-id <envelope_id> --approval-token <token>
+
+# Planejar execução em frota
+pocket fleet plan --selector all --max-parallel 4 -- uptime
+
+# Executar plano salvo
+pocket fleet exec --plan-id <plan_id>
+
+# Para plano fleet que exige aprovação
+pocket approve <envelope_id>
+pocket fleet exec --plan-id <plan_id> --approval-token <token>
 
 # Atualizar
 pocket-update
@@ -328,7 +472,8 @@ Isso cobre layout responsivo do menu shell, diff incremental das linhas navegáv
 
 Plano detalhado por fases: `docs/implementation-plan.md`.
 
-- [ ] `Fleet Mode` — `pocket connect server1`, `pocket connect server2`
+- [x] `Fleet Mode` básico — `fleet plan`, `fleet exec`, selectors e approvals
+- [ ] `Fleet Mode` avançado — output preview, retry policy e ações TUI por lote
 - [ ] Dashboard TUI com logs, git e deploy
 - [ ] Deploy automático via git hook
 

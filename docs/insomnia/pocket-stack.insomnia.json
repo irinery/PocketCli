@@ -1,0 +1,462 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-06-19T00:00:00.000Z",
+  "__export_source": "pocket-stack.routes:2026.06.19",
+  "resources": [
+    {
+      "_id": "__WORKSPACE_ID__",
+      "_type": "workspace",
+      "parentId": null,
+      "name": "Pocket Stack — rotas reais",
+      "description": "Coleção executável baseada no código local de PocketWiki, PocketKernel e MiddlewareAuth em 2026-06-19. PocketCli e PocketWiki MCP são integrações não HTTP e estão documentados fora da coleção."
+    },
+    {
+      "_id": "__BASE_ENVIRONMENT_ID__",
+      "_type": "environment",
+      "parentId": "__WORKSPACE_ID__",
+      "name": "Base Environment",
+      "data": {
+        "pocketwiki_base_url": "http://127.0.0.1:8787",
+        "pocketkernel_base_url": "http://127.0.0.1:8080",
+        "middleware_base_url": "http://127.0.0.1:18787",
+        "lmstudio_base_url": "http://127.0.0.1:1234",
+        "middleware_client_token": "",
+        "pocketkernel_bearer_token": "",
+        "lmstudio_api_key": "",
+        "project_id": "acme",
+        "profile_id": "default",
+        "login_session_id": "",
+        "oauth_state": "",
+        "oauth_code": "",
+        "model_id": "local-model",
+        "user_id": "insomnia"
+      }
+    },
+    {
+      "_id": "__FOLDER_1__",
+      "_type": "request_group",
+      "parentId": "__WORKSPACE_ID__",
+      "name": "PocketWiki :8787",
+      "description": "API pública e proxies do servidor Node e do servidor embutido no app macOS.",
+      "environment": {}
+    },
+    {
+      "_id": "__FOLDER_2__",
+      "_type": "request_group",
+      "parentId": "__WORKSPACE_ID__",
+      "name": "PocketKernel :8080",
+      "description": "Única rota HTTP do Kernel. Authorization é opcional, salvo quando o processo usa -require-auth.",
+      "environment": {}
+    },
+    {
+      "_id": "__FOLDER_3__",
+      "_type": "request_group",
+      "parentId": "__WORKSPACE_ID__",
+      "name": "MiddlewareAuth :18787",
+      "description": "Health público; demais rotas de projeto usam MIDDLEWARE_CLIENT_TOKEN via Bearer.",
+      "environment": {}
+    },
+    {
+      "_id": "__FOLDER_4__",
+      "_type": "request_group",
+      "parentId": "__WORKSPACE_ID__",
+      "name": "Dependência LM Studio :1234",
+      "description": "Diagnóstico direto do provider OpenAI-compatible chamado por PocketKernel e MiddlewareAuth. Não pertence aos quatro projetos.",
+      "environment": {}
+    },
+    {
+      "_id": "__REQUEST_1__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Configuração pública",
+      "description": "Relê configuração e disponibilidade da wiki. Não expõe MIDDLEWARE_CLIENT_TOKEN nem API key.",
+      "method": "GET",
+      "url": "{{ pocketwiki_base_url }}/api/config",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "application/json", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_2__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "URLs publicadas",
+      "description": "Lista URLs local, mDNS, LAN e Tailscale calculadas pelo runtime.",
+      "method": "GET",
+      "url": "{{ pocketwiki_base_url }}/api/routes",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "application/json", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_3__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Arquivos da wiki",
+      "description": "Lista toda a raiz de referência sem paginação. Pode retornar conteúdo Markdown/Excalidraw e gerar resposta grande.",
+      "method": "GET",
+      "url": "{{ pocketwiki_base_url }}/api/wiki/files",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "application/json", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_4__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Prompt de revisão",
+      "description": "Retorna prompts/wiki-review.md como text/markdown.",
+      "method": "GET",
+      "url": "{{ pocketwiki_base_url }}/api/prompts/wiki-review",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "text/markdown", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_5__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Proxy → PocketKernel",
+      "description": "Repassa corpo e resposta para POST /v1/kernel. Não adiciona Authorization ao upstream.",
+      "method": "POST",
+      "url": "{{ pocketwiki_base_url }}/api/kernel/query",
+      "parameters": [],
+      "headers": [
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"text\": \"Qual é o status documentado do deploy?\",\n  \"channel\": \"api\",\n  \"app_id\": \"pocketwiki\",\n  \"user_id\": \"{{ user_id }}\",\n  \"desired_profile\": \"wiki\",\n  \"model_id\": \"{{ model_id }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_6__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Proxy → registrar LM Studio",
+      "description": "PocketWiki usa o token interno do próprio processo e encaminha a API key para o MiddlewareAuth.",
+      "method": "POST",
+      "url": "{{ pocketwiki_base_url }}/api/middleware/lmstudio/api-key",
+      "parameters": [],
+      "headers": [
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"projectId\": \"{{ project_id }}\",\n  \"profileId\": \"{{ profile_id }}\",\n  \"baseUrl\": \"{{ lmstudio_base_url }}\",\n  \"apiKey\": \"{{ lmstudio_api_key }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_7__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Proxy → status LM Studio",
+      "description": "A entrada PocketWiki é POST; o upstream MiddlewareAuth recebe GET.",
+      "method": "POST",
+      "url": "{{ pocketwiki_base_url }}/api/middleware/lmstudio/status",
+      "parameters": [],
+      "headers": [
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"projectId\": \"{{ project_id }}\",\n  \"profileId\": \"{{ profile_id }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_8__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Proxy → login OpenAI",
+      "description": "Inicia device_code por padrão através do MiddlewareAuth.",
+      "method": "POST",
+      "url": "{{ pocketwiki_base_url }}/api/middleware/openai/login",
+      "parameters": [],
+      "headers": [
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"projectId\": \"{{ project_id }}\",\n  \"profileId\": \"{{ profile_id }}\",\n  \"mode\": \"device_code\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_9__",
+      "_type": "request",
+      "parentId": "__FOLDER_1__",
+      "name": "Proxy → status OpenAI",
+      "description": "A entrada PocketWiki é POST; o upstream MiddlewareAuth recebe GET.",
+      "method": "POST",
+      "url": "{{ pocketwiki_base_url }}/api/middleware/openai/status",
+      "parameters": [],
+      "headers": [
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"projectId\": \"{{ project_id }}\",\n  \"profileId\": \"{{ profile_id }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_10__",
+      "_type": "request",
+      "parentId": "__FOLDER_2__",
+      "name": "Query governada",
+      "description": "Única rota HTTP. O header Authorization fica desativado por padrão; habilite apenas se o Kernel foi iniciado com -require-auth.",
+      "method": "POST",
+      "url": "{{ pocketkernel_base_url }}/v1/kernel",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ pocketkernel_bearer_token }}", "disabled": true},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"text\": \"Procure evidência sobre Tailscale na wiki.\",\n  \"channel\": \"api\",\n  \"app_id\": \"external\",\n  \"user_id\": \"{{ user_id }}\",\n  \"desired_profile\": \"wiki\",\n  \"model_id\": \"{{ model_id }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_11__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "Health",
+      "description": "Público. Confirma somente que o handler HTTP responde; não testa stores ou providers.",
+      "method": "GET",
+      "url": "{{ middleware_base_url }}/healthz",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "application/json", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_12__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — iniciar device code",
+      "description": "Abra verificationUrl, informe userCode e copie loginSessionId para o ambiente.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/openai/login",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"profileId\": \"{{ profile_id }}\",\n  \"mode\": \"device_code\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_13__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — iniciar OAuth PKCE",
+      "description": "Abra authUrl. O navegador retorna ao callback local; loginSessionId pode ser consultado em seguida.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/openai/login",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"profileId\": \"{{ profile_id }}\",\n  \"mode\": \"oauth\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_14__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — status da sessão de login",
+      "description": "Use o loginSessionId devolvido pelo início do login. Estados: pending, completed, failed ou expired.",
+      "method": "GET",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/openai/login-sessions/{{ login_session_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_15__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — status da credencial",
+      "description": "Retorna authenticated=false com HTTP 200 quando o perfil não existe.",
+      "method": "GET",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/openai/status?profileId={{ profile_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_16__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — refresh",
+      "description": "Resolve uma credencial com pelo menos 1 hora de TTL e renova se necessário.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/openai/refresh?profileId={{ profile_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_17__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "OpenAI — callback OAuth (diagnóstico)",
+      "description": "Normalmente chamado pelo navegador/authorization server. Não usa Bearer. Só funciona com state e code válidos da sessão OAuth.",
+      "method": "GET",
+      "url": "{{ middleware_base_url }}/v1/auth/openai/callback?state={{ oauth_state }}&code={{ oauth_code }}",
+      "parameters": [],
+      "headers": [{"name": "Accept", "value": "application/json", "disabled": false}],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_18__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "LM Studio — registrar API key",
+      "description": "Valida GET /v1/models no provider antes de salvar a credencial criptografada.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/lmstudio/api-key",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"profileId\": \"{{ profile_id }}\",\n  \"baseUrl\": \"{{ lmstudio_base_url }}\",\n  \"apiKey\": \"{{ lmstudio_api_key }}\"\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_19__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "LM Studio — status",
+      "description": "Retorna authenticated=false com HTTP 200 quando o perfil não existe.",
+      "method": "GET",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/auth/lmstudio/status?profileId={{ profile_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_20__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "Codex — responses",
+      "description": "Usa OAuth OpenAI salvo e agrega o SSE upstream em events/outputText JSON.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/codex/responses?profileId={{ profile_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"model\": \"gpt-5.5\",\n  \"intelligence\": \"thinking\",\n  \"input\": [\n    {\"role\": \"user\", \"content\": \"Responda apenas ok.\"}\n  ],\n  \"stream\": false,\n  \"store\": false,\n  \"reasoning\": {\"effort\": \"medium\", \"summary\": \"auto\"}\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_21__",
+      "_type": "request",
+      "parentId": "__FOLDER_3__",
+      "name": "LM Studio — responses",
+      "description": "Usa a credencial LM Studio salva, converte input para Chat Completions e normaliza a resposta.",
+      "method": "POST",
+      "url": "{{ middleware_base_url }}/v1/projects/{{ project_id }}/lmstudio/responses?profileId={{ profile_id }}",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ middleware_client_token }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"model\": \"{{ model_id }}\",\n  \"instructions\": \"Seja direto.\",\n  \"input\": [\n    {\"role\": \"user\", \"content\": \"Responda apenas ok.\"}\n  ],\n  \"stream\": false,\n  \"store\": false\n}"
+      }
+    },
+    {
+      "_id": "__REQUEST_22__",
+      "_type": "request",
+      "parentId": "__FOLDER_4__",
+      "name": "Listar modelos",
+      "description": "Usado pelo PocketKernel para autodetecção e pelo MiddlewareAuth para validar a API key.",
+      "method": "GET",
+      "url": "{{ lmstudio_base_url }}/v1/models",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ lmstudio_api_key }}", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "__REQUEST_23__",
+      "_type": "request",
+      "parentId": "__FOLDER_4__",
+      "name": "Chat Completions",
+      "description": "Rota upstream chamada diretamente pelo PocketKernel e pelo adapter LM Studio do MiddlewareAuth.",
+      "method": "POST",
+      "url": "{{ lmstudio_base_url }}/v1/chat/completions",
+      "parameters": [],
+      "headers": [
+        {"name": "Authorization", "value": "Bearer {{ lmstudio_api_key }}", "disabled": false},
+        {"name": "Content-Type", "value": "application/json", "disabled": false},
+        {"name": "Accept", "value": "application/json", "disabled": false}
+      ],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"model\": \"{{ model_id }}\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Responda apenas ok.\"}\n  ],\n  \"stream\": false\n}"
+      }
+    }
+  ]
+}

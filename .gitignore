@@ -1,1 +1,39 @@
 .DS_Store
+
+# Local project folders
+skills/
+
+# Ansible local state and secrets
+ansible/inventory.ini
+ansible/*.retry
+ansible/.vault-password*
+ansible/**/.vault-password*
+
+# Environment and local secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+.envrc
+.direnv/
+
+# Private keys and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+authorized_keys
+known_hosts
+
+# Local runtime artifacts
+*.log
+tmp/
+.cache/
+
+# Generated visual test reports
+scripts/testing/visual_integrity/reports/*
+!scripts/testing/visual_integrity/reports/.gitignore
