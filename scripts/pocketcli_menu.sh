@@ -342,9 +342,9 @@ _load_mesh_counts() {
         return
     fi
 
-    if command -v tailscale >/dev/null 2>&1; then
+    if has_tailscale_cli; then
         if command -v jq >/dev/null 2>&1; then
-            TS_STATUS=$(with_timeout 3 tailscale status --json 2>/dev/null || true)
+            TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
             if [ -n "${TS_STATUS}" ]; then
                 MESH_TOTAL=$(printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || true)
                 MESH_ONLINE=$(printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || true)
@@ -879,27 +879,11 @@ _run_action() {
                 sh -c "printf '\n  Conectando em %s...\n\n' \"\$1\"; exec ssh \"\$1\"" sh "${HOST}"
         ;;
         radar-run)
-            if ! command -v tailscale >/dev/null 2>&1; then
-                _leave_tui_for_action
-                _render_header_screen
-                printf '\n  Tailscale não instalado. Rode: pocket tailscale-setup\n'
-                LAST_MESSAGE='Radar indisponível sem tailscale.'
-                _pause_for_user '\n  Pressione Enter para voltar...'
-                _enter_tui || return 1
-            elif ! is_tailscale_daemon_running 2>/dev/null && ! is_ish; then
-                _leave_tui_for_action
-                _render_header_screen
-                printf '\n  tailscaled não está rodando. Rode: pocket tailscale-start\n'
-                LAST_MESSAGE='Inicie o daemon para usar o radar.'
-                _pause_for_user '\n  Pressione Enter para voltar...'
-                _enter_tui || return 1
-            else
-                _run_with_pause \
-                    'Radar executado.' \
-                    'Radar indisponível (exit %s).' \
-                    '\n  Pressione Enter para voltar...' \
-                    sh "${HOME}/.pocketcli/radar.sh"
-            fi
+            _run_with_pause \
+                'Radar executado.' \
+                'Radar indisponível (exit %s).' \
+                '\n  Pressione Enter para voltar...' \
+                sh "${HOME}/.pocketcli/radar.sh"
         ;;
         radar)
             CURRENT_SCREEN="radar"

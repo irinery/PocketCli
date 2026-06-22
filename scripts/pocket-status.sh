@@ -7,6 +7,9 @@
 
 set -eu
 
+POCKETCLI_DIR="${HOME}/.pocketcli"
+. "${POCKETCLI_DIR}/lib/common.sh"
+
 LOG_FILE="${POCKETCLI_DEBUG_LOG:-/tmp/pocketcli-debug.log}"
 log_debug() {
     TS=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf 'unknown-time')
@@ -83,13 +86,15 @@ else
     CONTAINERS_INFO="docker not installed"
 fi
 
-# Tailscale IP (optional)
-if command -v tailscale >/dev/null 2>&1; then
-    log_debug "collecting tailscale ip"
-    TS_IP=$(tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.')
-    TS_INFO="${TS_IP:-not connected}"
+# Tailscale mesh (optional; supports app-managed macOS/Windows VPNs)
+TS_IP=$(get_tailscale_ip 2>/dev/null || true)
+if is_tailscale_mesh_operational; then
+    log_debug "collecting tailscale ip from active mesh"
+    TS_INFO="${TS_IP:-connected (system VPN)}"
+elif has_tailscale_cli; then
+    TS_INFO="installed, not connected"
 else
-    TS_INFO="tailscale not installed"
+    TS_INFO="mesh not detected"
 fi
 
 # PocketCli version

@@ -34,6 +34,7 @@ chmod +x "$MOCKBIN/apk" "$MOCKBIN/ping" "$MOCKBIN/ssh"
 OUTPUT=$(env \
   HOME="$HOME_DIR" \
   PATH="$MOCKBIN:/usr/bin:/bin" \
+  POCKETCLI_TAILSCALE_CLI="$WORKDIR/missing-tailscale" \
   POCKETCLI_TAILSCALE_FALLBACK_TARGETS="100.113.114.52" \
   sh "$HOME_DIR/.pocketcli/tailscale_daemon.sh" setup)
 

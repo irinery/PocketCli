@@ -111,6 +111,29 @@ func TestT0204ResolveHostOfflineReturnsExit1(t *testing.T) {
 	assertExitError(t, err, ExitCodeFailure, "pocket: host 'devcenter' está offline (Tailscale)")
 }
 
+func TestResolveHostUsesNativeTailscaleCLIOutsidePath(t *testing.T) {
+	cli := filepath.Join(t.TempDir(), "tailscale.exe")
+	if err := os.WriteFile(cli, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("POCKETCLI_TAILSCALE_CLI", cli)
+
+	runner := newFakeRunner()
+	runner.handle(cli, []string{"status", "--json"}, `{"Peer":{"peer1":{"HostName":"devcenter","Online":true,"OS":"windows","TailscaleIPs":["100.72.0.10"]}}}`, nil)
+
+	orchestrator := New()
+	orchestrator.RunCommand = runner.run
+	orchestrator.LookupPath = func(string) (string, error) { return "", errors.New("missing") }
+
+	info, err := orchestrator.resolveHost(context.Background(), "devcenter")
+	if err != nil {
+		t.Fatalf("resolveHost returned error: %v", err)
+	}
+	if info.IP != "100.72.0.10" || !info.Online {
+		t.Fatalf("unexpected host info: %#v", info)
+	}
+}
+
 func TestT0205ConnectApprovalDeniedPrintsCancellation(t *testing.T) {
 	out := &bytes.Buffer{}
 	runner := newFakeRunner()
