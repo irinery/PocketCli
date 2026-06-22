@@ -18,6 +18,8 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
 
+Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
