@@ -165,7 +165,7 @@ jobs:
 
     steps:
       - name: Install base dependencies
-        run: apk add --no-cache bash coreutils git go util-linux
+        run: apk add --no-cache bash coreutils git go python3 util-linux
 
       - name: Checkout
         uses: actions/checkout@v4
