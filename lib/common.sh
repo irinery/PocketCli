@@ -249,7 +249,8 @@ get_tailscale_ip() {
         return 0
     fi
 
-    _tailscale_interface_ip
+    _tailscale_interface_ip 2>/dev/null || true
+    return 0
 }
 
 is_tailscale_backend_responding() {
