@@ -1,0 +1,23 @@
+---
+- name: PocketCli disk check
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Collect root filesystem usage
+      ansible.builtin.command: df -Pk /
+      changed_when: false
+      register: disk_df
+
+    - name: Build disk result
+      ansible.builtin.set_fact:
+        result:
+          mount_point: "{{ disk_df.stdout_lines[1].split()[5] }}"
+          used_percent: "{{ disk_df.stdout_lines[1].split()[4].replace('%', '') | int }}"
+          available_gb: "{{ ((disk_df.stdout_lines[1].split()[3] | int) / 1048576) | round(2) }}"
+          total_gb: "{{ ((disk_df.stdout_lines[1].split()[1] | int) / 1048576) | round(2) }}"
+          threshold_exceeded: "{{ (disk_df.stdout_lines[1].split()[4].replace('%', '') | int) > 80 }}"
+          changed: false
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg: "{{ result | to_json }}"

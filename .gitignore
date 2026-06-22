@@ -1,8 +1,13 @@
 .DS_Store
 
 # Local project folders
-ansible/
 skills/
+
+# Ansible local state and secrets
+ansible/inventory.ini
+ansible/*.retry
+ansible/.vault-password*
+ansible/**/.vault-password*
 
 # Environment and local secrets
 .env
