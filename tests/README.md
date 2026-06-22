@@ -36,6 +36,12 @@ Os testes da skill layer (`test_skill_layer_*.sh`) também exigem `python3`; o j
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar a detecção cross-platform do Tailscale, rode `sh tests/test_tailscale_runtime_detection.sh` e `sh tests/test_tailscale_setup_fallback.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep`, `env` e `chmod`. Os testes usam uma CLI nativa mockada fora do `PATH`, uma interface VPN mockada e não instalam nem alteram o Tailscale real. Variáveis de ambiente: nenhuma obrigatória; `POCKETCLI_TAILSCALE_CLI` é configurada internamente para validar o override de descoberta.
+
+Para validar a mesma descoberta nos fluxos Go de capabilities, status e connect, rode `go test ./internal/tailscale ./internal/capabilities ./internal/connect`.
+Pré-requisitos: toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória; os testes isolam `HOME`, `PATH` e `POCKETCLI_TAILSCALE_CLI` quando necessário.
+
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 

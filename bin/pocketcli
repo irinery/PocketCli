@@ -1,6 +1,7 @@
 #! /usr/bin/env sh
 
-BASE="$HOME/.pocketcli/repo"
+BASE="${POCKETCLI_DIR:-$HOME/.pocketcli}"
+. "${BASE}/lib/common.sh"
 
 menu() {
 
@@ -26,7 +27,7 @@ case "$opt" in
 
 1)
 
-HOST=$(tailscale status --json | jq -r '.Peer[].HostName' | fzf)
+HOST=$(list_known_hosts | fzf)
 
 if [ -n "$HOST" ]
 then
