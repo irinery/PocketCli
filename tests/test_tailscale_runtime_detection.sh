@@ -41,7 +41,9 @@ case "${1:-} ${2:-}" in
             "${POCKETCLI_TEST_BACKEND_STATE:-Running}"
         ;;
     'ip -4')
-        printf '%s\n' '100.72.10.20'
+        if [ "${POCKETCLI_TEST_NO_IP:-0}" != '1' ]; then
+            printf '%s\n' '100.72.10.20'
+        fi
         ;;
     'status ')
         printf '%s\n' '100.82.20.30 server-a user@ linux active; direct'
@@ -69,7 +71,13 @@ printf '9: tailscale0: <POINTOPOINT,UP> mtu 1280\n'
 printf '    inet %s/32 scope global tailscale0\n' "${POCKETCLI_TEST_INTERFACE_IP:-192.0.2.10}"
 EOS
 
-chmod +x "${NATIVE_DIR}/tailscale.exe" "${MOCKBIN}/pgrep" "${MOCKBIN}/apk" "${MOCKBIN}/ip"
+cat > "${MOCKBIN}/sleep" <<'EOS'
+#!/usr/bin/env sh
+exit 0
+EOS
+
+chmod +x "${NATIVE_DIR}/tailscale.exe" "${MOCKBIN}/pgrep" "${MOCKBIN}/apk" \
+    "${MOCKBIN}/ip" "${MOCKBIN}/sleep"
 
 OUTPUT=$(env \
     HOME="${HOME_DIR}" \
@@ -147,5 +155,17 @@ if env \
     "${HOME_DIR}/.pocketcli/lib/common.sh"; then
     fail 'stopped backend with stale Tailscale IP was accepted as operational'
 fi
+
+AUTH_OUTPUT=$(env \
+    HOME="${HOME_DIR}" \
+    PATH="${MOCKBIN}:/usr/bin:/bin" \
+    POCKETCLI_TEST_LOG="${LOG_FILE}" \
+    POCKETCLI_TAILSCALE_CLI="${NATIVE_DIR}/tailscale.exe" \
+    POCKETCLI_TEST_BACKEND_STATE='NeedsLogin' \
+    POCKETCLI_TEST_NO_IP='1' \
+    POCKETCLI_TEST_INTERFACE_IP='192.0.2.10' \
+    sh "${HOME_DIR}/.pocketcli/scripts/tailscale_daemon.sh" auth)
+assert_contains "${AUTH_OUTPUT}" 'Could not authenticate. Run: pocket tailscale-auth' \
+    'authentication exited under set -e when no Tailscale IP was assigned'
 
 printf 'PASS tailscale runtime detects native and OS-managed backends without redundant install\n'
