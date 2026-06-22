@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"pocketcli/internal/remoteaccess"
+	"pocketcli/internal/safety"
 )
 
 func withArgs(t *testing.T, args []string) {
@@ -83,7 +85,7 @@ func TestSSHCommand_PropagatesError(t *testing.T) {
 	}
 }
 
-func TestExecCommand_JoinsCommandAndCallsExecSSH(t *testing.T) {
+func TestExecCommand_JoinsCommandAndCallsRemoteExecutor(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	orig := newRemoteExecutor
@@ -106,6 +108,82 @@ func TestExecCommand_JoinsCommandAndCallsExecSSH(t *testing.T) {
 	}
 	if gotHost != "prod-api" || gotCmd != "uname -a" {
 		t.Fatalf("unexpected call: host=%q cmd=%q", gotHost, gotCmd)
+	}
+}
+
+func TestExecCommandPrepareCreatesEnvelopeWithoutCallingRemoteExecutor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	orig := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = orig })
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		t.Fatal("newRemoteExecutor should not be called during prepare")
+		return nil
+	}
+
+	output, err := captureCommandOutput(t, newExecCommand(), []string{"--prepare", "prod-api", "sudo", "systemctl", "restart", "nginx"})
+	if err != nil {
+		t.Fatalf("RunE returned error: %v", err)
+	}
+
+	var result execEnvelopeResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if result.EnvelopeID == "" || result.Host != "prod-api" || !result.ApprovalRequired {
+		t.Fatalf("unexpected prepare result: %#v", result)
+	}
+	envelope, err := safety.LoadEnvelope(result.EnvelopeID)
+	if err != nil {
+		t.Fatalf("LoadEnvelope returned error: %v", err)
+	}
+	if envelope.Request.Host != "prod-api" || strings.Join(envelope.Request.Command, " ") != "sudo systemctl restart nginx" {
+		t.Fatalf("unexpected envelope: %#v", envelope)
+	}
+}
+
+func TestExecCommandRunsPreparedEnvelopeWithApproval(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	envelope, err := createExecEnvelope("prod-api", []string{"sudo", "systemctl", "restart", "nginx"})
+	if err != nil {
+		t.Fatalf("createExecEnvelope returned error: %v", err)
+	}
+	token, err := safety.Approve(envelope.EnvelopeID, safety.DefaultApprovalTTL, true)
+	if err != nil {
+		t.Fatalf("Approve returned error: %v", err)
+	}
+
+	orig := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = orig })
+
+	var gotHost, gotCmd string
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := testRemoteExecutor()
+		executor.Runner = func(ctx context.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			gotHost = args[len(args)-2]
+			gotCmd = args[len(args)-1]
+			return remoteaccess.RunOutput{ExitCode: 0}, nil
+		}
+		return executor
+	}
+
+	cmd := newExecCommand()
+	if err := cmd.RunE(cmd, []string{"--envelope-id", envelope.EnvelopeID, "--approval-token", token.ApprovalToken}); err != nil {
+		t.Fatalf("RunE returned error: %v", err)
+	}
+	if gotHost != "prod-api" || gotCmd != "sudo systemctl restart nginx" {
+		t.Fatalf("unexpected call: host=%q cmd=%q", gotHost, gotCmd)
+	}
+}
+
+func TestExecCommandRejectsExtraArgsWithEnvelope(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newExecCommand()
+	err := cmd.RunE(cmd, []string{"--envelope-id", "abc123", "prod-api", "uptime"})
+	if err == nil || !strings.Contains(err.Error(), "não passe host/comando junto") {
+		t.Fatalf("expected envelope mutation error, got %v", err)
 	}
 }
 
@@ -134,6 +212,16 @@ func TestParseExecArgsParsesSupportedFlags(t *testing.T) {
 	}
 	if parsed.host != "prod-api" || parsed.command != "systemctl restart nginx" {
 		t.Fatalf("unexpected host/command: %q %q", parsed.host, parsed.command)
+	}
+}
+
+func TestParseApproveArgsAcceptsDurationBeforeEnvelope(t *testing.T) {
+	envelopeID, duration, err := parseApproveArgs([]string{"--duration-seconds", "60", "env-123"})
+	if err != nil {
+		t.Fatalf("parseApproveArgs returned error: %v", err)
+	}
+	if envelopeID != "env-123" || duration != 60 {
+		t.Fatalf("unexpected parsed args: envelope=%q duration=%d", envelopeID, duration)
 	}
 }
 

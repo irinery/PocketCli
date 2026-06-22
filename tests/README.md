@@ -16,6 +16,8 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
@@ -28,6 +30,8 @@ POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 ```
 
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
+
+Os testes da skill layer (`test_skill_layer_*.sh`) também exigem `python3`; o job Alpine instala essa dependência explicitamente antes da suíte.
 
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.

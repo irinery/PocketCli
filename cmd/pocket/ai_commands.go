@@ -2,6 +2,7 @@ package main
 
 import (
 	stdctx "context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"pocketcli/internal/backend"
 	"pocketcli/internal/contextcollector"
+	"pocketcli/internal/contextcompiler"
+	"pocketcli/internal/ledger"
 	"pocketcli/internal/memory"
 	"pocketcli/internal/router"
 	"pocketcli/internal/tools"
@@ -53,6 +56,7 @@ type askCommandOptions struct {
 	SystemPrompt   string
 	Attachments    []string
 	Debug          bool
+	ExplainContext bool
 	Temperature    float64
 	TemperatureSet bool
 }
@@ -61,6 +65,7 @@ type contextCommandOptions struct {
 	Host        string
 	Profile     string
 	Attachments []string
+	Format      string
 }
 
 type commandRuntime struct {
@@ -185,6 +190,25 @@ func runAskCommand(cmd *cobra.Command, args []string, sessionID string) (command
 	taskContext, memoryHits, err := buildTaskContextForRequest(request, store)
 	if err != nil {
 		return commandAudit{}, err
+	}
+
+	if opts.ExplainContext {
+		compiled, err := contextcompiler.Compile(contextcompiler.Request{
+			UserInput:   request.UserInput,
+			Host:        request.Host,
+			Attachments: request.Attachments,
+			TaskContext: taskContext,
+		})
+		if err != nil {
+			return commandAudit{}, err
+		}
+		if err := writeJSON(cmd.OutOrStdout(), compiled); err != nil {
+			return commandAudit{}, err
+		}
+		if _, err := store.RecordAsk(askInput); err != nil {
+			return commandAudit{}, err
+		}
+		return commandAudit{SessionID: request.SessionID, MemoryHit: len(memoryHits) > 0}, nil
 	}
 
 	runtime := newCommandRuntime()
@@ -344,6 +368,23 @@ func runContextCommand(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	compiled, err := contextcompiler.Compile(contextcompiler.Request{
+		Host:        request.Host,
+		Attachments: request.Attachments,
+		TaskContext: taskContext,
+	})
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(opts.Format) == "json" {
+		if err := writeJSON(cmd.OutOrStdout(), compiled); err != nil {
+			return err
+		}
+		appendLedgerEvent(ledgerContextEvent(request.SessionID, compiled))
+		return nil
+	}
+
+	appendLedgerEvent(ledgerContextEvent(request.SessionID, compiled))
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), formatTaskContext(taskContext))
 	return err
 }
@@ -365,6 +406,10 @@ func parseAskCommandArgs(args []string, cwd, sessionID string) (taskRequest, mem
 
 		if arg == "--debug" {
 			opts.Debug = true
+			continue
+		}
+		if arg == "--explain-context" {
+			opts.ExplainContext = true
 			continue
 		}
 		if strings.HasPrefix(arg, "--debug=") {
@@ -411,6 +456,15 @@ func parseAskCommandArgs(args []string, cwd, sessionID string) (taskRequest, mem
 			opts.Attachments = append(opts.Attachments, value)
 		case "--system-prompt":
 			opts.SystemPrompt = value
+		case "--explain-context":
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "1", "true", "yes", "on":
+				opts.ExplainContext = true
+			case "0", "false", "no", "off":
+				opts.ExplainContext = false
+			default:
+				return taskRequest{}, memory.AskInput{}, askCommandOptions{}, fmt.Errorf("flag --explain-context inválida: %s", value)
+			}
 		case "--temperature":
 			temperature, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 			if err != nil {
@@ -578,6 +632,10 @@ func parseContextInput(args []string) (contextCommandOptions, error) {
 
 	for idx := 0; idx < len(args); idx++ {
 		arg := args[idx]
+		if arg == "--json" {
+			opts.Format = "json"
+			continue
+		}
 		if !strings.HasPrefix(arg, "--") {
 			return contextCommandOptions{}, fmt.Errorf("argumento inválido: %s", arg)
 		}
@@ -601,12 +659,39 @@ func parseContextInput(args []string) (contextCommandOptions, error) {
 			opts.Profile = value
 		case "--attachment":
 			opts.Attachments = append(opts.Attachments, value)
+		case "--format":
+			switch strings.TrimSpace(value) {
+			case "json", "text":
+				opts.Format = strings.TrimSpace(value)
+			default:
+				return contextCommandOptions{}, fmt.Errorf("flag --format inválida: %s", value)
+			}
 		default:
 			return contextCommandOptions{}, fmt.Errorf("flag inválida: %s", name)
 		}
 	}
 
 	return opts, nil
+}
+
+func ledgerContextEvent(sessionID string, compiled contextcompiler.CompiledContext) ledger.Event {
+	status := "ok"
+	if compiled.Partial || compiled.Truncated {
+		status = "partial"
+	}
+	data, _ := json.Marshal(map[string]any{
+		"sections":       len(compiled.Sections),
+		"token_estimate": compiled.TokenEstimate,
+		"truncated":      compiled.Truncated,
+		"partial":        compiled.Partial,
+	})
+	return ledger.Event{
+		Type:      ledger.EventContextCollected,
+		SessionID: sessionID,
+		Command:   "context",
+		Status:    status,
+		Payload:   ledger.Payload{Message: string(data)},
+	}
 }
 
 func newContextToolRegistry() *tools.Registry {

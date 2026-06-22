@@ -86,7 +86,8 @@ ci_run_script() {
     TEST_NAME=$(basename "${SCRIPT_PATH}")
     START_TS=$(ci_now_seconds)
 
-    if sh "${SCRIPT_PATH}" >"${LOG_FILE}" 2>&1; then
+    # Testes não podem herdar a stdin usada pelo loop que contém a lista.
+    if sh "${SCRIPT_PATH}" </dev/null >"${LOG_FILE}" 2>&1; then
         STATUS=0
     else
         STATUS=$?

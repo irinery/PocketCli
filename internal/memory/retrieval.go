@@ -197,7 +197,11 @@ func recencyWeight(createdAt string, now time.Time) (float64, error) {
 		daysSince = 0
 	}
 
-	return 1 / math.Log(float64(daysSince)+2), nil
+	weight := 1 / math.Log(float64(daysSince)+2)
+	if weight < 0.5 {
+		return 0.5, nil
+	}
+	return weight, nil
 }
 
 func normalizeQuery(value string) string {
