@@ -35,8 +35,11 @@ pocket_detect_capabilities() {
     HAS_GO=false
     pocket_capability_has go && HAS_GO=true
 
+    # Consumida por scripts que carregam este runtime via source.
+    # shellcheck disable=SC2034
     IS_ISH=false
     if command -v is_ish >/dev/null 2>&1 && is_ish; then
+        # shellcheck disable=SC2034
         IS_ISH=true
     fi
 }
@@ -46,14 +49,14 @@ pocket_capabilities_json() {
     ROWS="${LINES:-24}"
     pocket_detect_capabilities
 
-    LAYOUT=plain
+    LAYOUT='plain'
     if [ "${HAS_TTY}" = true ]; then
         if [ "${COLS}" -ge 92 ] 2>/dev/null; then
-            LAYOUT=split
+            LAYOUT='split'
         elif [ "${COLS}" -ge 60 ] 2>/dev/null; then
-            LAYOUT=stack
+            LAYOUT='stack'
         else
-            LAYOUT=compact
+            LAYOUT='compact'
         fi
     fi
 

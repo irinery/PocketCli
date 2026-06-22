@@ -16,6 +16,8 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
