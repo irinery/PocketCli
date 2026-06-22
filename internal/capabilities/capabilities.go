@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pocketcli/internal/pocketpath"
+	"pocketcli/internal/tailscale"
 )
 
 const (
@@ -85,7 +86,7 @@ func Detect(modeRequested string) (Manifest, error) {
 	caps := CapabilitySet{
 		HasTTY:       stdinIsTTY(),
 		HasTMUX:      commandExists(ctx, "tmux"),
-		HasTailscale: commandExists(ctx, "tailscale"),
+		HasTailscale: tailscaleCLIExists(ctx),
 		HasSSH:       commandExists(ctx, "ssh"),
 		HasSCP:       commandExists(ctx, "scp"),
 		HasJQ:        commandExists(ctx, "jq"),
@@ -244,6 +245,26 @@ func commandExists(ctx context.Context, name string) bool {
 	done := make(chan bool, 1)
 	go func() {
 		_, err := exec.LookPath(name)
+		done <- err == nil
+	}()
+
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case ok := <-done:
+		return ok
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func tailscaleCLIExists(ctx context.Context) bool {
+	done := make(chan bool, 1)
+	go func() {
+		_, err := tailscale.CLIPath(exec.LookPath)
 		done <- err == nil
 	}()
 
