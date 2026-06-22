@@ -3,6 +3,7 @@ package tailscale
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 )
@@ -26,9 +27,15 @@ type Machine struct {
 }
 
 var execCommand = exec.Command
+var findCLI = func() (string, error) { return CLIPath(exec.LookPath) }
 
 func GetStatus() (Status, error) {
-	cmd := execCommand("tailscale", "status", "--json")
+	cli, err := findCLI()
+	if err != nil {
+		return Status{}, fmt.Errorf("tailscale status --json failed: %w", err)
+	}
+	cmd := execCommand(cli, "status", "--json")
+	cmd.Env = append(os.Environ(), "TAILSCALE_BE_CLI=1")
 	out, err := cmd.Output()
 	if err != nil {
 		return Status{}, fmt.Errorf("tailscale status --json failed: %w", err)
