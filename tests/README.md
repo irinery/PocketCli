@@ -18,6 +18,8 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
 
+Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
@@ -28,6 +30,14 @@ go test ./...
 go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
 POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 ```
+
+Para reproduzir o bloco paralelo usado pelo GitHub Actions (`go vet`, regressões de menu e regressões shell), rode:
+
+```sh
+POCKETCLI_CI_PROFILE=macos sh scripts/ci/run_static_shell_gates.sh
+```
+
+Pré-requisitos: toolchain Go, shell POSIX e os mesmos comandos auxiliares exigidos pelas suítes shell. Variáveis opcionais: `POCKETCLI_CI_PROFILE`, `POCKETCLI_TEST_EXCLUDES` e `POCKETCLI_CI_SUMMARY_FILE`.
 
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
 
