@@ -51,7 +51,11 @@ run_pty_command() {
     OUTPUT_FILE="$2"
     COMMAND_STRING="$3"
 
-    rm -f "${OUTPUT_FILE}"
+    # Não remova devices como /dev/null quando o teste roda como root em
+    # containers. Limpe apenas transcripts regulares ou links anteriores.
+    if [ -f "${OUTPUT_FILE}" ] || [ -L "${OUTPUT_FILE}" ]; then
+        rm -f "${OUTPUT_FILE}"
+    fi
     case "$(uname -s 2>/dev/null || printf unknown)" in
         Darwin)
             run_with_timeout "${SECS}" script -q -F "${OUTPUT_FILE}" sh -lc "${COMMAND_STRING}"

@@ -5,6 +5,15 @@ O workflow `.github/workflows/security-gate.yml` executa os scanners em `scripts
 Para validar localmente:
 
 ```sh
+sh scripts/security/run_all_scanners.sh || true
+bash scripts/security/aggregate_results.sh
+```
+
+Os quatro scanners rodam em paralelo, gravam resultados separados em `.security-results/` e são sempre consolidados pelo agregador. O `|| true` permite que a consolidação rode mesmo quando um scanner encontra algo; o resultado final continua bloqueando achados `CRITICAL`/`HIGH` e erros de execução.
+
+Para validar os contratos dos scanners e do agregador:
+
+```sh
 sh tests/test_security_scanners.sh
 ```
 
