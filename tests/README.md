@@ -16,6 +16,10 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
+
+Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
@@ -27,10 +31,26 @@ go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
 POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 ```
 
+Para reproduzir o bloco paralelo usado pelo GitHub Actions (`go vet`, regressões de menu e regressões shell), rode:
+
+```sh
+POCKETCLI_CI_PROFILE=macos sh scripts/ci/run_static_shell_gates.sh
+```
+
+Pré-requisitos: toolchain Go, shell POSIX e os mesmos comandos auxiliares exigidos pelas suítes shell. Variáveis opcionais: `POCKETCLI_CI_PROFILE`, `POCKETCLI_TEST_EXCLUDES` e `POCKETCLI_CI_SUMMARY_FILE`.
+
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
+
+Os testes da skill layer (`test_skill_layer_*.sh`) também exigem `python3`; o job Alpine instala essa dependência explicitamente antes da suíte.
 
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar a detecção cross-platform do Tailscale, rode `sh tests/test_tailscale_runtime_detection.sh` e `sh tests/test_tailscale_setup_fallback.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep`, `env` e `chmod`. Os testes usam uma CLI nativa mockada fora do `PATH`, uma interface VPN mockada e não instalam nem alteram o Tailscale real. Variáveis de ambiente: nenhuma obrigatória; `POCKETCLI_TAILSCALE_CLI` é configurada internamente para validar o override de descoberta.
+
+Para validar a mesma descoberta nos fluxos Go de capabilities, status e connect, rode `go test ./internal/tailscale ./internal/capabilities ./internal/connect`.
+Pré-requisitos: toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória; os testes isolam `HOME`, `PATH` e `POCKETCLI_TAILSCALE_CLI` quando necessário.
 
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.

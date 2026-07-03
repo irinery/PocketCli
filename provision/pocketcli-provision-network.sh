@@ -1,6 +1,9 @@
 #! /usr/bin/env sh
 
-tailscale status --json | jq -r '.Peer[].HostName' | while IFS= read -r HOST
+POCKETCLI_DIR="${HOME}/.pocketcli"
+. "${POCKETCLI_DIR}/lib/common.sh"
+
+tailscale_status_json | jq -r '.Peer[].HostName' | while IFS= read -r HOST
 do
 
 	SAFE_HOST=$(printf "%s" "$HOST" | tr -cd '[:alnum:].-')

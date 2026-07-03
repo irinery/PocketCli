@@ -20,43 +20,23 @@ concurrency:
 jobs:
   tag:
     name: Create release tag
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
-      - name: Check CI conclusion
-        id: gate
-        env:
-          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ "${CI_CONCLUSION}" != "success" ]; then
-            printf 'skip=true\n' >> "${GITHUB_OUTPUT}"
-            echo "ℹ  CI terminou com conclusão '${CI_CONCLUSION}' para o SHA ${TARGET_SHA}."
-            echo "ℹ  Nenhuma tag será criada."
-            exit 0
-          fi
-          printf 'skip=false\n' >> "${GITHUB_OUTPUT}"
-          echo "✔ CI verde para o SHA ${TARGET_SHA}; prosseguindo com a tag."
-
       - name: Checkout
-        if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           # Faz checkout no SHA exato que disparou o CI — não no HEAD atual,
           # que pode ter avançado enquanto o CI rodava.
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Fetch tags
-        if: steps.gate.outputs.skip != 'true'
-        run: git fetch --force --tags origin
-
       - name: Skip if HEAD already has a release tag
         id: existing
-        if: steps.gate.outputs.skip != 'true'
         run: |
           TARGET_SHA="${{ github.event.workflow_run.head_sha }}"
           EXISTING_TAG=$(git tag --points-at "${TARGET_SHA}" 'v*' | head -n 1 || true)
@@ -70,7 +50,7 @@ jobs:
 
       - name: Compute next release tag
         id: next
-        if: steps.gate.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
         run: |
           NEXT_TAG=$(sh ./scripts/next_release_tag.sh)
           # Valida o formato antes de usar
@@ -82,7 +62,7 @@ jobs:
           echo "✔ Próxima tag: ${NEXT_TAG}"
 
       - name: Create and push tag
-        if: steps.gate.outputs.skip != 'true' && steps.existing.outputs.skip != 'true'
+        if: steps.existing.outputs.skip != 'true'
         env:
           NEXT_TAG: ${{ steps.next.outputs.tag }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha }}

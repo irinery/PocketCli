@@ -12,6 +12,9 @@
 
 set -eu
 
+POCKETCLI_DIR="${HOME}/.pocketcli"
+. "${POCKETCLI_DIR}/lib/common.sh"
+
 LOG_FILE="${POCKETCLI_DEBUG_LOG:-/tmp/pocketcli-debug.log}"
 log_debug() {
     TS=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf 'unknown-time')
@@ -40,16 +43,26 @@ _require() { command -v "$1" >/dev/null 2>&1 || _die "$1 is required."; }
 # Get online Tailscale hosts as newline-separated list
 # ---------------------------------------------------------------------------
 _online_hosts() {
-    _require tailscale
-    _require jq
-    log_debug "collecting online hosts from tailscale"
-    tailscale status --json 2>/dev/null \
-        | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
-        | sort \
-        | while IFS= read -r h; do
-            log_debug "found online host raw=${h}"
-            printf '%s\n' "$(printf '%s' "${h}" | tr -cd 'a-zA-Z0-9._-')"
-          done
+    if has_tailscale_cli && command -v jq >/dev/null 2>&1; then
+        log_debug "collecting online hosts from tailscale"
+        TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
+        if [ -n "${TS_STATUS}" ]; then
+            printf '%s\n' "${TS_STATUS}" \
+                | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
+                | sort \
+                | while IFS= read -r h; do
+                    log_debug "found online host raw=${h}"
+                    printf '%s\n' "$(safe_host "${h}")"
+                  done
+            return 0
+        fi
+    fi
+
+    log_debug "tailscale peer API unavailable; probing saved/seed hosts"
+    list_fallback_targets | while IFS= read -r h; do
+        [ -n "${h}" ] || continue
+        ping_host "${h}" 2 && printf '%s\n' "${h}"
+    done
 }
 
 # ---------------------------------------------------------------------------
