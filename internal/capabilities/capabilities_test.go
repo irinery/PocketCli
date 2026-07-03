@@ -17,6 +17,7 @@ func TestDetectReportsMissingTailscaleAndWritesNoSecrets(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", bin)
+	t.Setenv("POCKETCLI_TAILSCALE_CLI", filepath.Join(home, "missing-tailscale"))
 	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
 		t.Fatalf("MkdirAll returned error: %v", err)
 	}
@@ -39,6 +40,28 @@ func TestDetectReportsMissingTailscaleAndWritesNoSecrets(t *testing.T) {
 	}
 	if !containsReason(manifest.DegradationReasons, "tailscale_missing") {
 		t.Fatalf("expected tailscale_missing, got %#v", manifest.DegradationReasons)
+	}
+}
+
+func TestDetectFindsNativeTailscaleOutsidePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	cli := filepath.Join(t.TempDir(), "tailscale.exe")
+	if err := os.WriteFile(cli, []byte("stub"), 0o755); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("POCKETCLI_TAILSCALE_CLI", cli)
+
+	manifest, err := Detect("")
+	if err != nil {
+		t.Fatalf("Detect returned error: %v", err)
+	}
+	if !manifest.Capabilities.HasTailscale {
+		t.Fatal("expected has_tailscale=true for native CLI outside PATH")
+	}
+	if containsReason(manifest.DegradationReasons, "tailscale_missing") {
+		t.Fatalf("unexpected tailscale_missing: %#v", manifest.DegradationReasons)
 	}
 }
 

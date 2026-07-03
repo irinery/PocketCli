@@ -25,7 +25,12 @@ func TestMachinesFromStatus_NormalizesAndSorts(t *testing.T) {
 
 func TestGetStatus_UsesTailscaleJSONOutput(t *testing.T) {
 	origExec := execCommand
-	t.Cleanup(func() { execCommand = origExec })
+	origFindCLI := findCLI
+	t.Cleanup(func() {
+		execCommand = origExec
+		findCLI = origFindCLI
+	})
+	findCLI = func() (string, error) { return "tailscale", nil }
 
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		if name != "tailscale" {
@@ -50,7 +55,12 @@ func TestGetStatus_UsesTailscaleJSONOutput(t *testing.T) {
 
 func TestGetStatus_ReturnsParseError(t *testing.T) {
 	origExec := execCommand
-	t.Cleanup(func() { execCommand = origExec })
+	origFindCLI := findCLI
+	t.Cleanup(func() {
+		execCommand = origExec
+		findCLI = origFindCLI
+	})
+	findCLI = func() (string, error) { return "tailscale", nil }
 
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		return exec.Command("sh", "-c", `printf 'not-json'`)

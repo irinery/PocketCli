@@ -1,0 +1,6 @@
+# Uma skill por linha. O nome deve corresponder ao playbook sem .yml.
+disk_check
+disk_cleanup_safe
+service_status
+service_restart_safe
+log_tail

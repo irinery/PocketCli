@@ -1,0 +1,1482 @@
+openapi: 3.1.0
+info:
+  title: Pocket Stack HTTP APIs
+  version: 2026.06.19
+  summary: Contrato HTTP real de PocketWiki, PocketKernel e MiddlewareAuth.
+  description: |
+    Especificação baseada no código dos quatro repositórios locais em 2026-06-19.
+
+    O PocketCli não expõe HTTP. Seu `scripts/skills/skill_endpoint.sh` recebe JSON
+    por stdin ou arquivo, e sua integração com PocketWiki é baseada em Markdown no
+    filesystem. O MCP Evidence do PocketWiki também não é HTTP: PocketKernel inicia
+    o processo por stdio e chama `wiki.search` e `wiki.get_document`.
+
+    Esta especificação inclui as rotas HTTP próprias dos três serviços e, sob a tag
+    "Dependência LM Studio", as duas rotas OpenAI-compatible chamadas por
+    PocketKernel/MiddlewareAuth. Ela documenta o fluxo existente; não implica que a
+    seleção de provider do PocketWiki já seja propagada para o PocketKernel.
+  contact:
+    name: Pocket Stack
+    url: https://github.com/irinery/PocketCli
+  license:
+    name: Licenças dos projetos de origem
+    url: https://github.com/irinery/PocketCli/blob/main/LICENSE
+externalDocs:
+  description: Documentação completa, diagramas e achados da integração
+  url: https://github.com/irinery/pocketwiki/blob/main/SKILL/wiki-reference/pocket-stack-rotas-insomnia.md
+servers:
+  - url: http://127.0.0.1:8787
+    description: PocketWiki local (default; cada operação pode sobrescrever)
+security: []
+tags:
+  - name: PocketWiki
+    description: API pública do servidor web Node e do servidor embutido no app macOS.
+  - name: PocketWiki proxies
+    description: Proxies do PocketWiki para PocketKernel e MiddlewareAuth.
+  - name: PocketKernel
+    description: Endpoint governado do runtime PocketKernel.
+  - name: MiddlewareAuth saúde
+    description: Diagnóstico público do MiddlewareAuth.
+  - name: MiddlewareAuth OpenAI
+    description: Login, status e refresh OpenAI/Codex.
+  - name: MiddlewareAuth LM Studio
+    description: Registro, status e inferência usando credencial LM Studio criptografada.
+  - name: MiddlewareAuth inferência
+    description: Chamadas de inferência autenticadas pelo MiddlewareAuth.
+  - name: Dependência LM Studio
+    description: API OpenAI-compatible externa chamada pelos serviços; não pertence aos quatro projetos.
+paths:
+  /api/config:
+    get:
+      tags: [PocketWiki]
+      operationId: pocketWikiGetConfig
+      summary: Retorna configuração pública de runtime
+      description: |
+        Relê a configuração do processo e o estado da wiki. Não retorna
+        `MIDDLEWARE_CLIENT_TOKEN` nem API key do LM Studio.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      responses:
+        '200':
+          description: Configuração pública atual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PocketWikiConfig'
+              examples:
+                local:
+                  value:
+                    referenceName: wiki-reference
+                    referenceSource: default
+                    referenceConfigured: false
+                    referenceReadonly: true
+                    referenceAvailable: true
+                    referenceStatus: ready
+                    mcpEvidence:
+                      available: true
+                      transport: stdio
+                      status: ready
+                      command: node
+                      args: [src/mcp/pocketwiki-mcp-server.mjs, --root, SKILL/wiki-reference]
+                      tools: [wiki.search, wiki.get_document]
+                    lmStudioModel: ''
+                    lmStudioBaseUrl: http://127.0.0.1:1234
+                    pocketKernelBaseUrl: http://127.0.0.1:8080
+                    middlewareAuthBaseUrl: http://127.0.0.1:18787
+                    middlewareAuthProjectId: acme
+                    middlewareAuthProfileId: default
+                    kernelProxy: true
+                    middlewareAuthProxy: true
+        '500':
+          $ref: '#/components/responses/PocketWikiInternalError'
+        '4XX':
+          description: Erro de cliente não esperado neste GET
+  /api/routes:
+    get:
+      tags: [PocketWiki]
+      operationId: pocketWikiGetRoutes
+      summary: Lista URLs publicadas pelo PocketWiki
+      description: Inclui URLs local, mDNS, LAN e Tailscale calculadas no runtime.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      responses:
+        '200':
+          description: Snapshot das URLs publicadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PocketWikiRoutes'
+        '4XX':
+          description: Erro de cliente não esperado neste GET
+  /api/wiki/files:
+    get:
+      tags: [PocketWiki]
+      operationId: pocketWikiListFiles
+      summary: Lista arquivos da raiz de referência
+      description: |
+        Retorna metadados de todos os arquivos. O conteúdo só é preenchido para
+        formatos indexáveis (`.md` e `.excalidraw` no servidor Node; conforme o
+        modelo carregado no app macOS). A resposta pode ser grande e não tem
+        paginação no contrato atual.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      responses:
+        '200':
+          description: Raiz e arquivos disponíveis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PocketWikiFiles'
+        '500':
+          $ref: '#/components/responses/PocketWikiInternalError'
+        '4XX':
+          description: Erro de cliente não esperado neste GET
+  /api/prompts/wiki-review:
+    get:
+      tags: [PocketWiki]
+      operationId: pocketWikiGetReviewPrompt
+      summary: Retorna o prompt de revisão da wiki
+      description: Lê `prompts/wiki-review.md` e devolve o conteúdo como Markdown.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      responses:
+        '200':
+          description: Prompt Markdown
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '404':
+          description: Prompt ausente no runtime
+  /api/kernel/query:
+    post:
+      tags: [PocketWiki proxies]
+      operationId: pocketWikiProxyKernelQuery
+      summary: Encaminha uma requisição ao PocketKernel
+      description: |
+        Proxy transparente para o endpoint resolvido de PocketKernel, normalmente
+        `POST http://127.0.0.1:8080/v1/kernel`. O corpo e a resposta JSON são
+        repassados sem transformação. O proxy não adiciona Authorization ao Kernel.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KernelRequest'
+            examples:
+              wikiQuestion:
+                value:
+                  text: Qual é o status documentado do deploy?
+                  channel: api
+                  app_id: pocketwiki
+                  user_id: local
+                  desired_profile: wiki
+      responses:
+        '200':
+          description: Resposta governada do PocketKernel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KernelResponse'
+        '400':
+          $ref: '#/components/responses/KernelError'
+        '403':
+          $ref: '#/components/responses/KernelError'
+        '502':
+          description: Endpoint inválido ou PocketKernel indisponível
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleError'
+  /api/middleware/lmstudio/api-key:
+    post:
+      tags: [PocketWiki proxies]
+      operationId: pocketWikiProxyLMStudioApiKey
+      summary: Registra a API key do LM Studio no MiddlewareAuth
+      description: |
+        PocketWiki injeta seu `MIDDLEWARE_CLIENT_TOKEN` no upstream. A API key
+        recebida não volta na resposta; o MiddlewareAuth valida `/v1/models` antes
+        de salvar a credencial criptografada.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PocketWikiLMStudioApiKeyRequest'
+            examples:
+              default:
+                value:
+                  projectId: acme
+                  profileId: default
+                  baseUrl: http://127.0.0.1:1234
+                  apiKey: replace-me
+      responses:
+        '200':
+          description: Credencial registrada no MiddlewareAuth
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LMStudioApiKeyResponse'
+        '400':
+          description: API key ausente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleError'
+        '401':
+          description: PocketWiki não recebeu `MIDDLEWARE_CLIENT_TOKEN` no processo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleError'
+        '502':
+          description: Endpoint inválido, upstream indisponível ou erro repassado
+  /api/middleware/lmstudio/status:
+    post:
+      tags: [PocketWiki proxies]
+      operationId: pocketWikiProxyLMStudioStatus
+      summary: Consulta status LM Studio no MiddlewareAuth
+      description: O método externo é POST, mas o PocketWiki chama GET no MiddlewareAuth.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PocketWikiMiddlewareLookupRequest'
+      responses:
+        '200':
+          description: Status da credencial LM Studio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LMStudioStatusResponse'
+        '401':
+          description: Token interno ausente no processo PocketWiki
+        '502':
+          description: Endpoint inválido ou MiddlewareAuth indisponível
+  /api/middleware/openai/login:
+    post:
+      tags: [PocketWiki proxies]
+      operationId: pocketWikiProxyOpenAILogin
+      summary: Inicia login OpenAI via MiddlewareAuth
+      description: Usa `device_code` por padrão no proxy PocketWiki.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PocketWikiMiddlewareLookupRequest'
+                - type: object
+                  properties:
+                    mode:
+                      type: string
+                      enum: [oauth, device_code]
+                      default: device_code
+      responses:
+        '200':
+          description: Sessão de login iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStartResponse'
+        '401':
+          description: Token interno ausente no processo PocketWiki
+        '502':
+          description: Endpoint inválido ou MiddlewareAuth indisponível
+  /api/middleware/openai/status:
+    post:
+      tags: [PocketWiki proxies]
+      operationId: pocketWikiProxyOpenAIStatus
+      summary: Consulta status OpenAI no MiddlewareAuth
+      description: O método externo é POST, mas o PocketWiki chama GET no MiddlewareAuth.
+      servers:
+        - url: http://127.0.0.1:8787
+          description: PocketWiki local
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PocketWikiMiddlewareLookupRequest'
+      responses:
+        '200':
+          description: Status da credencial OpenAI
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIStatusResponse'
+        '401':
+          description: Token interno ausente no processo PocketWiki
+        '502':
+          description: Endpoint inválido ou MiddlewareAuth indisponível
+  /v1/kernel:
+    post:
+      tags: [PocketKernel]
+      operationId: pocketKernelQuery
+      summary: Executa o pipeline governado do PocketKernel
+      description: |
+        Única rota HTTP do PocketKernel. Quando iniciado com `-require-auth`, o
+        adapter exige apenas que o header `Authorization` não esteja vazio; ele não
+        valida esquema nem token. Sem essa flag, a rota é aberta.
+
+        O Kernel valida envelope, aplica policy, busca evidência (opcionalmente pelo
+        MCP stdio do PocketWiki), compila o prompt, chama um provider
+        OpenAI-compatible, valida a saída e roteia ferramentas.
+      servers:
+        - url: http://127.0.0.1:8080
+          description: PocketKernel local
+      security:
+        - kernelBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KernelRequest'
+            examples:
+              fast:
+                value:
+                  text: Responda apenas ok.
+                  channel: api
+                  app_id: external
+                  user_id: insomnia
+                  desired_profile: fast
+              wikiWithModel:
+                value:
+                  text: Procure evidência sobre Tailscale na wiki.
+                  channel: api
+                  app_id: pocketwiki
+                  user_id: insomnia
+                  desired_profile: wiki
+                  model_id: liquid/lfm2.5-1.2b
+      responses:
+        '200':
+          description: Resposta governada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KernelResponse'
+        '400':
+          $ref: '#/components/responses/KernelError'
+        '403':
+          $ref: '#/components/responses/KernelError'
+        '409':
+          $ref: '#/components/responses/KernelError'
+        '500':
+          $ref: '#/components/responses/KernelError'
+        '503':
+          $ref: '#/components/responses/KernelError'
+        '504':
+          $ref: '#/components/responses/KernelError'
+  /healthz:
+    get:
+      tags: [MiddlewareAuth saúde]
+      operationId: middlewareHealth
+      summary: Verifica o processo HTTP do MiddlewareAuth
+      description: Não valida stores, providers ou credenciais; apenas o handler HTTP.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security: []
+      responses:
+        '200':
+          description: Processo respondendo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '4XX':
+          description: Erro de cliente não esperado neste GET
+  /v1/auth/openai/callback:
+    get:
+      tags: [MiddlewareAuth OpenAI]
+      operationId: middlewareOpenAICallback
+      summary: Callback local do OAuth OpenAI
+      description: |
+        Rota pública chamada pelo navegador/authorization server. O `state` precisa
+        corresponder a uma sessão criada por `/auth/openai/login` em modo `oauth`.
+        Não é usada no fluxo `device_code`.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Credencial trocada e salva
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthCallbackResponse'
+        '400':
+          $ref: '#/components/responses/MiddlewareError'
+        '410':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/openai/login:
+    post:
+      tags: [MiddlewareAuth OpenAI]
+      operationId: middlewareStartOpenAILogin
+      summary: Inicia OAuth PKCE ou device code
+      description: |
+        Cria uma sessão de login em memória para o perfil. No modo `oauth`, retorna
+        `authUrl`; no modo `device_code`, retorna `verificationUrl` e `userCode`.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAILoginRequest'
+            examples:
+              deviceCode:
+                value:
+                  profileId: default
+                  mode: device_code
+              oauth:
+                value:
+                  profileId: default
+                  mode: oauth
+      responses:
+        '200':
+          description: Sessão criada; abra `authUrl` ou `verificationUrl`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStartResponse'
+        '400':
+          $ref: '#/components/responses/MiddlewareError'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '409':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/openai/login-sessions/{loginSessionId}:
+    get:
+      tags: [MiddlewareAuth OpenAI]
+      operationId: middlewareGetOpenAILoginSession
+      summary: Consulta o estado da sessão de login
+      description: |
+        Retorna o estado `pending`, `completed`, `failed` ou `expired` de uma sessão
+        criada no processo atual do MiddlewareAuth.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: loginSessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 120
+      responses:
+        '200':
+          description: Sessão pending, completed, failed ou expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginSessionResponse'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '404':
+          $ref: '#/components/responses/MiddlewareError'
+        '410':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/openai/status:
+    get:
+      tags: [MiddlewareAuth OpenAI]
+      operationId: middlewareGetOpenAIStatus
+      summary: Consulta credencial OpenAI salva
+      description: |
+        Lê o perfil OpenAI no store. Perfil inexistente não é erro: retorna HTTP 200
+        com `authenticated=false`.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Status, inclusive `authenticated=false` quando não existe perfil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIStatusResponse'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/openai/refresh:
+    post:
+      tags: [MiddlewareAuth OpenAI]
+      operationId: middlewareRefreshOpenAI
+      summary: Força resolução de credencial com pelo menos 1 hora de TTL
+      description: |
+        Resolve a credencial do perfil exigindo pelo menos 3.600.000 ms de validade;
+        renova o token quando o TTL atual é insuficiente.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Credencial válida/renovada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIStatusResponse'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '404':
+          $ref: '#/components/responses/MiddlewareError'
+        '502':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/lmstudio/api-key:
+    post:
+      tags: [MiddlewareAuth LM Studio]
+      operationId: middlewareSetLMStudioApiKey
+      summary: Valida e salva uma credencial LM Studio
+      description: |
+        `baseUrl` precisa ser localhost ou IP local/privado. Antes de salvar, o
+        MiddlewareAuth chama `GET {baseUrl}/v1/models` com a API key.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LMStudioApiKeyRequest'
+            example:
+              profileId: default
+              baseUrl: http://127.0.0.1:1234
+              apiKey: replace-me
+      responses:
+        '200':
+          description: Credencial validada e salva
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LMStudioApiKeyResponse'
+        '400':
+          $ref: '#/components/responses/MiddlewareError'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '502':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/auth/lmstudio/status:
+    get:
+      tags: [MiddlewareAuth LM Studio]
+      operationId: middlewareGetLMStudioStatus
+      summary: Consulta a credencial LM Studio salva
+      description: |
+        Lê o perfil LM Studio no store sem chamar o provider. Perfil inexistente
+        retorna HTTP 200 com `authenticated=false`.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200':
+          description: Status, inclusive `authenticated=false` quando não existe perfil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LMStudioStatusResponse'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/codex/responses:
+    post:
+      tags: [MiddlewareAuth inferência]
+      operationId: middlewareCodexResponses
+      summary: Chama o backend Codex com OAuth salvo
+      description: |
+        Resolve/renova a credencial OpenAI do perfil e chama
+        `https://chatgpt.com/backend-api/codex/responses` por padrão. A resposta do
+        stream upstream é agregada em JSON.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CodexResponseRequest'
+            example:
+              model: gpt-5.5
+              intelligence: thinking
+              input:
+                - role: user
+                  content: Responda apenas ok.
+              stream: false
+              store: false
+              reasoning:
+                effort: medium
+                summary: auto
+      responses:
+        '200':
+          description: Eventos agregados e texto final
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexResponseStream'
+        '400':
+          $ref: '#/components/responses/MiddlewareError'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '404':
+          $ref: '#/components/responses/MiddlewareError'
+        '429':
+          $ref: '#/components/responses/MiddlewareError'
+        '502':
+          $ref: '#/components/responses/MiddlewareError'
+        '504':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/projects/{projectId}/lmstudio/responses:
+    post:
+      tags: [MiddlewareAuth LM Studio, MiddlewareAuth inferência]
+      operationId: middlewareLMStudioResponses
+      summary: Chama LM Studio com a credencial salva
+      description: |
+        Converte o contrato `input` para Chat Completions e chama
+        `POST {baseUrl}/v1/chat/completions`. A resposta final é normalizada no mesmo
+        formato agregado usado pela rota Codex.
+      servers:
+        - url: http://127.0.0.1:18787
+          description: MiddlewareAuth local
+      security:
+        - middlewareBearer: []
+        - middlewareHeader: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/ProfileId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CodexResponseRequest'
+            example:
+              model: local-model
+              instructions: Seja direto.
+              input:
+                - role: user
+                  content: Responda apenas ok.
+              stream: false
+              store: false
+      responses:
+        '200':
+          description: Eventos agregados e texto final
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexResponseStream'
+        '400':
+          $ref: '#/components/responses/MiddlewareError'
+        '401':
+          $ref: '#/components/responses/MiddlewareError'
+        '404':
+          $ref: '#/components/responses/MiddlewareError'
+        '502':
+          $ref: '#/components/responses/MiddlewareError'
+  /v1/models:
+    get:
+      tags: [Dependência LM Studio]
+      operationId: lmStudioListModels
+      summary: Lista modelos do provider OpenAI-compatible
+      description: |
+        Chamada diretamente pelo PocketKernel quando nenhum modelo está fixado e
+        pelo MiddlewareAuth ao validar uma API key. Não é rota de um projeto Pocket.
+      servers:
+        - url: http://127.0.0.1:1234
+          description: LM Studio local
+      security:
+        - providerBearer: []
+      responses:
+        '200':
+          description: Catálogo de modelos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id]
+                      properties:
+                        id:
+                          type: string
+                required: [data]
+        '4XX':
+          description: Provider recusou a API key ou o request
+  /v1/chat/completions:
+    post:
+      tags: [Dependência LM Studio]
+      operationId: lmStudioChatCompletions
+      summary: Executa Chat Completions no provider OpenAI-compatible
+      description: Chamada diretamente por PocketKernel e MiddlewareAuth.
+      servers:
+        - url: http://127.0.0.1:1234
+          description: LM Studio local
+      security:
+        - providerBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  minItems: 1
+                  items:
+                    $ref: '#/components/schemas/ChatMessage'
+                temperature:
+                  type: number
+                max_tokens:
+                  type: integer
+                stream:
+                  type: boolean
+                  default: false
+            example:
+              model: local-model
+              messages:
+                - role: user
+                  content: Responda apenas ok.
+              stream: false
+      responses:
+        '200':
+          description: Resposta OpenAI-compatible; pode ser JSON ou SSE conforme `stream`
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+        '4XX':
+          description: Provider recusou o payload ou a API key
+components:
+  securitySchemes:
+    middlewareBearer:
+      type: http
+      scheme: bearer
+      description: Valor de `MIDDLEWARE_CLIENT_TOKEN`.
+    middlewareHeader:
+      type: apiKey
+      in: header
+      name: X-Middleware-Token
+      description: Alternativa ao bearer; usa o mesmo `MIDDLEWARE_CLIENT_TOKEN`.
+    kernelBearer:
+      type: http
+      scheme: bearer
+      description: Opcional; exigido apenas quando PocketKernel usa `-require-auth`.
+    providerBearer:
+      type: http
+      scheme: bearer
+      description: API key do LM Studio/OpenAI-compatible.
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      description: Identificador isolador de credenciais.
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_-]{1,80}$'
+        default: acme
+    ProfileId:
+      name: profileId
+      in: query
+      required: false
+      description: Perfil da credencial; vazio vira `default`.
+      schema:
+        type: string
+        pattern: '^[a-zA-Z0-9_@.:-]{1,120}$'
+        default: default
+  responses:
+    PocketWikiInternalError:
+      description: Falha interna sanitizada do PocketWiki
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SimpleError'
+          example:
+            error: internal_error
+    KernelError:
+      description: Erro tipado do PocketKernel
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/KernelError'
+    MiddlewareError:
+      description: Erro tipado do MiddlewareAuth
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MiddlewareError'
+  schemas:
+    SimpleError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    PocketWikiConfig:
+      type: object
+      required:
+        - referenceName
+        - referenceSource
+        - referenceConfigured
+        - referenceReadonly
+        - referenceAvailable
+        - referenceStatus
+        - mcpEvidence
+        - lmStudioModel
+        - lmStudioBaseUrl
+        - pocketKernelBaseUrl
+        - middlewareAuthBaseUrl
+        - middlewareAuthProjectId
+        - middlewareAuthProfileId
+        - kernelProxy
+        - middlewareAuthProxy
+      properties:
+        referenceName:
+          type: string
+        referenceSource:
+          type: string
+        referenceConfigured:
+          type: boolean
+        referenceReadonly:
+          type: boolean
+        referenceAvailable:
+          type: boolean
+        referenceStatus:
+          type: string
+        mcpEvidence:
+          $ref: '#/components/schemas/MCPEvidenceStatus'
+        lmStudioModel:
+          type: string
+        lmStudioBaseUrl:
+          type: string
+          format: uri
+        pocketKernelBaseUrl:
+          type: string
+          format: uri
+        middlewareAuthBaseUrl:
+          type: string
+          format: uri
+        middlewareAuthProjectId:
+          type: string
+        middlewareAuthProfileId:
+          type: string
+        kernelProxy:
+          type: boolean
+        middlewareAuthProxy:
+          type: boolean
+    MCPEvidenceStatus:
+      type: object
+      required: [available, transport, status, command, args, tools]
+      properties:
+        available:
+          type: boolean
+        transport:
+          type: string
+          const: stdio
+        status:
+          type: string
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        tools:
+          type: array
+          items:
+            type: string
+            enum: [wiki.search, wiki.get_document]
+        timeoutMs:
+          type: integer
+        maxResults:
+          type: integer
+        sameHostOnly:
+          type: boolean
+        argsParsing:
+          type: string
+        argsPortable:
+          type: boolean
+        note:
+          type: string
+    PocketWikiRoutes:
+      type: object
+      required: [port, bindHost, portless, local, mdns, lan, tailscale]
+      properties:
+        port:
+          type: integer
+        bindHost:
+          type: string
+        portless:
+          type: boolean
+        local:
+          type: array
+          items:
+            type: string
+            format: uri
+        mdns:
+          type: array
+          items:
+            type: string
+            format: uri
+        lan:
+          type: array
+          items:
+            type: string
+            format: uri
+        tailscale:
+          type: array
+          items:
+            type: string
+            format: uri
+    PocketWikiFiles:
+      type: object
+      required: [rootName, readonly, source, configured, available, status, files]
+      properties:
+        rootName:
+          type: string
+        readonly:
+          type: boolean
+        source:
+          type: string
+        configured:
+          type: boolean
+        available:
+          type: boolean
+        status:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/PocketWikiFile'
+    PocketWikiFile:
+      type: object
+      required: [path, name, size, type, updated]
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+        size:
+          type: integer
+          minimum: 0
+        type:
+          type: string
+        updated:
+          type: number
+          description: Unix epoch em milissegundos.
+        content:
+          type: [string, 'null']
+    PocketWikiMiddlewareLookupRequest:
+      type: object
+      properties:
+        middlewareBaseUrl:
+          type: string
+          format: uri
+          description: Override aceito apenas para endpoint local pela policy do PocketWiki.
+        projectId:
+          type: string
+          default: acme
+        profileId:
+          type: string
+          default: default
+    PocketWikiLMStudioApiKeyRequest:
+      allOf:
+        - $ref: '#/components/schemas/PocketWikiMiddlewareLookupRequest'
+        - type: object
+          required: [apiKey]
+          properties:
+            baseUrl:
+              type: string
+              format: uri
+              default: http://127.0.0.1:1234
+            apiKey:
+              type: string
+              writeOnly: true
+    KernelRequest:
+      type: object
+      additionalProperties: false
+      required: [text, channel, app_id, user_id]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 20000
+        channel:
+          type: string
+          enum: [web, cli, discord, whatsapp, api, mcp]
+        app_id:
+          type: string
+          enum: [pocketkernel, pocketwiki, pocketcli, middlewareauth, external]
+        user_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        desired_profile:
+          type: string
+          enum: [fast, wiki, investigate, critical]
+        model_id:
+          type: string
+          maxLength: 256
+        attachments:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/KernelAttachment'
+    KernelAttachment:
+      type: object
+      required: [name, mime_type, size_bytes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+          maximum: 10485760
+    KernelResponse:
+      type: object
+      required: [ok, mode, trace_id, rounds_used, profile_used]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        mode:
+          type: string
+          enum: [answer, plan, action_request, blocked, error]
+        answer:
+          $ref: '#/components/schemas/StructuredAnswer'
+        tool_result:
+          $ref: '#/components/schemas/ToolRouteSummary'
+        trace_id:
+          type: string
+        rounds_used:
+          type: integer
+          minimum: 1
+          maximum: 5
+        profile_used:
+          type: string
+          enum: [fast, wiki, investigate, critical]
+    StructuredAnswer:
+      type: object
+      required: [summary, facts, assumptions, missing_evidence]
+      properties:
+        summary:
+          type: string
+        facts:
+          type: array
+          items:
+            type: string
+        assumptions:
+          type: array
+          items:
+            type: string
+        missing_evidence:
+          type: array
+          items:
+            type: string
+    ToolRouteSummary:
+      type: object
+      required: [executed, pending_approval, blocked]
+      properties:
+        executed:
+          type: array
+          items:
+            type: string
+        pending_approval:
+          type: array
+          items:
+            type: string
+        blocked:
+          type: array
+          items:
+            type: string
+    KernelError:
+      type: object
+      required: [ok, code, message, trace_id, details]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        code:
+          type: string
+          enum:
+            - ERR_VALIDATION
+            - ERR_FORBIDDEN
+            - ERR_TIMEOUT
+            - ERR_DEPENDENCY_UNAVAILABLE
+            - ERR_CONFLICT
+            - ERR_POLICY_DENIED
+            - ERR_RESOURCE_EXHAUSTED
+        message:
+          type: string
+        trace_id:
+          type: string
+        details:
+          type: object
+          properties:
+            field_errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            dependency:
+              type: string
+            resource_limit:
+              type: string
+    HealthResponse:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          const: ok
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, status]
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+              latencyMs:
+                type: integer
+    OpenAILoginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        profileId:
+          type: string
+          default: default
+        mode:
+          type: string
+          enum: [oauth, device_code]
+          default: oauth
+    LoginStartResponse:
+      type: object
+      required: [loginSessionId, expiresAt]
+      properties:
+        loginSessionId:
+          type: string
+        authUrl:
+          type: string
+          format: uri
+        verificationUrl:
+          type: string
+          format: uri
+        userCode:
+          type: string
+        expiresAt:
+          type: integer
+          format: int64
+          description: Unix epoch em milissegundos.
+    LoginSessionResponse:
+      type: object
+      required: [loginSessionId, projectId, profileId, mode, status, expiresAt]
+      properties:
+        loginSessionId:
+          type: string
+        projectId:
+          type: string
+        profileId:
+          type: string
+        mode:
+          type: string
+          enum: [oauth, device_code]
+        status:
+          type: string
+          enum: [pending, completed, failed, expired]
+        expiresAt:
+          type: integer
+          format: int64
+        completedAt:
+          type: integer
+          format: int64
+        error:
+          $ref: '#/components/schemas/AppError'
+    OAuthCallbackResponse:
+      type: object
+      required: [status, profileId]
+      properties:
+        status:
+          type: string
+          const: ok
+        profileId:
+          type: string
+    OpenAIStatusResponse:
+      type: object
+      required: [authenticated, projectId, profileId]
+      properties:
+        authenticated:
+          type: boolean
+        projectId:
+          type: string
+        profileId:
+          type: string
+        accountId:
+          type: string
+        email:
+          type: string
+          format: email
+        chatgptPlanType:
+          type: string
+        expires:
+          type: integer
+          format: int64
+    LMStudioApiKeyRequest:
+      type: object
+      additionalProperties: false
+      required: [baseUrl, apiKey]
+      properties:
+        profileId:
+          type: string
+          default: default
+        baseUrl:
+          type: string
+          format: uri
+        apiKey:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+    LMStudioApiKeyResponse:
+      type: object
+      required: [authenticated, providerId, projectId, profileId, baseUrl, accountId, modelCount, savedAt]
+      properties:
+        authenticated:
+          type: boolean
+          const: true
+        providerId:
+          type: string
+          const: lmstudio
+        projectId:
+          type: string
+        profileId:
+          type: string
+        baseUrl:
+          type: string
+          format: uri
+        accountId:
+          type: string
+        modelCount:
+          type: integer
+          minimum: 0
+        savedAt:
+          type: integer
+          format: int64
+    LMStudioStatusResponse:
+      type: object
+      required: [authenticated, providerId, projectId, profileId]
+      properties:
+        authenticated:
+          type: boolean
+        providerId:
+          type: string
+          const: lmstudio
+        projectId:
+          type: string
+        profileId:
+          type: string
+        baseUrl:
+          type: string
+          format: uri
+        accountId:
+          type: string
+    CodexResponseRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          maxLength: 120
+        intelligence:
+          type: string
+          maxLength: 120
+        instructions:
+          type: string
+          maxLength: 131072
+        input:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+          default: false
+        store:
+          type: boolean
+          default: false
+        reasoning:
+          type: object
+          properties:
+            effort:
+              type: string
+              maxLength: 80
+            summary:
+              type: string
+              maxLength: 80
+        tools:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [type, name]
+            properties:
+              type:
+                type: string
+              name:
+                type: string
+              description:
+                type: string
+      additionalProperties: true
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system, developer]
+        content:
+          type: string
+          maxLength: 524288
+    CodexResponseStream:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+            required: [type]
+            properties:
+              type:
+                type: string
+              payload:
+                type: string
+        responseId:
+          type: string
+        usage:
+          type: object
+          properties:
+            inputTokens:
+              type: integer
+            outputTokens:
+              type: integer
+            totalTokens:
+              type: integer
+        outputText:
+          type: string
+    MiddlewareError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/AppError'
+    AppError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            required: [reason]
+            properties:
+              field:
+                type: string
+              reason:
+                type: string

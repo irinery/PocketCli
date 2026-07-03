@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   security-gate:
     name: security-gate
@@ -16,39 +20,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Run Secret Leak Scanner
-        id: scanner_01
-        run: bash scripts/security/run_scanner.sh 01 bash scripts/security/01_secret_leak_scanner.sh
-        continue-on-error: true
-
-      - name: Run Shell Injection Audit
-        id: scanner_02
-        run: bash scripts/security/run_scanner.sh 02 bash scripts/security/02_shell_injection_audit.sh
-        continue-on-error: true
-
-      - name: Run Filesystem Permission Audit
-        id: scanner_03
-        run: bash scripts/security/run_scanner.sh 03 bash scripts/security/03_filesystem_permission_audit.sh repo
-        continue-on-error: true
-
-      - name: Run SSH/Tailscale/tmux Hardening Audit
-        id: scanner_04
-        run: bash scripts/security/run_scanner.sh 04 bash scripts/security/04_ssh_tailscale_hardening.sh
+      - name: Run security scanners in parallel
+        run: sh scripts/security/run_all_scanners.sh
         continue-on-error: true
 
       - name: Aggregate Results
         id: aggregate
         run: bash scripts/security/aggregate_results.sh
-        env:
-          EXIT_01: ${{ steps.scanner_01.outcome }}
-          EXIT_02: ${{ steps.scanner_02.outcome }}
-          EXIT_03: ${{ steps.scanner_03.outcome }}
-          EXIT_04: ${{ steps.scanner_04.outcome }}
 
       - name: Upload Security Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: security-report

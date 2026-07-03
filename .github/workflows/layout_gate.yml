@@ -6,6 +6,13 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: layout-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   visual-integrity:
     name: Visual Integrity Tests
@@ -14,12 +21,14 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bash tmux expect ncurses-bin
+          if ! command -v tmux >/dev/null 2>&1 || ! command -v tput >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install --no-install-recommends -y tmux ncurses-bin
+          fi
           tmux -V
           tput -V
 
@@ -43,7 +52,7 @@ jobs:
 
       - name: Upload failure reports
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: layout-failure-reports-${{ github.run_id }}
           path: scripts/testing/visual_integrity/reports/
