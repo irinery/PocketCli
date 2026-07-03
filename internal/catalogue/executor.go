@@ -191,7 +191,6 @@ func (e Executor) runHandler(ctx context.Context, recipe Recipe, rendered Render
 	default:
 		return ExecutionResult{}, newError("ERR_HANDLER_NOT_REGISTERED", "handler nao registrado", string(recipe.Handler), "corrija o catalogo")
 	}
-	return ExecutionResult{}, newError("ERR_HANDLER_NOT_REGISTERED", "handler nao registrado", string(recipe.Handler), "corrija o catalogo")
 }
 
 func (e Executor) runner() Runner {
