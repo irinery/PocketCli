@@ -4,6 +4,10 @@
 ansible/
 skills/
 
+# Local generated technical contracts requested as Docs/; on this macOS checkout
+# Docs/ resolves to the existing docs/ directory, so keep the ignore scoped.
+/docs/command-catalogue-contracts/
+
 # Environment and local secrets
 .env
 .env.*

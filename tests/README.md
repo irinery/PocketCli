@@ -35,6 +35,9 @@ Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de a
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar isoladamente o autocomplete do input de envio da TUI, rode `sh tests/test_tui_autocomplete.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `stat`, `chmod`, `mkdir`, `tr` e `dirname`. Variáveis de ambiente: nenhuma obrigatória; o teste usa diretórios temporários.
+
 Para validar a integridade visual interativa do `pocket menu`, rode:
 
 ```sh
@@ -72,6 +75,7 @@ Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e
    - Para rodar os testes do módulo TUI EventLoop (fase 2), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/event`.
    - Para rodar os testes do módulo TUI Renderer (fase 3), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/renderer`.
    - Para rodar os testes do módulo TUI Runtime (fase 4), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/runtime`.
+   - Para rodar os testes do módulo Command Catalogue, use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/catalogue ./cmd/pocket`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
@@ -81,6 +85,7 @@ Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e
    - Pré-requisitos do TUI EventLoop: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI Renderer: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI Runtime: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
+   - Pré-requisitos do Command Catalogue: toolchain Go suportado pelo projeto. Variáveis de ambiente: `HOME` pode ser apontado para diretório temporário para validar isolamento de `~/.pocketcli`; os testes Go já fazem isso nos cenários que escrevem state/history/docs.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:
