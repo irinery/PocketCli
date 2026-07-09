@@ -1,0 +1,26 @@
+---
+- name: PocketCli log tail
+  hosts: all
+  gather_facts: false
+  vars:
+    target_path: /var/log/syslog
+    lines: "100"
+  tasks:
+    - name: Validate log path
+      ansible.builtin.assert:
+        that:
+          - target_path is match('^/var/log(/.*)?$')
+          - lines is match('^[0-9]{1,4}$')
+        fail_msg: "parametros invalidos"
+
+    - name: Tail log
+      ansible.builtin.command: "tail -n {{ lines }} {{ target_path }}"
+      changed_when: false
+      register: pocket_log_tail
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg:
+          target_path: "{{ target_path }}"
+          output: "{{ pocket_log_tail.stdout }}"
+          changed: false

@@ -133,6 +133,25 @@ func TestCollectTruncatesReadmeAt50Lines(t *testing.T) {
 	}
 }
 
+func TestCollectCapsMainFilesBeforeReadingUnboundedProjectData(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < maxMainFiles+5; i++ {
+		writeFile(t, dir, "file-"+strconv.Itoa(i)+".txt", "ok\n")
+	}
+	writeFile(t, dir, "large.txt", strings.Repeat("x", maxCollectedFileBytes+1024))
+
+	ctx, err := Collect(dir, Session{})
+	if err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	if len(ctx.Project.MainFiles) > maxMainFiles {
+		t.Fatalf("main files = %d, want <= %d", len(ctx.Project.MainFiles), maxMainFiles)
+	}
+	if !containsNote(ctx.Notes, "[contexto parcial — itens omitidos]") {
+		t.Fatal("expected partial note after main file cap")
+	}
+}
+
 func TestCollectCompressesToTokenLimitAndMarksPartial(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 18; i++ {

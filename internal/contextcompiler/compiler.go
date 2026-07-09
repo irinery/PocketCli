@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,8 @@ import (
 )
 
 const MaxContextTokens = 4000
+
+var attachmentSecretPattern = regexp.MustCompile(`(?i)(password|token|secret|api[_-]?key|authorization)\s*[:=]\s*\S+`)
 
 type Request struct {
 	UserInput   string
@@ -150,10 +153,14 @@ func compileAttachments(paths []string) (string, error) {
 		if path == "" {
 			continue
 		}
-		if safety.SensitivePath(path) {
+		resolvedPath, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", err
+		}
+		if safety.SensitivePath(resolvedPath) {
 			return "", fmt.Errorf("ERR_CONTEXT_ATTACHMENT_BLOCKED: %s", path)
 		}
-		info, err := os.Stat(path)
+		info, err := os.Stat(resolvedPath)
 		if err != nil {
 			return "", err
 		}
@@ -163,9 +170,12 @@ func compileAttachments(paths []string) (string, error) {
 		if info.Size() > 128*1024 {
 			return "", fmt.Errorf("ERR_CONTEXT_ATTACHMENT_TOO_LARGE: %s", path)
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(resolvedPath)
 		if err != nil {
 			return "", err
+		}
+		if attachmentSecretPattern.Match(data) {
+			return "", fmt.Errorf("ERR_CONTEXT_ATTACHMENT_BLOCKED: conteúdo sensível em %s", path)
 		}
 		content := strings.TrimSpace(string(data))
 		blocks = append(blocks, "# "+filepath.Base(path)+"\n"+content)

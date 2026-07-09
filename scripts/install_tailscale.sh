@@ -20,6 +20,12 @@ log_debug "starting install flow os=${OS}"
 # Helper — must be defined before any call site
 # ---------------------------------------------------------------------------
 _tailscale_login() {
+    if TS_IP=$(tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.' || true); [ -n "${TS_IP}" ]; then
+        log_debug "tailscale already authenticated ip=${TS_IP}"
+        printf '[PocketCli] Tailscale already authenticated — skipping login (IP: %s).\n' "${TS_IP}"
+        return 0
+    fi
+
     log_debug "starting tailscale login"
     printf '\n[PocketCli] Starting Tailscale login...\n'
     printf '  (A browser window or URL will appear — authenticate to continue)\n\n'

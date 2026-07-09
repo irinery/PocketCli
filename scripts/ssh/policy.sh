@@ -4,8 +4,13 @@
 
 ssh_policy_ensure_file() {
     FILE="$(pocket_ssh_policy_file)"
-    [ -s "${FILE}" ] && return 0
+    umask 077
     mkdir -p "$(dirname "${FILE}")"
+    chmod 700 "$(dirname "${FILE}")"
+    if [ -s "${FILE}" ]; then
+        chmod 600 "${FILE}"
+        return 0
+    fi
     cat > "${FILE}" <<JSON
 {
   "schema_version": 1,
@@ -18,6 +23,7 @@ ssh_policy_ensure_file() {
   "log_all_connections": true
 }
 JSON
+    chmod 600 "${FILE}"
 }
 
 ssh_policy_get() {
@@ -26,8 +32,21 @@ ssh_policy_get() {
     ssh_policy_ensure_file
 
     if command -v jq >/dev/null 2>&1; then
-        jq -r ".${KEY}" "${FILE}" 2>/dev/null
-        return 0
+        VALUE=$(jq -r ".${KEY} // empty" "${FILE}" 2>/dev/null || true)
+        case "${KEY}" in
+            connect_timeout_sec)
+                case "${VALUE}" in
+                    ''|*[!0-9]*) ;;
+                    *) [ "${VALUE}" -ge 1 ] 2>/dev/null && [ "${VALUE}" -le 60 ] 2>/dev/null && { printf '%s\n' "${VALUE}"; return 0; } ;;
+                esac
+                ;;
+            host_key_policy)
+                case "${VALUE}" in yes|accept-new) printf '%s\n' "${VALUE}"; return 0 ;; esac
+                ;;
+            strict_mode|require_approval_for_unknown|auto_approve_saved_hosts|auto_approve_tailscale_known_hosts|log_all_connections)
+                case "${VALUE}" in true|false) printf '%s\n' "${VALUE}"; return 0 ;; esac
+                ;;
+        esac
     fi
 
     case "${KEY}" in

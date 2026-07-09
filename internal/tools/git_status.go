@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	stdctx "context"
 	"errors"
 	"fmt"
@@ -9,6 +10,10 @@ import (
 	"sort"
 	"strings"
 )
+
+const maxGitOutputBytes = 256 * 1024
+
+var ErrGitOutputTooLarge = errors.New("git output too large")
 
 func GitStatusTool() Tool {
 	return Tool{
@@ -82,9 +87,42 @@ func runGitStatus(ctx stdctx.Context, input map[string]any) (ExecutionOutput, er
 func runGit(ctx stdctx.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	output, err := cmd.CombinedOutput()
-	return string(output), err
+	output := newGitOutputBuffer(maxGitOutputBytes)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if output.truncated && err == nil {
+		err = ErrGitOutputTooLarge
+	}
+	return output.String(), err
 }
+
+type gitOutputBuffer struct {
+	buffer    bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+func newGitOutputBuffer(maxBytes int) gitOutputBuffer {
+	return gitOutputBuffer{maxBytes: maxBytes}
+}
+
+func (b *gitOutputBuffer) Write(value []byte) (int, error) {
+	remaining := b.maxBytes - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	if len(value) > remaining {
+		_, _ = b.buffer.Write(value[:remaining])
+		b.truncated = true
+		return len(value), nil
+	}
+	_, err := b.buffer.Write(value)
+	return len(value), err
+}
+
+func (b *gitOutputBuffer) String() string { return b.buffer.String() }
 
 func parsePorcelainStatus(output string) ([]string, []string) {
 	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(output), "\r\n", "\n"), "\n")

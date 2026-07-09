@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -22,14 +23,18 @@ func newConnectCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAudited(cmd, "connect", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
-				orchestrator := newConnectOrchestrator()
-				orchestrator.In = os.Stdin
-				orchestrator.Out = cmd.OutOrStdout()
-				orchestrator.Err = os.Stderr
-				return commandAudit{SessionID: sessionID}, orchestrator.Connect(context.Background(), args[0])
+				return commandAudit{SessionID: sessionID, HostID: args[0]}, connectInteractive(context.Background(), args[0], os.Stdin, cmd.OutOrStdout(), os.Stderr)
 			})
 		},
 	}
+}
+
+func connectInteractive(ctx context.Context, host string, in io.Reader, out io.Writer, errOut io.Writer) error {
+	orchestrator := newConnectOrchestrator()
+	orchestrator.In = in
+	orchestrator.Out = out
+	orchestrator.Err = errOut
+	return orchestrator.Connect(ctx, host)
 }
 
 func newConnectPaneCommand() *cobra.Command {

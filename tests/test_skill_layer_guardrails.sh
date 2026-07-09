@@ -9,7 +9,7 @@ HOME_DIR="${WORKDIR}/home"
 ANSIBLE_DIR="${WORKDIR}/ansible"
 LOCK_DIR="${WORKDIR}/locks"
 mkdir -p "${HOME_DIR}" "${ANSIBLE_DIR}" "${LOCK_DIR}"
-cp "${REPO_ROOT}/ansible/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt"
+cp "${REPO_ROOT}/scripts/skills/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt"
 cat > "${ANSIBLE_DIR}/inventory.ini" <<'EOF'
 [test]
 srv-prod-01 ansible_host=127.0.0.1
@@ -76,6 +76,7 @@ run_guard() {
     out=$2
     set +e
     env HOME="${HOME_DIR}" \
+        POCKETCLI_DIR="${POCKETCLI_TEST_CODE_DIR:-${REPO_ROOT}}" \
         POCKETCLI_ANSIBLE_DIR="${ANSIBLE_DIR}" \
         POCKETCLI_SKILL_LOCK_DIR="${LOCK_DIR}" \
         bash "${REPO_ROOT}/scripts/skills/guard_rails.sh" "${request}" > "${out}" 2> "${out}.err"
@@ -124,8 +125,12 @@ assert_field "${out}" reason injection_attempt:params
 
 mv "${ANSIBLE_DIR}/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt.bak"
 write_request "${req}" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f709" "disk_check" "srv-prod-01" "read"
+run_guard "${req}" "${out}" || fail T-19-fallback
+assert_field "${out}" decision ALLOW
+POCKETCLI_TEST_CODE_DIR="${WORKDIR}/missing-code"
+export POCKETCLI_TEST_CODE_DIR
 run_guard "${req}" "${out}" && fail T-19
-[ "$?" -eq 0 ] && :
+unset POCKETCLI_TEST_CODE_DIR
 assert_field "${out}" reason whitelist_unavailable
 mv "${ANSIBLE_DIR}/allowed_skills.txt.bak" "${ANSIBLE_DIR}/allowed_skills.txt"
 

@@ -215,12 +215,12 @@ exit 0
 EOS
     chmod +x "$INSTALL_DIR/pocket"
 
-    cat > "$INSTALL_DIR/scripts/install_deps.sh" <<'EOS'
+    cat > "$INSTALL_DIR/scripts/install_requirements.sh" <<'EOS'
 #!/usr/bin/env sh
 set -eu
-printf 'install_deps:%s:%s\n' "$1" "$2" >> "$POCKETCLI_TEST_LOG"
+printf 'install_requirements:%s:%s\n' "$1" "$2" >> "$POCKETCLI_TEST_LOG"
 EOS
-    chmod +x "$INSTALL_DIR/scripts/install_deps.sh"
+    chmod +x "$INSTALL_DIR/scripts/install_requirements.sh"
 
     cat > "$INSTALL_DIR/scripts/tailscale_daemon.sh" <<'EOS'
 #!/usr/bin/env sh
@@ -290,7 +290,7 @@ run_install_test() {
         POCKETCLI_TEST_LOG="$LOG_FILE" \
         sh "$INSTALL_DIR/install.sh" >/tmp/pocketcli-install.out 2>/tmp/pocketcli-install.err
 
-    assert_file_contains "$LOG_FILE" "install_deps:debian:viewer" "install.sh instala dependências para o modo viewer detectado"
+    assert_file_contains "$LOG_FILE" "install_requirements:debian:viewer" "install.sh instala requisitos para o modo viewer detectado"
     assert_file_contains "$LOG_FILE" "tailscale_daemon:setup" "install.sh executa o setup do tailscale"
     assert_file_contains "$LOG_FILE" "start_viewer PATH=$INSTALL_DIR:" "install.sh inicia o viewer com PATH já ajustado"
     assert_file_contains "$HOME_DIR/.profile" "export POCKETCLI_DIR=\"$INSTALL_DIR\"" "install.sh injeta POCKETCLI_DIR no perfil"
@@ -330,7 +330,7 @@ EOS
         POCKETCLI_TEST_LOG="$LOG_FILE" \
         sh "$INSTALL_DIR/install.sh" >/tmp/pocketcli-agent-install.out 2>/tmp/pocketcli-agent-install.err
 
-    assert_file_contains "$LOG_FILE" "install_deps:debian:agent" "install.sh instala dependências para o modo agent"
+    assert_file_contains "$LOG_FILE" "install_requirements:debian:agent" "install.sh instala requisitos para o modo agent"
     assert_file_contains "$LOG_FILE" "start_agent PATH=$INSTALL_DIR:" "install.sh inicia o agent com PATH já ajustado"
     assert_file_contains "/tmp/pocketcli-agent-install.out" "Comparing host config with PocketCli project config" "install.sh mostra a comparação entre host e projeto antes da escolha"
     assert_file_contains "/tmp/pocketcli-agent-install.out" "status: different" "install.sh destaca quando encontra diferenças de config"

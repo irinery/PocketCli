@@ -157,6 +157,9 @@ scan_ssh_file() {
     base=$(basename -- "$file")
 
     case "$base" in
+        *.pub)
+            return 0
+            ;;
         config|id_*)
             if mode_is_more_open_than_600 "$mode"; then
                 emit_finding "$file" "$mode" "SSH_CONFIG_TOO_OPEN" "HIGH" "SSH config or key should be 0600"

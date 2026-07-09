@@ -253,6 +253,33 @@ func TestWritePersistsRequiredFields(t *testing.T) {
 	}
 }
 
+func TestMemoryStateAndEntriesArePrivate(t *testing.T) {
+	store := newTestStore(t)
+	err := store.RememberInteraction(LastInteraction{
+		SessionID: "99999999-9999-4999-8999-999999999999",
+		Kind:      KindPattern,
+		Scope:     "global",
+		Title:     "Privacidade",
+		Summary:   "Estado local privado.",
+		Body:      "Estado local privado.",
+		Tags:      []string{"privacy"},
+	})
+	if err != nil {
+		t.Fatalf("RememberInteraction() error = %v", err)
+	}
+	if _, err := store.SaveFromLastInteraction(); err != nil {
+		t.Fatalf("SaveFromLastInteraction() error = %v", err)
+	}
+	assertMemoryMode(t, store.stateDir(), 0o700)
+	assertMemoryMode(t, store.lastInteractionPath(), 0o600)
+	assertMemoryMode(t, store.memoryDir(), 0o700)
+	path, err := store.scopeFilePath("global")
+	if err != nil {
+		t.Fatalf("scopeFilePath() error = %v", err)
+	}
+	assertMemoryMode(t, path, 0o600)
+}
+
 func TestWriteRejectsInvalidKind(t *testing.T) {
 	store := newTestStore(t)
 
@@ -325,6 +352,17 @@ func TestSaveFromLastInteractionWithoutRecentAskReturnsInformativeError(t *testi
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	return NewStoreAt(t.TempDir())
+}
+
+func assertMemoryMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %#o, want %#o", path, got, want)
+	}
 }
 
 func fixedClock(value string) func() time.Time {

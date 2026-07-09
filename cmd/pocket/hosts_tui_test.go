@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"pocketcli/internal/connect"
 	"pocketcli/internal/tailscale"
 )
 
@@ -80,6 +82,43 @@ func TestRunHostsTUI_NoHosts(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Nenhum host encontrado.") {
 		t.Fatalf("expected no host message, got: %q", out.String())
+	}
+}
+
+func TestOpenHostFromHostsTUIUsesConnectOrchestrator(t *testing.T) {
+	orig := newConnectOrchestrator
+	t.Cleanup(func() { newConnectOrchestrator = orig })
+
+	var gotHost string
+	newConnectOrchestrator = func() *connect.Orchestrator {
+		orchestrator := connect.New()
+		orchestrator.LookupPath = func(name string) (string, error) { return "/bin/" + name, nil }
+		orchestrator.ResolveHostFunc = func(ctx context.Context, host string) (connect.HostInfo, error) {
+			gotHost = host
+			return connect.HostInfo{
+				Name:      host,
+				IP:        "100.64.0.10",
+				Online:    true,
+				Reachable: true,
+				Trust:     connect.TrustObserved,
+				Source:    connect.SourceTailscale,
+				Action:    connect.ActionInteractive,
+			}, nil
+		}
+		orchestrator.ApprovalFunc = func(ctx context.Context, info connect.HostInfo) (bool, error) {
+			return true, nil
+		}
+		orchestrator.RunCommand = func(ctx context.Context, name string, args []string, options connect.CommandOptions) (string, error) {
+			return "", nil
+		}
+		return orchestrator
+	}
+
+	if err := openHostFromHostsTUI(strings.NewReader(""), &bytes.Buffer{}, "prod-api"); err != nil {
+		t.Fatalf("openHostFromHostsTUI returned error: %v", err)
+	}
+	if gotHost != "prod-api" {
+		t.Fatalf("expected selected host to go through connect orchestrator, got %q", gotHost)
 	}
 }
 

@@ -1,0 +1,16 @@
+---
+- name: PocketCli disk check
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Collect disk usage
+      ansible.builtin.command: df -P /
+      changed_when: false
+      register: pocket_disk
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg:
+          mount_point: "/"
+          output: "{{ pocket_disk.stdout }}"
+          changed: false

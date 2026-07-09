@@ -134,15 +134,18 @@ func (s *Store) Append(event Event) (AppendResult, error) {
 	if err != nil {
 		return AppendResult{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := pocketpath.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return AppendResult{}, err
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return AppendResult{}, err
 	}
 	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return AppendResult{}, err
+	}
 
 	offset, err := file.Seek(0, 2)
 	if err != nil {
@@ -251,7 +254,7 @@ func (s *Store) RebuildIndex() (RebuildResult, error) {
 	if err != nil {
 		return RebuildResult{}, err
 	}
-	if err := pocketpath.AtomicWrite(s.indexPath(), append(data, '\n'), 0o644); err != nil {
+	if err := pocketpath.AtomicWrite(s.indexPath(), append(data, '\n'), 0o600); err != nil {
 		return RebuildResult{}, err
 	}
 	return RebuildResult{EventsIndexed: len(events), SkippedLines: skipped}, nil

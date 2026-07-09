@@ -19,4 +19,11 @@ ssh_policy_ensure_file
 [ "$(ssh_policy_get strict_mode)" = "false" ]
 [ "$(ssh_policy_get connect_timeout_sec)" = "10" ]
 
-echo "PASS ssh policy defaults"
+cat > "$(pocket_ssh_policy_file)" <<'EOF'
+{"host_key_policy":"accept-new -o ProxyCommand=malicious","connect_timeout_sec":"10 -o ProxyCommand=malicious"}
+EOF
+chmod 600 "$(pocket_ssh_policy_file)"
+[ "$(ssh_policy_get host_key_policy)" = "accept-new" ]
+[ "$(ssh_policy_get connect_timeout_sec)" = "10" ]
+
+echo "PASS ssh policy defaults and rejects option injection"
