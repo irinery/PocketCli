@@ -61,3 +61,13 @@ func TestGetStatus_ReturnsParseError(t *testing.T) {
 		t.Fatalf("expected parse error, got: %v", err)
 	}
 }
+
+func TestStatusOutputBufferCapsMemory(t *testing.T) {
+	buffer := newStatusOutputBuffer(4)
+	if _, err := buffer.Write([]byte("abcdef")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if buffer.String() != "abcd" || !buffer.Truncated() {
+		t.Fatalf("unexpected buffer state output=%q truncated=%t", buffer.String(), buffer.Truncated())
+	}
+}

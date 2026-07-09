@@ -20,7 +20,7 @@ layout_engine_apply_or_restore() {
     fi
 
     if [ "${ACTION}" = "restore_workspace" ]; then
-        layout_try_restore_tmux || true
+        layout_try_restore_tmux || layout_create_restore_tmux || true
     fi
 
     ENTRY_ACTION="menu"

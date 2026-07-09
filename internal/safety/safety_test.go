@@ -1,6 +1,10 @@
 package safety
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"testing"
+)
 
 func TestEvaluateAllowsReadOnlyCommand(t *testing.T) {
 	decision, err := Evaluate(Request{Action: "exec", Command: []string{"uptime"}, HostCount: 1})
@@ -26,5 +30,40 @@ func TestEvaluateBlocksSensitivePath(t *testing.T) {
 	}
 	if decision.Classification != ClassificationBlocked {
 		t.Fatalf("expected blocked, got %#v", decision)
+	}
+}
+
+func TestApprovalTokenCanOnlyBeConsumedOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	envelope, err := CreateRunEnvelope(Request{
+		Action:      "exec",
+		Command:     []string{"sudo", "systemctl", "restart", "nginx"},
+		Host:        "prod-api",
+		HostCount:   1,
+		Interactive: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateRunEnvelope() error = %v", err)
+	}
+	token, err := Approve(envelope.EnvelopeID, DefaultApprovalTTL, true)
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if err := ConsumeApproval(envelope.EnvelopeID, token.ApprovalToken); err != nil {
+		t.Fatalf("first ConsumeApproval() error = %v", err)
+	}
+	if err := ConsumeApproval(envelope.EnvelopeID, token.ApprovalToken); !errors.Is(err, ErrApprovalNotFound) {
+		t.Fatalf("second ConsumeApproval() error = %v, want ErrApprovalNotFound", err)
+	}
+}
+
+func TestApprovalCreationFailsClosedWhenRandomnessIsUnavailable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalReadRandom := readRandom
+	readRandom = func([]byte) (int, error) { return 0, os.ErrPermission }
+	t.Cleanup(func() { readRandom = originalReadRandom })
+
+	if _, err := CreateRunEnvelope(Request{Action: "exec", Command: []string{"uptime"}, HostCount: 1}); !errors.Is(err, ErrRandomUnavailable) {
+		t.Fatalf("CreateRunEnvelope() error = %v, want ErrRandomUnavailable", err)
 	}
 }

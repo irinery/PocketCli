@@ -6,7 +6,9 @@ pocket_capability_has() {
 
 pocket_detect_capabilities() {
     HAS_TTY=false
-    [ -t 0 ] && HAS_TTY=true
+    if [ -t 0 ] || (stty -g < /dev/tty >/dev/null 2>&1) 2>/dev/null; then
+        HAS_TTY=true
+    fi
 
     HAS_TMUX=false
     pocket_capability_has tmux && HAS_TMUX=true
@@ -35,8 +37,10 @@ pocket_detect_capabilities() {
     HAS_GO=false
     pocket_capability_has go && HAS_GO=true
 
+    # shellcheck disable=SC2034 # consumed by sourced runtime/context.sh callers
     IS_ISH=false
     if command -v is_ish >/dev/null 2>&1 && is_ish; then
+        # shellcheck disable=SC2034 # consumed by sourced runtime/context.sh callers
         IS_ISH=true
     fi
 }
@@ -49,11 +53,11 @@ pocket_capabilities_json() {
     LAYOUT=plain
     if [ "${HAS_TTY}" = true ]; then
         if [ "${COLS}" -ge 92 ] 2>/dev/null; then
-            LAYOUT=split
+            LAYOUT='split'
         elif [ "${COLS}" -ge 60 ] 2>/dev/null; then
-            LAYOUT=stack
+            LAYOUT='stack'
         else
-            LAYOUT=compact
+            LAYOUT='compact'
         fi
     fi
 

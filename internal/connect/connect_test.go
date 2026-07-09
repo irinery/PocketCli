@@ -111,6 +111,29 @@ func TestT0204ResolveHostOfflineReturnsExit1(t *testing.T) {
 	assertExitError(t, err, ExitCodeFailure, "pocket: host 'devcenter' está offline (Tailscale)")
 }
 
+func TestResolveHostFallsBackToDNSWhenTailscaleStatusFails(t *testing.T) {
+	errOut := &bytes.Buffer{}
+	runner := newFakeRunner()
+	runner.handle("tailscale", []string{"status", "--json"}, "", errors.New("tailscale unavailable"))
+
+	orchestrator := New()
+	orchestrator.Err = errOut
+	orchestrator.RunCommand = runner.run
+	orchestrator.LookupPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	orchestrator.ResolveTimeout = time.Second
+
+	info, err := orchestrator.resolveHost(context.Background(), "localhost")
+	if err != nil {
+		t.Fatalf("resolveHost() error = %v", err)
+	}
+	if info.Source != SourceDirect || info.Trust != TrustUntrusted || !info.Reachable || info.IP == "" {
+		t.Fatalf("unexpected DNS fallback info: %#v", info)
+	}
+	if !strings.Contains(errOut.String(), "tailscale status indisponível") {
+		t.Fatalf("stderr = %q, want fallback warning", errOut.String())
+	}
+}
+
 func TestT0205ConnectApprovalDeniedPrintsCancellation(t *testing.T) {
 	out := &bytes.Buffer{}
 	runner := newFakeRunner()
@@ -250,6 +273,8 @@ func TestRunPaneLogsAndCleansSessionOnNormalExit(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("ReadFile() error = %v", readErr)
 	}
+	assertMode(t, filepath.Join(homeDir, ".pocketcli", "logs"), 0o700)
+	assertMode(t, filepath.Join(homeDir, ".pocketcli", "logs", "sessions.log"), 0o600)
 	text := string(data)
 	if !strings.Contains(text, `"event":"connect"`) {
 		t.Fatalf("log = %q, want connect event", text)
@@ -424,6 +449,17 @@ func waitConnectResult(t *testing.T, done <-chan error) error {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("Connect() did not finish within 200ms")
 		return nil
+	}
+}
+
+func assertMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %#o, want %#o", path, got, want)
 	}
 }
 

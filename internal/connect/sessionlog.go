@@ -55,8 +55,17 @@ func (l *SessionLogger) write(record SessionRecord) {
 		return
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	logDir := filepath.Dir(path)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível preparar log de sessão: %v", err))
+		return
+	}
+	if err := os.Chmod(filepath.Dir(logDir), 0o700); err != nil {
+		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível ajustar permissão da instalação: %v", err))
+		return
+	}
+	if err := os.Chmod(logDir, 0o700); err != nil {
+		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível ajustar permissão do log de sessão: %v", err))
 		return
 	}
 
@@ -70,12 +79,16 @@ func (l *SessionLogger) write(record SessionRecord) {
 		return
 	}
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível escrever log de sessão: %v", err))
 		return
 	}
 	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível ajustar permissão do log de sessão: %v", err))
+		return
+	}
 
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		l.warnOnce(fmt.Sprintf("pocket: aviso: não foi possível escrever log de sessão: %v", err))

@@ -44,6 +44,7 @@ const (
 	StatusHostUnreachable ResultStatus = "host_unreachable"
 	StatusInvalidSession  ResultStatus = "invalid_session"
 	StatusInvalidHostname ResultStatus = "invalid_hostname"
+	StatusAuditFailed     ResultStatus = "audit_failed"
 )
 
 type RemoteHost struct {

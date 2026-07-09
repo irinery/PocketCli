@@ -292,6 +292,18 @@ test_permission_scanner() {
 
     repo=$(new_repo)
     home=$(mktemp -d "${TMP_ROOT}/home.XXXXXX")
+    mkdir -p "$home/.ssh"
+    printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest public\n' > "$home/.ssh/id_ed25519.pub"
+    chmod 644 "$home/.ssh/id_ed25519.pub"
+    set +e
+    HOME=$home REPO_ROOT=$repo bash "$PROJECT_ROOT/scripts/security/03_filesystem_permission_audit.sh" local > "$out" 2> "$err"
+    rc=$?
+    set -e
+    assert_rc 0 "$rc" T03-06B
+    assert_contains "$out" "No permission issues found." T03-06B
+
+    repo=$(new_repo)
+    home=$(mktemp -d "${TMP_ROOT}/home.XXXXXX")
     mkdir -p "$home/.pocketcli"
     chmod 755 "$home/.pocketcli"
     set +e

@@ -15,11 +15,23 @@ pocket_skill_ansible_dir() {
 }
 
 pocket_skill_playbook_dir() {
-    printf '%s/playbooks\n' "$(pocket_skill_ansible_dir)"
+    local local_dir
+    local_dir="$(pocket_skill_ansible_dir)/playbooks"
+    if [[ -d "$local_dir" ]]; then
+        printf '%s\n' "$local_dir"
+        return 0
+    fi
+    printf '%s/scripts/skills/playbooks\n' "$(pocket_skill_code_dir)"
 }
 
 pocket_skill_allowed_file() {
-    printf '%s/allowed_skills.txt\n' "$(pocket_skill_ansible_dir)"
+    local local_file
+    local_file="$(pocket_skill_ansible_dir)/allowed_skills.txt"
+    if [[ -f "$local_file" ]]; then
+        printf '%s\n' "$local_file"
+        return 0
+    fi
+    printf '%s/scripts/skills/allowed_skills.txt\n' "$(pocket_skill_code_dir)"
 }
 
 pocket_skill_inventory_file() {

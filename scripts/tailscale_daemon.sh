@@ -194,11 +194,18 @@ _install_tailscale() {
         warn "Could not install tailscale via apk"
         return 1
     elif command -v apt-get >/dev/null 2>&1; then
-        if curl -fsSL https://tailscale.com/install.sh | sh; then
+        INSTALL_TMP=$(mktemp -d) || return 1
+        trap 'rm -rf "${INSTALL_TMP}"' EXIT HUP INT TERM
+        if curl -fsSL https://tailscale.com/install.sh -o "${INSTALL_TMP}/tailscale-install.sh" && \
+            sh "${INSTALL_TMP}/tailscale-install.sh"; then
             apt-get install -y --no-install-recommends qrencode 2>/dev/null || true
+            rm -rf "${INSTALL_TMP}"
+            trap - EXIT HUP INT TERM
             return 0
         fi
-        warn "Could not install tailscale via install.sh"
+        rm -rf "${INSTALL_TMP}"
+        trap - EXIT HUP INT TERM
+        warn "Could not install tailscale via downloaded installer"
         return 1
     fi
 

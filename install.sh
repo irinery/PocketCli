@@ -23,6 +23,8 @@ success() { printf '[PocketCli] OK: %s\n' "$*"; }
 die()     { printf '[PocketCli] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -z "${HOME:-}" ] && die "\$HOME is not set."
+umask 077
+[ -d "${INSTALL_DIR}" ] && chmod 700 "${INSTALL_DIR}"
 
 prompt_choice() {
     VAR_NAME="$1"
@@ -251,9 +253,9 @@ esac
 
 info "Selected mode: ${action_mode}"
 
-# Install deps
+# Install system requirements
 PATH="${INSTALL_DIR}:${PATH}"; export PATH
-sh "${SCRIPTS_DIR}/install_deps.sh" "${OS}" "${action_mode}"
+sh "${SCRIPTS_DIR}/install_requirements.sh" "${OS}" "${action_mode}"
 
 # Tailscale setup only if not iSH? external script handles it
 sh "${SCRIPTS_DIR}/tailscale_daemon.sh" setup || true

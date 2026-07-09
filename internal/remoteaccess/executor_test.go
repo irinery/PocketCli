@@ -3,6 +3,8 @@ package remoteaccess
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -205,6 +207,104 @@ func TestAuditUnavailableBlocksBeforeSSH(t *testing.T) {
 	}
 }
 
+func TestAuditWriteFailureIsReportedAfterExecution(t *testing.T) {
+	runner := &recordingRunner{output: RunOutput{ExitCode: 0}}
+	executor := testExecutor(runner)
+	executor.Logger = writeFailingAuditLogger{}
+
+	result, err := executor.Execute(context.Background(), RemoteCommandRequest{
+		HostAlias:   "dev",
+		Command:     "uptime",
+		RequestedBy: RequestedByHuman,
+	}, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Status != StatusAuditFailed || result.Stderr != "audit_unavailable" {
+		t.Fatalf("unexpected audit failure result: %#v", result)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("runner calls = %#v, want one execution", runner.calls)
+	}
+}
+
+func TestResolvedHostRejectsSSHOptionInjection(t *testing.T) {
+	runner := &recordingRunner{}
+	executor := testExecutor(runner)
+	executor.Resolver = func(context.Context, string) (RemoteHost, error) {
+		return RemoteHost{
+			Alias:        "dev",
+			Hostname:     "-oProxyCommand=malicious",
+			AccessMethod: AccessMethodSSH,
+			SSHPort:      22,
+			Enabled:      true,
+		}, nil
+	}
+
+	result, err := executor.Execute(context.Background(), RemoteCommandRequest{
+		HostAlias:   "dev",
+		Command:     "uptime",
+		RequestedBy: RequestedByHuman,
+	}, ExecuteOptions{})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if result.Status != StatusInvalidHostname || len(runner.calls) != 0 {
+		t.Fatalf("unexpected invalid host handling result=%#v calls=%#v", result, runner.calls)
+	}
+}
+
+func TestHostStoreRejectsGroupWritableConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remote-hosts.json")
+	if err := os.WriteFile(path, []byte(`[]`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	store := &JSONHostStore{Path: path}
+	if _, err := store.Load(); !errors.Is(err, ErrUnsafeHostStore) {
+		t.Fatalf("Load() error = %v, want ErrUnsafeHostStore", err)
+	}
+}
+
+func TestCappedBufferLimitsCapturedOutput(t *testing.T) {
+	buffer := newCappedBuffer(4)
+	if _, err := buffer.Write([]byte("abcdef")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if buffer.String() != "abcd" || !buffer.Truncated() {
+		t.Fatalf("unexpected capped output value=%q truncated=%t", buffer.String(), buffer.Truncated())
+	}
+}
+
+func TestJSONLAuditLoggerCreatesPrivateLog(t *testing.T) {
+	home := t.TempDir()
+	logger := NewJSONLAuditLogger()
+	logger.HomeDir = func() (string, error) { return home, nil }
+	logger.User = func() string { return "tester" }
+
+	result := RemoteCommandResult{
+		CommandID:   "command-1",
+		SessionID:   validSessionID,
+		HostAlias:   "dev",
+		Command:     "uptime",
+		StartedAt:   "2026-05-05T12:00:00Z",
+		DurationMS:  12,
+		Status:      StatusSuccess,
+		RequestedBy: RequestedByHuman,
+	}
+	if err := logger.Prepare(); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if err := logger.Write(result); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	assertRemoteMode(t, filepath.Join(home, ".pocketcli", "logs"), 0o700)
+	assertRemoteMode(t, filepath.Join(home, ".pocketcli", "logs", "remote-commands.jsonl"), 0o600)
+}
+
 const validSessionID = "550e8400-e29b-41d4-a716-446655440000"
 
 type recordedCall struct {
@@ -222,6 +322,11 @@ type failingAuditLogger struct{}
 
 func (failingAuditLogger) Prepare() error                  { return errors.New("readonly") }
 func (failingAuditLogger) Write(RemoteCommandResult) error { return nil }
+
+type writeFailingAuditLogger struct{}
+
+func (writeFailingAuditLogger) Prepare() error                  { return nil }
+func (writeFailingAuditLogger) Write(RemoteCommandResult) error { return errors.New("disk full") }
 
 func (r *recordingRunner) run(ctx context.Context, name string, args []string, options RunOptions) (RunOutput, error) {
 	r.calls = append(r.calls, recordedCall{name: name, args: append([]string(nil), args...)})
@@ -265,5 +370,16 @@ func fixedRemoteClock(times ...time.Time) func() time.Time {
 		current := times[index]
 		index++
 		return current
+	}
+}
+
+func assertRemoteMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %#o, want %#o", path, got, want)
 	}
 }

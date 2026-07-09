@@ -32,6 +32,15 @@ Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell PO
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar que os entrypoints shell não fazem fallback para SSH/SCP/fleet sem policy, rode `sh tests/test_secure_shell_entrypoints.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `grep`, `cp` e `chmod`. O teste usa binários SSH/SCP mockados e não toca rede. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar a camada Go de segurança de execução, rode `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/safety ./internal/remoteaccess ./internal/pocketpath ./internal/ledger ./internal/memory`.
+Pré-requisitos: toolchain Go suportado pelo projeto e `GOCACHE` gravável. Os testes isolam `HOME` em diretórios temporários e não exigem credenciais, Tailscale ou SSH reais.
+
+Para validar isoladamente o wrapper de requisitos do instalador, rode `sh tests/test_install_requirements.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `grep`, `cp` e `chmod`. O teste usa mocks locais de `ansible-playbook` e não exige Ansible real instalado. Variáveis de ambiente: nenhuma obrigatória.
+
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
 
