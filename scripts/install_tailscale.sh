@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # =============================================================================
 # PocketCli — scripts/install_tailscale.sh
-# Installs and authenticates Tailscale.
+# Compatibility entrypoint for the unified Tailscale setup flow.
 # =============================================================================
 
 set -eu
@@ -13,7 +13,7 @@ log_debug() {
 }
 
 OS="${1:-auto}"
-POCKETCLI_DIR="${HOME}/.pocketcli"
+POCKETCLI_DIR="${POCKETCLI_DIR:-${HOME}/.pocketcli}"
 DAEMON_SCRIPT="${POCKETCLI_DIR}/scripts/tailscale_daemon.sh"
 
 log_debug "delegating install flow os=${OS} to tailscale_daemon.sh"

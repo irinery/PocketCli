@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	stdctx "context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,8 @@ import (
 )
 
 const defaultProfile = "default"
+
+const maxBackendCommandOutputBytes = 64 * 1024
 
 var (
 	collectTaskContext = func(cwd string, session contextcollector.Session, options contextcollector.CollectOptions) (contextcollector.TaskContext, error) {
@@ -109,15 +112,20 @@ func (c commandBackendClient) Complete(ctx stdctx.Context, request backend.Compl
 	cmd := exec.CommandContext(ctx, "sh", "-lc", c.command)
 	cmd.Stdin = strings.NewReader(request.Prompt)
 	cmd.Env = append(os.Environ(),
-		"POCKETCLI_PROMPT="+request.Prompt,
 		"POCKETCLI_MODEL="+request.Model,
 		"POCKETCLI_MAX_TOKENS="+strconv.Itoa(request.MaxTokens),
 		"POCKETCLI_TEMPERATURE="+strconv.FormatFloat(request.Temperature, 'f', -1, 64),
 		"POCKETCLI_TIMEOUT_MS="+strconv.FormatInt(request.Timeout.Milliseconds(), 10),
 	)
 
-	output, err := cmd.CombinedOutput()
-	content := strings.TrimSpace(string(output))
+	output := newCommandOutputBuffer(maxBackendCommandOutputBytes)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	content := strings.TrimSpace(output.String())
+	if output.Truncated() {
+		content = strings.TrimSpace(commandOutputWithMarker(content, maxBackendCommandOutputBytes))
+	}
 	if err != nil {
 		if content == "" {
 			content = err.Error()
@@ -135,6 +143,46 @@ func (c commandBackendClient) Complete(ctx stdctx.Context, request backend.Compl
 		TokenUsage:   approximateTokenCount(content),
 		FinishReason: backend.FinishReasonStop,
 	}, nil
+}
+
+type commandOutputBuffer struct {
+	buffer    bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+func newCommandOutputBuffer(maxBytes int) commandOutputBuffer {
+	return commandOutputBuffer{maxBytes: maxBytes}
+}
+
+func (b *commandOutputBuffer) Write(value []byte) (int, error) {
+	remaining := b.maxBytes - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	if len(value) > remaining {
+		_, _ = b.buffer.Write(value[:remaining])
+		b.truncated = true
+		return len(value), nil
+	}
+	_, err := b.buffer.Write(value)
+	return len(value), err
+}
+
+func (b *commandOutputBuffer) String() string { return b.buffer.String() }
+
+func (b *commandOutputBuffer) Truncated() bool { return b.truncated }
+
+func commandOutputWithMarker(value string, maxBytes int) string {
+	marker := "\n[output truncated]"
+	if maxBytes <= len(marker) {
+		return marker[:maxBytes]
+	}
+	if len(value)+len(marker) <= maxBytes {
+		return value + marker
+	}
+	return value[:maxBytes-len(marker)] + marker
 }
 
 func newAskCommand() *cobra.Command {

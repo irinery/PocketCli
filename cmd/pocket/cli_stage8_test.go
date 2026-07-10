@@ -113,6 +113,27 @@ func TestIntegration_AskSanitizesContextAndAppendsAuditLog(t *testing.T) {
 	}
 }
 
+func TestCommandBackendReceivesPromptOnlyOnStdinAndTruncatesOutput(t *testing.T) {
+	client := commandBackendClient{command: `test -z "$POCKETCLI_PROMPT" && cat && yes x | head -n 100000`}
+	result, err := client.Complete(stdctx.Background(), backend.CompletionRequest{
+		Prompt:    "prompt reservado",
+		Model:     "local-test",
+		MaxTokens: 10,
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if !strings.Contains(result.Content, "prompt reservado") {
+		t.Fatalf("expected stdin prompt in output, got %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "[output truncated]") {
+		t.Fatalf("expected truncation marker, got %q", result.Content[len(result.Content)-128:])
+	}
+	if len([]byte(result.Content)) > maxBackendCommandOutputBytes {
+		t.Fatalf("command backend output = %d bytes, want <= %d", len([]byte(result.Content)), maxBackendCommandOutputBytes)
+	}
+}
+
 func TestIntegration_AskAutoFallsBackToRemoteWhenLocalUnavailable(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)

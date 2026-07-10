@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -18,9 +17,11 @@ import (
 type RunOptions struct{}
 
 type RunOutput struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout          string
+	Stderr          string
+	ExitCode        int
+	StdoutTruncated bool
+	StderrTruncated bool
 }
 
 type CommandRunner func(ctx context.Context, name string, args []string, options RunOptions) (RunOutput, error)
@@ -150,13 +151,13 @@ func (e *Executor) Execute(ctx context.Context, request RemoteCommandRequest, op
 	output, err := e.runner()(execCtx, commandName(host), commandArgs(host, result.Command, timeout), RunOptions{})
 	if errors.Is(execCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		result.Status = StatusTimeout
-		result.Stdout, result.Stderr, result.Truncated = truncateOutputs(output.Stdout, output.Stderr, e.maxOutputBytes())
+		result.Stdout, result.Stderr, result.Truncated = finalizeOutputs(output, e.maxOutputBytes())
 		return e.finishAndAudit(result, startedAt), nil
 	}
 
 	exitCode := output.ExitCode
 	result.ExitCode = &exitCode
-	result.Stdout, result.Stderr, result.Truncated = truncateOutputs(output.Stdout, output.Stderr, e.maxOutputBytes())
+	result.Stdout, result.Stderr, result.Truncated = finalizeOutputs(output, e.maxOutputBytes())
 	if err != nil || exitCode != 0 {
 		result.Status = StatusFailed
 		return e.finishAndAudit(result, startedAt), nil
@@ -186,7 +187,10 @@ func (e *Executor) prepareAudit() error {
 func (e *Executor) finishAndAudit(result RemoteCommandResult, startedAt time.Time) RemoteCommandResult {
 	result = e.finish(result, startedAt)
 	if e != nil && e.Logger != nil {
-		_ = e.Logger.Write(result)
+		if err := e.Logger.Write(result); err != nil {
+			result.Status = StatusAuditFailed
+			result.Stderr = "audit_unavailable"
+		}
 	}
 	return result
 }
@@ -227,9 +231,20 @@ func validateResolvedHost(host RemoteHost) error {
 		return err
 	}
 	if host.TailscaleIP != nil {
-		if err := ValidateHostname(*host.TailscaleIP); err != nil {
+		if err := ValidateTailscaleIP(*host.TailscaleIP); err != nil {
 			return err
 		}
+	}
+	if err := ValidateDefaultUser(host.DefaultUser); err != nil {
+		return err
+	}
+	if host.SSHPort < 1 || host.SSHPort > 65535 {
+		return ErrInvalidHostname
+	}
+	switch host.AccessMethod {
+	case AccessMethodSSH, AccessMethodTailscaleSSH:
+	default:
+		return ErrInvalidHostname
 	}
 	return nil
 }
@@ -257,6 +272,8 @@ func commandArgs(host RemoteHost, command string, timeout int) []string {
 	}
 
 	args := []string{
+		"-n",
+		"-o", "BatchMode=yes",
 		"-o", fmt.Sprintf("ConnectTimeout=%d", timeout),
 		"-o", "StrictHostKeyChecking=accept-new",
 	}
@@ -302,6 +319,30 @@ func truncateOutputs(stdout, stderr string, maxBytes int) (string, string, bool)
 	return stdout, stderr, truncated || stderrTruncated
 }
 
+func finalizeOutputs(output RunOutput, maxBytes int) (string, string, bool) {
+	stdout, stderr, truncated := truncateOutputs(output.Stdout, output.Stderr, maxBytes)
+	if output.StdoutTruncated {
+		stdout = addTruncationMarker(stdout, maxBytes)
+		truncated = true
+	}
+	if output.StderrTruncated {
+		stderr = addTruncationMarker(stderr, maxBytes)
+		truncated = true
+	}
+	return stdout, stderr, truncated
+}
+
+func addTruncationMarker(value string, maxBytes int) string {
+	marker := "\n[output truncated]"
+	if maxBytes <= len(marker) {
+		return marker[:maxBytes]
+	}
+	if len(value)+len(marker) <= maxBytes {
+		return value + marker
+	}
+	return value[:maxBytes-len(marker)] + marker
+}
+
 func truncateString(value string, maxBytes int) (string, bool) {
 	if maxBytes <= 0 || len([]byte(value)) <= maxBytes {
 		return value, false
@@ -318,11 +359,10 @@ func truncateString(value string, maxBytes int) (string, bool) {
 
 func defaultRunner(ctx context.Context, name string, args []string, _ RunOptions) (RunOutput, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	stdout := newCappedBuffer(MaxCommandOutputBytes)
+	stderr := newCappedBuffer(MaxCommandOutputBytes)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
 
 	err := cmd.Run()
 	exitCode := 0
@@ -333,7 +373,50 @@ func defaultRunner(ctx context.Context, name string, args []string, _ RunOptions
 			exitCode = exitErr.ExitCode()
 		}
 	}
-	return RunOutput{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode}, err
+	return RunOutput{
+		Stdout:          stdout.String(),
+		Stderr:          stderr.String(),
+		ExitCode:        exitCode,
+		StdoutTruncated: stdout.Truncated(),
+		StderrTruncated: stderr.Truncated(),
+	}, err
+}
+
+type cappedBuffer struct {
+	buffer    bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+func newCappedBuffer(maxBytes int) cappedBuffer {
+	return cappedBuffer{maxBytes: maxBytes}
+}
+
+func (b *cappedBuffer) Write(value []byte) (int, error) {
+	if b.maxBytes <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	remaining := b.maxBytes - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	if len(value) > remaining {
+		_, _ = b.buffer.Write(value[:remaining])
+		b.truncated = true
+		return len(value), nil
+	}
+	_, err := b.buffer.Write(value)
+	return len(value), err
+}
+
+func (b *cappedBuffer) String() string {
+	return b.buffer.String()
+}
+
+func (b *cappedBuffer) Truncated() bool {
+	return b.truncated
 }
 
 func (e *Executor) defaultProbe(ctx context.Context, host RemoteHost) error {

@@ -3,9 +3,15 @@ package pocketpath
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
+const privateDirMode = 0o700
+
 func HomeDir() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		return home, nil
+	}
 	return os.UserHomeDir()
 }
 
@@ -46,7 +52,7 @@ func EnsureDataDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := EnsurePrivateDir(dir); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -57,15 +63,24 @@ func EnsureConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := EnsurePrivateDir(dir); err != nil {
 		return "", err
 	}
 	return dir, nil
 }
 
+// EnsurePrivateDir creates a user-owned runtime directory and repairs modes
+// left permissive by older PocketCli releases.
+func EnsurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, privateDirMode); err != nil {
+		return err
+	}
+	return os.Chmod(dir, privateDirMode)
+}
+
 func AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := EnsurePrivateDir(dir); err != nil {
 		return err
 	}
 
@@ -93,5 +108,5 @@ func AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
-	return nil
+	return os.Chmod(path, perm)
 }

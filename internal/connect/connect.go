@@ -2,6 +2,7 @@ package connect
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,8 @@ const (
 	ExitCodeFailure        = 1
 	ExitCodeInvalidInput   = 2
 	ExitCodeMissingRuntime = 3
+
+	maxCapturedCommandBytes = 1024 * 1024
 )
 
 var validHostPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,63}$`)
@@ -280,12 +283,14 @@ func (o *Orchestrator) resolveHost(ctx context.Context, host string) (HostInfo, 
 		Env:           []string{"TAILSCALE_BE_CLI=1"},
 	})
 	if err != nil {
-		return HostInfo{}, &ExitError{Code: ExitCodeFailure, Message: "pocket: falha ao consultar Tailscale (timeout ou erro)"}
+		fmt.Fprintln(o.stderr(), "pocket: tailscale status indisponível. Tentando resolução DNS.")
+		return o.resolveHostDNS(ctx, host)
 	}
 
 	var status tailscale.Status
 	if err := json.Unmarshal([]byte(output), &status); err != nil {
-		return HostInfo{}, &ExitError{Code: ExitCodeFailure, Message: "pocket: falha ao consultar Tailscale (timeout ou erro)"}
+		fmt.Fprintln(o.stderr(), "pocket: resposta inválida do Tailscale. Tentando resolução DNS.")
+		return o.resolveHostDNS(ctx, host)
 	}
 
 	peer, ok := findPeer(status, host)
@@ -542,11 +547,16 @@ func defaultCommandRunner(ctx context.Context, name string, args []string, optio
 	}
 
 	if options.CaptureOutput {
+		output := newConnectOutputBuffer(maxCapturedCommandBytes)
+		cmd.Stdout = &output
 		if options.Stderr != nil {
 			cmd.Stderr = options.Stderr
 		}
-		output, err := cmd.Output()
-		return string(output), err
+		err := cmd.Run()
+		if output.Truncated() && err == nil {
+			err = errors.New("command output too large")
+		}
+		return output.String(), err
 	}
 
 	cmd.Stdin = options.Stdin
@@ -554,6 +564,35 @@ func defaultCommandRunner(ctx context.Context, name string, args []string, optio
 	cmd.Stderr = options.Stderr
 	return "", cmd.Run()
 }
+
+type connectOutputBuffer struct {
+	buffer    bytes.Buffer
+	maxBytes  int
+	truncated bool
+}
+
+func newConnectOutputBuffer(maxBytes int) connectOutputBuffer {
+	return connectOutputBuffer{maxBytes: maxBytes}
+}
+
+func (b *connectOutputBuffer) Write(value []byte) (int, error) {
+	remaining := b.maxBytes - b.buffer.Len()
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	if len(value) > remaining {
+		_, _ = b.buffer.Write(value[:remaining])
+		b.truncated = true
+		return len(value), nil
+	}
+	_, err := b.buffer.Write(value)
+	return len(value), err
+}
+
+func (b *connectOutputBuffer) String() string { return b.buffer.String() }
+
+func (b *connectOutputBuffer) Truncated() bool { return b.truncated }
 
 func isExitCode(err error, code int) bool {
 	var codedErr exitCoder

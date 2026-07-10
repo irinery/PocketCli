@@ -105,16 +105,7 @@ _cmd_list() {
 }
 
 _cmd_connect() {
-    if [ -x "${SCRIPTS}/ssh/open.sh" ]; then
-        HOST="${1:-}"
-        [ -n "${HOST}" ] || {
-            HOSTS=$(list_known_hosts || true)
-            [ -n "${HOSTS}" ] || die "No known hosts available."
-            HOST=$(printf '%s\n' "${HOSTS}" | head -1)
-        }
-        exec sh "${SCRIPTS}/ssh/open.sh" --run interactive "${HOST}"
-    fi
-
+    [ -x "${SCRIPTS}/ssh/open.sh" ] || die "Secure SSH wrapper unavailable: ${SCRIPTS}/ssh/open.sh"
     HOST="${1:-}"
 
     if [ -z "${HOST}" ]; then
@@ -143,39 +134,20 @@ _cmd_connect() {
         esac
     fi
 
-    HOST=$(safe_host "${HOST}")
-    [ -z "${HOST}" ] && die "Invalid hostname."
-    info "Connecting to ${HOST}..."
-    exec ssh "${HOST}"
+    exec sh "${SCRIPTS}/ssh/open.sh" --run interactive "${HOST}"
 }
 
 _cmd_run() {
-    if [ -x "${SCRIPTS}/ssh/exec.sh" ]; then
-        [ $# -lt 2 ] && die "Usage: pocket run <host> <command>"
-        HOST=$(safe_host "$1"); shift
-        exec sh "${SCRIPTS}/ssh/exec.sh" "${HOST}" "$@"
-    fi
-
     [ $# -lt 2 ] && die "Usage: pocket run <host> <command>"
-    HOST=$(safe_host "$1"); shift
-    [ -z "${HOST}" ] && die "Invalid hostname."
-    info "Running on ${HOST}: $*"
-    ssh -n -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "${HOST}" -- "$@"
+    [ -x "${SCRIPTS}/ssh/exec.sh" ] || die "Secure SSH wrapper unavailable: ${SCRIPTS}/ssh/exec.sh"
+    HOST="$1"; shift
+    exec sh "${SCRIPTS}/ssh/exec.sh" "${HOST}" "$@"
 }
 
 _cmd_copy() {
-    if [ -x "${SCRIPTS}/ssh/copy.sh" ]; then
-        [ $# -lt 2 ] && die "Usage: pocket copy <src> <dst>"
-        SRC="$1"
-        DST="$2"
-        exec sh "${SCRIPTS}/ssh/copy.sh" "${SRC}" "${DST}"
-    fi
-
     [ $# -lt 2 ] && die "Usage: pocket copy <src> <dst>"
-    require scp
-    info "Copying: $1  ->  $2"
-    scp -r "$1" "$2"
-    ok "Done."
+    [ -x "${SCRIPTS}/ssh/copy.sh" ] || die "Secure SSH wrapper unavailable: ${SCRIPTS}/ssh/copy.sh"
+    exec sh "${SCRIPTS}/ssh/copy.sh" "$1" "$2"
 }
 
 _cmd_status() { exec sh "${SCRIPTS}/pocket-status.sh"; }
@@ -192,6 +164,11 @@ _persist_command_if_needed() {
     case "${1:-}" in
         ''|help|-h|--help|version|-v|--version|resume|__restore|session) return 0 ;;
     esac
+    for _persist_arg in "$@"; do
+        case "${_persist_arg}" in
+            --approval-token|--approval-token=*) return 0 ;;
+        esac
+    done
     pocket_save_command "$@"
 }
 
@@ -211,7 +188,8 @@ _cmd_resume() {
             pocket_save_command menu
         fi
         tmux new-session -d -s "${SESSION}"
-        tmux send-keys -t "${SESSION}" "POCKETCLI_RESTORE=1 '${POCKETCLI_DIR}/pocket' __restore" C-m
+        POCKET_CMD=$(printf "'%s'" "$(printf '%s' "${POCKETCLI_DIR}/pocket" | sed "s/'/'\\\\''/g")")
+        tmux send-keys -t "${SESSION}" "POCKETCLI_RESTORE=1 ${POCKET_CMD} __restore" C-m
         tmux source-file "${HOME}/.config/tmux/tmux.conf" 2>/dev/null || true
     fi
 

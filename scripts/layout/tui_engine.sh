@@ -17,7 +17,6 @@ TUI_RESIZE_PENDING=0
 TUI_USE_DEV_TTY=1
 TUI_STTY_ORIG=""
 TUI_LAST_FRAME_FILE=""
-TUI_READ_INTERVAL="${TUI_READ_INTERVAL:-0.05}"
 TUI_ESC=$(printf '\033')
 TUI_CR=$(printf '\r')
 TUI_LF=$(printf '\n')
@@ -208,7 +207,7 @@ tui_init() {
     tui_tput civis 2>/dev/null || true
     TUI_CURSOR_HIDDEN=1
 
-    if ! tui_stty raw -echo min 0 time 0 2>/dev/null; then
+    if ! tui_stty raw -echo min 0 time 1 2>/dev/null; then
         tui_restore
         printf 'Falha ao ativar modo raw do terminal.\n' >&2
         return 1
@@ -303,7 +302,6 @@ tui_read_byte() {
 tui_read_key() {
     BYTE=$(tui_read_byte)
     if [ -z "${BYTE}" ]; then
-        sleep "${TUI_READ_INTERVAL}" 2>/dev/null || sleep 1
         return 0
     fi
 
@@ -319,20 +317,29 @@ tui_read_key() {
 
     if [ "${BYTE}" = "${TUI_ESC}" ]; then
         SEQ="${BYTE}"
+        TUI_KEY='UNKNOWN'
         N=0
+
+        # A lone Escape should not block the menu; arrow-key suffixes get 100 ms.
+        tui_stty min 0 time 1 2>/dev/null || {
+            printf 'UNKNOWN'
+            return 0
+        }
         while [ "${N}" -lt 8 ]; do
             NEXT=$(tui_read_byte)
             [ -z "${NEXT}" ] && break
             SEQ="${SEQ}${NEXT}"
             case "${SEQ}" in
-                "${TUI_ESC}[A") printf 'UP'; return 0 ;;
-                "${TUI_ESC}[B") printf 'DOWN'; return 0 ;;
-                "${TUI_ESC}[C") printf 'RIGHT'; return 0 ;;
-                "${TUI_ESC}[D") printf 'LEFT'; return 0 ;;
+                "${TUI_ESC}[A") TUI_KEY='UP'; break ;;
+                "${TUI_ESC}[B") TUI_KEY='DOWN'; break ;;
+                "${TUI_ESC}[C") TUI_KEY='RIGHT'; break ;;
+                "${TUI_ESC}[D") TUI_KEY='LEFT'; break ;;
             esac
             N=$((N + 1))
         done
-        printf 'UNKNOWN'
+
+        tui_stty min 0 time 1 2>/dev/null || true
+        printf '%s' "${TUI_KEY:-UNKNOWN}"
         return 0
     fi
 

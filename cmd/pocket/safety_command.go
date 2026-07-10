@@ -96,7 +96,7 @@ func ensureCommandAllowed(action string, command []string, hostCount int, approv
 		appendLedgerEvent(deniedSafetyEvent(action, command, "approval_required envelope_id="+envelope.EnvelopeID))
 		return envelope.EnvelopeID, fmt.Errorf("%w envelope_id=%s", safety.ErrApprovalRequired, envelope.EnvelopeID)
 	}
-	if err := safety.ValidateApproval(envelope.EnvelopeID, approvalToken); err != nil {
+	if err := safety.ConsumeApproval(envelope.EnvelopeID, approvalToken); err != nil {
 		appendLedgerEvent(deniedSafetyEvent(action, command, err.Error()))
 		return envelope.EnvelopeID, err
 	}

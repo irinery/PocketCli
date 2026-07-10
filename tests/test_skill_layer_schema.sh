@@ -9,7 +9,7 @@ HOME_DIR="${WORKDIR}/home"
 ANSIBLE_DIR="${WORKDIR}/ansible"
 LOG_FILE="${WORKDIR}/skills.jsonl"
 mkdir -p "${HOME_DIR}" "${ANSIBLE_DIR}" "$(dirname "${LOG_FILE}")"
-cp "${REPO_ROOT}/ansible/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt"
+cp "${REPO_ROOT}/scripts/skills/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt"
 
 fail() {
     printf 'FAIL %s\n' "$1" >&2
@@ -69,6 +69,7 @@ run_schema() {
     out=$2
     set +e
     env HOME="${HOME_DIR}" \
+        POCKETCLI_DIR="${REPO_ROOT}" \
         POCKETCLI_ANSIBLE_DIR="${ANSIBLE_DIR}" \
         POCKETCLI_SKILL_LOG_FILE="${LOG_FILE}" \
         bash "${REPO_ROOT}/scripts/skills/skill_request_schema.sh" "${request}" > "${out}" 2> "${out}.err"

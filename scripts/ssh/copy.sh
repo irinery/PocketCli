@@ -10,7 +10,10 @@ extract_host() {
     VALUE="$1"
     case "${VALUE}" in
         *:*)
-            printf '%s' "${VALUE%%:*}" | tr -cd 'a-zA-Z0-9._-'
+            RAW_HOST=${VALUE%%:*}
+            SAFE_HOST=$(printf '%s' "${RAW_HOST}" | tr -cd 'a-zA-Z0-9._-')
+            [ -n "${SAFE_HOST}" ] && [ "${SAFE_HOST}" = "${RAW_HOST}" ] || return 1
+            printf '%s' "${SAFE_HOST}"
             ;;
         *)
             printf ''
@@ -18,8 +21,18 @@ extract_host() {
     esac
 }
 
-HOST=$(extract_host "${SRC}")
-[ -n "${HOST}" ] || HOST=$(extract_host "${DST}")
+case "${SRC}" in
+    *:*) HOST=$(extract_host "${SRC}") || { printf 'Invalid remote source.\n' >&2; exit 1; } ;;
+    *) HOST='' ;;
+esac
+if [ -z "${HOST}" ]; then
+    case "${DST}" in
+        *:*) HOST=$(extract_host "${DST}") || { printf 'Invalid remote destination.\n' >&2; exit 1; } ;;
+    esac
+fi
+
+case "${SRC}" in -*) printf 'Invalid source path. Prefix local paths with ./\n' >&2; exit 1 ;; esac
+case "${DST}" in -*) printf 'Invalid destination path. Prefix local paths with ./\n' >&2; exit 1 ;; esac
 
 if [ -z "${HOST}" ]; then
     # no remote endpoint: preserve legacy scp wrapper behavior

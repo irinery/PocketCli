@@ -51,12 +51,23 @@ func (l *JSONLAuditLogger) Prepare() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	logDir := filepath.Dir(path)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(filepath.Dir(logDir), 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(logDir, 0o700); err != nil {
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
 		return err
 	}
 	return file.Close()
@@ -93,11 +104,14 @@ func (l *JSONLAuditLogger) Write(result RemoteCommandResult) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
 
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return err

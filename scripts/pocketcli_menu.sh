@@ -957,7 +957,7 @@ _run_action() {
                 "Sessão ${HOST} encerrada. Pronto para a próxima conexão." \
                 "Falha ao conectar em ${HOST} (exit %s)." \
                 '\n  Pressione Enter para voltar...' \
-                sh -c "printf '\n  Conectando em %s...\n\n' \"\$1\"; exec ssh \"\$1\"" sh "${HOST}"
+                sh -c 'printf "\n  Conectando em %s...\n\n" "$2"; [ -x "$1/scripts/ssh/open.sh" ] || { printf "Wrapper SSH seguro indisponível.\n" >&2; exit 127; }; exec sh "$1/scripts/ssh/open.sh" --run interactive "$2"' sh "${POCKETCLI_DIR}" "${HOST}"
         ;;
         radar-run)
             _run_with_pause \

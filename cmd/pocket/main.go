@@ -13,13 +13,10 @@ import (
 	"pocketcli/internal/ledger"
 	"pocketcli/internal/remoteaccess"
 	"pocketcli/internal/safety"
-	"pocketcli/internal/ssh"
 )
 
 var (
 	hostsViewer       = defaultHostsViewer
-	openSSH           = ssh.Open
-	execSSH           = ssh.Exec
 	newRemoteExecutor = remoteaccess.NewDefaultExecutor
 )
 
@@ -85,11 +82,11 @@ func newHostsCommand() *cobra.Command {
 func newSSHCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh <host>",
-		Short: "Open SSH session to host",
+		Short: "Abre sessão SSH interativa pelo fluxo seguro de conexão",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAudited(cmd, "ssh", args, func(cmd *cobra.Command, args []string, sessionID string) (commandAudit, error) {
-				return commandAudit{SessionID: sessionID}, openSSH(args[0])
+				return commandAudit{SessionID: sessionID, HostID: args[0]}, connectInteractive(context.Background(), args[0], os.Stdin, cmd.OutOrStdout(), os.Stderr)
 			})
 		},
 	}
@@ -301,10 +298,7 @@ func parseExecArgs(args []string) (execArgs, error) {
 
 func validateExecHost(host string) error {
 	host = strings.TrimSpace(host)
-	if host == "" {
-		return fmt.Errorf("ERR_EXEC_HOST_INVALID")
-	}
-	if len([]rune(host)) > 256 || strings.ContainsAny(host, " \t\n\r") {
+	if err := remoteaccess.ValidateHostAlias(host); err != nil {
 		return fmt.Errorf("ERR_EXEC_HOST_INVALID")
 	}
 	return nil
@@ -398,7 +392,7 @@ func resolvePreparedExec(parsed execArgs) (string, []string, bool, error) {
 		return host, nil, false, evalErr
 	}
 	if envelope.Decision.ApprovalRequired || currentDecision.ApprovalRequired || evalErr == safety.ErrApprovalRequired {
-		if err := safety.ValidateApproval(envelope.EnvelopeID, parsed.approvalToken); err != nil {
+		if err := safety.ConsumeApproval(envelope.EnvelopeID, parsed.approvalToken); err != nil {
 			appendLedgerEvent(deniedSafetyEvent("exec", command, err.Error()))
 			return host, nil, false, err
 		}
@@ -458,7 +452,7 @@ func printRemoteExecResult(cmd *cobra.Command, result remoteaccess.RemoteCommand
 	if result.Stdout != "" {
 		fmt.Fprint(cmd.OutOrStdout(), result.Stdout)
 	}
-	if result.Stderr != "" && (result.Status == remoteaccess.StatusFailed || result.Status == remoteaccess.StatusTimeout) {
+	if result.Stderr != "" && (result.Status == remoteaccess.StatusFailed || result.Status == remoteaccess.StatusTimeout || result.Status == remoteaccess.StatusAuditFailed) {
 		fmt.Fprint(os.Stderr, result.Stderr)
 	}
 	return nil

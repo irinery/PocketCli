@@ -7,8 +7,9 @@
 
 inventory_refresh() {
     TMP_FILE=$(mktemp)
+    TAB=$(printf '\t')
 
-    inventory_tailscale_hosts | while IFS=$'\t' read -r HOST IP ONLINE _OS; do
+    inventory_tailscale_hosts | while IFS="${TAB}" read -r HOST IP ONLINE _OS; do
         HOST=$(safe_host "${HOST}")
         [ -n "${HOST}" ] && printf '%s\t%s\t%s\ttailscale\n' "${HOST}" "${IP}" "${ONLINE:-false}"
     done >> "${TMP_FILE}"
@@ -26,6 +27,7 @@ inventory_refresh() {
         cat > "$(pocket_inventory_file)" <<JSON
 {"schema_version":1,"generated_at":"${NOW}","sources":{"tailscale":${HAS_TAILSCALE},"saved_hosts":true,"fallback_seeds":true},"hosts":[]}
 JSON
+        chmod 600 "$(pocket_inventory_file)"
         # shellcheck disable=SC2034
         INVENTORY_LAST_REFRESH_AT="${NOW}"
         # shellcheck disable=SC2034

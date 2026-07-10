@@ -323,12 +323,16 @@ save_known_target() {
     TARGET_FILE="${2:-$(_saved_hosts_file)}"
     [ -z "${TARGET}" ] && return 1
 
+    umask 077
     mkdir -p "$(dirname "${TARGET_FILE}")"
+    chmod 700 "$(dirname "${TARGET_FILE}")"
     if [ -f "${TARGET_FILE}" ]; then
         if grep -Fx "${TARGET}" "${TARGET_FILE}" >/dev/null 2>&1; then
             return 0
         fi
     fi
+    : >> "${TARGET_FILE}"
+    chmod 600 "${TARGET_FILE}"
     printf '%s\n' "${TARGET}" >> "${TARGET_FILE}"
 }
 
@@ -461,8 +465,11 @@ pocket_tmux_session() {
 }
 
 pocket_save_command() {
+    umask 077
     mkdir -p "$(pocket_state_dir)"
+    chmod 700 "$(pocket_state_dir)"
     : > "$(pocket_last_command_file)"
+    chmod 600 "$(pocket_last_command_file)"
     for _arg in "$@"; do
         printf '%s\n' "${_arg}" >> "$(pocket_last_command_file)"
     done

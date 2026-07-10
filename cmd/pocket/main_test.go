@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"pocketcli/internal/connect"
+	"pocketcli/internal/fleet"
 	"pocketcli/internal/remoteaccess"
 	"pocketcli/internal/safety"
 )
@@ -69,19 +71,31 @@ func TestRootCommand_NoSubcommandShowsHelpWithoutError(t *testing.T) {
 	}
 }
 
-func TestSSHCommand_PropagatesError(t *testing.T) {
+func TestSSHCommand_UsesConnectOrchestrator(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	orig := openSSH
-	t.Cleanup(func() { openSSH = orig })
+	orig := newConnectOrchestrator
+	t.Cleanup(func() { newConnectOrchestrator = orig })
 
 	expected := errors.New("boom")
-	openSSH = func(host string) error { return expected }
+	var gotHost string
+	newConnectOrchestrator = func() *connect.Orchestrator {
+		orchestrator := connect.New()
+		orchestrator.LookupPath = func(name string) (string, error) { return "/bin/" + name, nil }
+		orchestrator.ResolveHostFunc = func(ctx context.Context, host string) (connect.HostInfo, error) {
+			gotHost = host
+			return connect.HostInfo{}, expected
+		}
+		return orchestrator
+	}
 
 	cmd := newSSHCommand()
 	err := cmd.RunE(cmd, []string{"x"})
 	if !errors.Is(err, expected) {
 		t.Fatalf("expected propagated error, got %v", err)
+	}
+	if gotHost != "x" {
+		t.Fatalf("expected connect orchestrator to receive host x, got %q", gotHost)
 	}
 }
 
@@ -271,6 +285,194 @@ func TestExecCommand_JsonOutputIncludesStatus(t *testing.T) {
 	}
 	if !strings.Contains(output, `"status":"success"`) || !strings.Contains(output, `"stdout":"ok\n"`) {
 		t.Fatalf("unexpected json output: %s", output)
+	}
+}
+
+type recordingRemoteAuditLogger struct {
+	prepareCalls int
+	writeCalls   int
+}
+
+func (l *recordingRemoteAuditLogger) Prepare() error {
+	l.prepareCalls++
+	return nil
+}
+
+func (l *recordingRemoteAuditLogger) Write(remoteaccess.RemoteCommandResult) error {
+	l.writeCalls++
+	return nil
+}
+
+func TestFleetExecUsesRemoteExecutorAndAudit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	origExecutor := newRemoteExecutor
+	t.Cleanup(func() {
+		newRemoteExecutor = origExecutor
+	})
+
+	audit := &recordingRemoteAuditLogger{}
+	var gotName string
+	var gotArgs []string
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := remoteaccess.NewExecutor()
+		executor.Logger = audit
+		executor.Probe = func(ctx context.Context, host remoteaccess.RemoteHost) error { return nil }
+		executor.Runner = func(ctx context.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return remoteaccess.RunOutput{Stdout: "up\n", ExitCode: 0}, nil
+		}
+		return executor
+	}
+
+	result := runFleetPlan(fleet.Plan{
+		PlanID:      "plan-1",
+		Command:     []string{"uptime"},
+		MaxParallel: 1,
+		Targets: []fleet.Target{{
+			HostID:   "host-a",
+			Hostname: "srv-a",
+			Address:  "100.64.0.10",
+		}},
+	})
+
+	if gotName != "ssh" || len(gotArgs) == 0 || gotArgs[len(gotArgs)-2] != "100.64.0.10" || gotArgs[len(gotArgs)-1] != "uptime" {
+		t.Fatalf("unexpected remote runner call: name=%q args=%v", gotName, gotArgs)
+	}
+	if audit.prepareCalls != 1 || audit.writeCalls != 1 {
+		t.Fatalf("expected remote audit logger to be used, got prepare=%d writes=%d", audit.prepareCalls, audit.writeCalls)
+	}
+	if len(result.Results) != 1 || result.Results[0].Status != "ok" || result.Results[0].OutputPreview != "up\n" {
+		t.Fatalf("unexpected fleet result: %#v", result.Results)
+	}
+	if result.Results[0].CommandID == "" || result.Results[0].PolicyDecision == nil {
+		t.Fatalf("expected command_id and policy_decision in fleet result: %#v", result.Results[0])
+	}
+}
+
+func TestFleetExecBlocksUnsafeCommandBeforeRunner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	origExecutor := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = origExecutor })
+
+	runnerCalled := false
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := remoteaccess.NewExecutor()
+		executor.Logger = nil
+		executor.Probe = func(ctx context.Context, host remoteaccess.RemoteHost) error { return nil }
+		executor.Runner = func(ctx context.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			runnerCalled = true
+			return remoteaccess.RunOutput{ExitCode: 0}, nil
+		}
+		return executor
+	}
+
+	result := runFleetPlan(fleet.Plan{
+		PlanID:      "plan-1",
+		Command:     []string{"id"},
+		MaxParallel: 1,
+		Targets:     []fleet.Target{{HostID: "host-a", Hostname: "srv-a"}},
+	})
+
+	if runnerCalled {
+		t.Fatal("runner was called for command blocked by remote policy")
+	}
+	if len(result.Results) != 1 || result.Results[0].Status != "blocked" || !strings.Contains(result.Results[0].StderrPreview, "not_in_allowlist") {
+		t.Fatalf("unexpected blocked fleet result: %#v", result.Results)
+	}
+}
+
+func TestFleetExecUsesConfiguredRemoteTransport(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configDir := filepath.Join(home, ".config", "pocketcli")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	hostsJSON := `[{"alias":"host-a","hostname":"tail-host","access_method":"tailscale_ssh","enabled":true}]`
+	if err := os.WriteFile(filepath.Join(configDir, "remote-hosts.json"), []byte(hostsJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	origExecutor := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = origExecutor })
+
+	var gotName string
+	var gotArgs []string
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := remoteaccess.NewExecutor()
+		executor.Logger = nil
+		executor.Probe = func(ctx context.Context, host remoteaccess.RemoteHost) error { return nil }
+		executor.Runner = func(ctx context.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return remoteaccess.RunOutput{ExitCode: 0}, nil
+		}
+		return executor
+	}
+
+	result := runFleetPlan(fleet.Plan{
+		PlanID:      "plan-1",
+		Command:     []string{"uptime"},
+		MaxParallel: 1,
+		Targets:     []fleet.Target{{HostID: "host-a", Hostname: "srv-a"}},
+	})
+
+	if gotName != "tailscale" || len(gotArgs) != 3 || gotArgs[0] != "ssh" || gotArgs[1] != "tail-host" || gotArgs[2] != "uptime" {
+		t.Fatalf("expected tailscale ssh transport, got name=%q args=%v", gotName, gotArgs)
+	}
+	if len(result.Results) != 1 || result.Results[0].Status != "ok" {
+		t.Fatalf("unexpected fleet result: %#v", result.Results)
+	}
+}
+
+func TestFleetExecFailsClosedWhenConfiguredHostsFileIsInvalid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configDir := filepath.Join(home, ".config", "pocketcli")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "remote-hosts.json"), []byte(`{"hosts":`), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	origExecutor := newRemoteExecutor
+	t.Cleanup(func() { newRemoteExecutor = origExecutor })
+
+	runnerCalled := false
+	newRemoteExecutor = func() *remoteaccess.Executor {
+		executor := remoteaccess.NewExecutor()
+		executor.Logger = nil
+		executor.Probe = func(ctx context.Context, host remoteaccess.RemoteHost) error { return nil }
+		executor.Runner = func(ctx context.Context, name string, args []string, options remoteaccess.RunOptions) (remoteaccess.RunOutput, error) {
+			runnerCalled = true
+			return remoteaccess.RunOutput{ExitCode: 0}, nil
+		}
+		return executor
+	}
+
+	result := runFleetPlan(fleet.Plan{
+		PlanID:      "plan-1",
+		Command:     []string{"uptime"},
+		MaxParallel: 1,
+		Targets: []fleet.Target{{
+			HostID:   "host-a",
+			Hostname: "srv-a",
+			Address:  "100.64.0.10",
+		}},
+	})
+
+	if runnerCalled {
+		t.Fatal("runner was called after invalid remote-hosts.json")
+	}
+	if len(result.Results) != 1 || result.Results[0].Status != "host_unreachable" || result.Results[0].RemoteStatus != "host_unreachable" {
+		t.Fatalf("expected fail-closed host_unreachable result, got %#v", result.Results)
+	}
+	if result.Results[0].StderrPreview != "host_unreachable" {
+		t.Fatalf("expected sanitized host_unreachable stderr, got %#v", result.Results[0])
 	}
 }
 
