@@ -268,7 +268,8 @@ func (o *Orchestrator) resolveHost(ctx context.Context, host string) (HostInfo, 
 		return o.ResolveHostFunc(ctx, host)
 	}
 
-	if _, err := o.lookupPath("tailscale"); err != nil {
+	tailscaleCommand, err := tailscale.CLIPath(o.lookupPath)
+	if err != nil {
 		fmt.Fprintln(o.stderr(), "pocket: tailscale não encontrado. Tentando resolução DNS.")
 		return o.resolveHostDNS(ctx, host)
 	}
@@ -276,9 +277,10 @@ func (o *Orchestrator) resolveHost(ctx context.Context, host string) (HostInfo, 
 	resolveCtx, cancel := context.WithTimeout(ctx, o.resolveTimeout())
 	defer cancel()
 
-	output, err := o.runCommand(resolveCtx, "tailscale", []string{"status", "--json"}, CommandOptions{
+	output, err := o.runCommand(resolveCtx, tailscaleCommand, []string{"status", "--json"}, CommandOptions{
 		CaptureOutput: true,
 		Stderr:        io.Discard,
+		Env:           []string{"TAILSCALE_BE_CLI=1"},
 	})
 	if err != nil {
 		fmt.Fprintln(o.stderr(), "pocket: tailscale status indisponível. Tentando resolução DNS.")

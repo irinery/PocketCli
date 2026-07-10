@@ -10,6 +10,7 @@ INVENTORY_DIR="${INVENTORY_DIR:-${ANSIBLE_DIR}/inventory}"
 PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-${ANSIBLE_DIR}/playbooks}"
 TAILSCALE_INVENTORY="${TAILSCALE_INVENTORY:-${INVENTORY_DIR}/tailscale_generated.yml}"
 ANSIBLE_REGISTRY_MAX_PLAYBOOKS="${ANSIBLE_REGISTRY_MAX_PLAYBOOKS:-200}"
+TAB=$(printf '\t')
 
 usage() {
     cat <<'EOF'
@@ -181,6 +182,7 @@ parse_pocket_meta() {
             sub(/^- name:[[:space:]]*/, "", first_name)
             if (strip(first_name) != "pocket_meta") {
                 print "missing_meta\tpocket_meta ausente"
+                invalid = 1
                 exit
             }
             next
@@ -226,6 +228,9 @@ parse_pocket_meta() {
             next
         }
         END {
+            if (invalid == 1) {
+                exit
+            }
             if (first_play_seen != 1 || in_meta != 0 && meta["name"] == "" && safe_modes == "") {
                 print "missing_meta\tpocket_meta ausente"
                 exit
@@ -242,22 +247,30 @@ validate_meta_record() {
     FILE_SLUG="$1"
     PARSED="$2"
 
-    STATUS=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $1 }')
+    STATUS=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
     if [ "${STATUS}" != "ok" ]; then
-        DETAIL=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $2 }')
+        DETAIL=${PARSED%%"${TAB}"*}
         printf 'invalid\t%s\t%s\n' "missing_meta" "${DETAIL}"
         return 0
     fi
 
-    META_NAME=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $2 }')
-    DESCRIPTION=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $3 }')
-    AUTHOR=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $4 }')
-    VERSION=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $5 }')
-    CATEGORY=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $6 }')
-    SAFE_MODES=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $7 }')
-    INVENTORY_SOURCE=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $8 }')
-    CREATED_AT=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $9 }')
-    UPDATED_AT=$(printf '%s\n' "${PARSED}" | awk -F '\t' '{ print $10 }')
+    META_NAME=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    DESCRIPTION=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    AUTHOR=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    VERSION=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    CATEGORY=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    SAFE_MODES=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    INVENTORY_SOURCE=${PARSED%%"${TAB}"*}
+    PARSED=${PARSED#*"${TAB}"}
+    CREATED_AT=${PARSED%%"${TAB}"*}
+    UPDATED_AT=${PARSED#*"${TAB}"}
 
     if ! valid_slug "${META_NAME}"; then
         printf 'invalid\tinvalid_meta\tname inválido: %s\n' "${META_NAME}"
@@ -349,17 +362,21 @@ index_playbooks() {
 
         PARSED=$(parse_pocket_meta "${PLAYBOOK_PATH}")
         VALIDATION=$(validate_meta_record "${PB_SLUG}" "${PARSED}")
-        STATUS=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $1 }')
+        STATUS=${VALIDATION%%"${TAB}"*}
+        VALIDATION=${VALIDATION#*"${TAB}"}
         if [ "${STATUS}" = "valid" ]; then
-            META_NAME=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $2 }')
-            DESCRIPTION=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $3 }')
-            CATEGORY=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $4 }')
-            SAFE_MODES=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $5 }')
-            INVENTORY_SOURCE=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $6 }')
+            META_NAME=${VALIDATION%%"${TAB}"*}
+            VALIDATION=${VALIDATION#*"${TAB}"}
+            DESCRIPTION=${VALIDATION%%"${TAB}"*}
+            VALIDATION=${VALIDATION#*"${TAB}"}
+            CATEGORY=${VALIDATION%%"${TAB}"*}
+            VALIDATION=${VALIDATION#*"${TAB}"}
+            SAFE_MODES=${VALIDATION%%"${TAB}"*}
+            INVENTORY_SOURCE=${VALIDATION#*"${TAB}"}
             printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${META_NAME}" "${PLAYBOOK_PATH}" "${DESCRIPTION}" "${CATEGORY}" "${SAFE_MODES}" "${INVENTORY_SOURCE}" >> "${VALID_FILE}"
         else
-            ERROR_TYPE=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $2 }')
-            DETAIL=$(printf '%s\n' "${VALIDATION}" | awk -F '\t' '{ print $3 }')
+            ERROR_TYPE=${VALIDATION%%"${TAB}"*}
+            DETAIL=${VALIDATION#*"${TAB}"}
             printf '%s\t%s\t%s\t%s\n' "${PB_SLUG}" "${PLAYBOOK_PATH}" "${ERROR_TYPE}" "${DETAIL}" >> "${INVALID_FILE}"
         fi
     done

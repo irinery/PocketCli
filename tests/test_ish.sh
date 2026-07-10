@@ -140,36 +140,24 @@ fi
 _test "Tailscale"
 # =============================================================================
 
-if ! command -v tailscale >/dev/null 2>&1; then
-    _warn_test "tailscale not installed — run: pocket tailscale-setup"
+if command -v is_tailscale_mesh_operational >/dev/null 2>&1 \
+    && is_tailscale_mesh_operational; then
+    _pass "Tailscale mesh is operational"
+    TS_IP=$(get_tailscale_ip 2>/dev/null || true)
+    [ -n "${TS_IP}" ] && printf "    ${C_DIM}IP: %s${C_NC}\n" "${TS_IP}"
+elif ! command -v has_tailscale_cli >/dev/null 2>&1 || ! has_tailscale_cli; then
+    _warn_test "Tailscale mesh/CLI not detected — run: pocket tailscale-setup"
 else
     _pass "tailscale binary found"
 
-    TS_VER=$(tailscale version 2>/dev/null | head -1 || echo "unknown")
+    TS_VER=$(tailscale_cli version 2>/dev/null | head -1 || echo "unknown")
     printf "    ${C_DIM}version: %s${C_NC}\n" "${TS_VER}"
 
-    if is_tailscale_daemon_running; then
-        _pass "tailscaled daemon is running"
-
-        if with_timeout 5 tailscale status >/dev/null 2>&1; then
-            _pass "tailscale daemon responding"
-
-            STATUS_OUT=$(tailscale status 2>/dev/null || true)
-            if printf '%s' "${STATUS_OUT}" | grep -q "^100\."; then
-                _pass "Tailscale IP assigned"
-                TS_IP=$(tailscale ip -4 2>/dev/null | head -1 || echo "?")
-                printf "    ${C_DIM}IP: %s${C_NC}\n" "${TS_IP}"
-            else
-                _warn_test "Not authenticated — run: pocket tailscale-setup"
-            fi
-        else
-            _warn_test "Daemon running but not responding"
-        fi
+    if is_tailscale_backend_responding; then
+        _pass "Tailscale backend is responding"
+        _warn_test "Not connected/authenticated — run: pocket tailscale-auth"
     else
-        _warn_test "tailscaled not running — run: pocket tailscale-setup"
-        if is_ish; then
-            printf "    ${C_DIM}hint: tailscaled --tun=userspace-networking &${C_NC}\n"
-        fi
+        _warn_test "Tailscale backend unavailable — run: pocket tailscale-start"
     fi
 fi
 

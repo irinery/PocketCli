@@ -42,7 +42,17 @@ esac
 EOS
 chmod +x "$MOCKBIN/tmux"
 
+[ -c /dev/null ] || {
+    printf 'FAIL /dev/null must be a character device before PTY tests\n' >&2
+    exit 1
+}
+
 run_pty_command 3 /dev/null "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" >/dev/null 2>&1 || true
+
+[ -c /dev/null ] || {
+    printf 'FAIL PTY helper replaced /dev/null\n' >&2
+    exit 1
+}
 
 grep -F 'tmux:new-session -d -s pocketcli' "$LOG_FILE" >/dev/null 2>&1
 grep -F "tmux:send-keys -t pocketcli POCKETCLI_RESTORE=1 '$HOME_DIR/.pocketcli/pocket' __restore C-m" "$LOG_FILE" >/dev/null 2>&1
@@ -121,6 +131,11 @@ EOS
     chmod +x "$HOME_DIR/.pocketcli/scripts/pocketcli_menu.sh"
 
     run_pty_command 3 /dev/null "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin' TMUX='1' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket'" >/dev/null 2>&1 || true
+
+    [ -c /dev/null ] || {
+        printf 'FAIL PTY helper replaced /dev/null\n' >&2
+        exit 1
+    }
 
     grep -F 'menu-invoked' "$LOG_FILE" >/dev/null 2>&1
     grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1

@@ -132,55 +132,168 @@ is_ish() {
 }
 
 # ---------------------------------------------------------------------------
-# is_tailscale_daemon_running
-# Always false on iSH — kernel doesn't support netlink, daemon can't run.
+# Tailscale runtime detection
+#
+# macOS GUI builds do not expose a process named tailscaled, and Windows runs
+# it as a service. The CLI can also live outside PATH. Treat the backend/mesh
+# as the source of truth and keep process inspection only as a last fallback.
 # ---------------------------------------------------------------------------
-is_tailscale_daemon_running() {
-    if is_ish; then
+tailscale_cli_path() {
+    if [ -n "${POCKETCLI_TAILSCALE_CLI:-}" ]; then
+        if command -v "${POCKETCLI_TAILSCALE_CLI}" >/dev/null 2>&1; then
+            command -v "${POCKETCLI_TAILSCALE_CLI}"
+            return 0
+        fi
+        if [ -x "${POCKETCLI_TAILSCALE_CLI}" ]; then
+            printf '%s\n' "${POCKETCLI_TAILSCALE_CLI}"
+            return 0
+        fi
         return 1
     fi
-    if pgrep tailscaled >/dev/null 2>&1; then
+
+    if command -v tailscale >/dev/null 2>&1; then
+        command -v tailscale
+        return 0
+    fi
+    if command -v tailscale.exe >/dev/null 2>&1; then
+        command -v tailscale.exe
+        return 0
+    fi
+
+    for TS_CLI_CANDIDATE in \
+        '/Applications/Tailscale.app/Contents/MacOS/Tailscale' \
+        '/mnt/c/Program Files/Tailscale/tailscale.exe' \
+        '/c/Program Files/Tailscale/tailscale.exe' \
+        '/cygdrive/c/Program Files/Tailscale/tailscale.exe'
+    do
+        if [ -x "${TS_CLI_CANDIDATE}" ]; then
+            printf '%s\n' "${TS_CLI_CANDIDATE}"
+            return 0
+        fi
+    done
+
+    if [ -n "${LOCALAPPDATA:-}" ] && [ -x "${LOCALAPPDATA}/Tailscale/tailscale.exe" ]; then
+        printf '%s\n' "${LOCALAPPDATA}/Tailscale/tailscale.exe"
         return 0
     fi
     return 1
 }
 
-# ---------------------------------------------------------------------------
-# is_on_tailscale_network
-# True if this device has a Tailscale IP (100.x.x.x) — even without daemon.
-# On iSH, the iOS Tailscale app provides the VPN; no CLI needed.
-# ---------------------------------------------------------------------------
-is_on_tailscale_network() {
-    # Method 1: tailscale CLI available and daemon responding
-    if command -v tailscale >/dev/null 2>&1; then
-        TS_IP=$(with_timeout 3 tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.' || true)
-        [ -n "${TS_IP}" ] && return 0
-    fi
-    # Method 2: look for a 100.x.x.x address on any interface (iOS app VPN)
-    if ip addr 2>/dev/null | grep -q '100\.[0-9]\+\.[0-9]\+\.[0-9]\+'; then
-        return 0
-    fi
-    if ifconfig 2>/dev/null | grep -q '100\.[0-9]\+\.[0-9]\+\.[0-9]\+'; then
-        return 0
-    fi
+has_tailscale_cli() {
+    tailscale_cli_path >/dev/null 2>&1
+}
+
+tailscale_cli() {
+    TS_CLI=$(tailscale_cli_path) || return 127
+    TAILSCALE_BE_CLI=1 "${TS_CLI}" "$@"
+}
+
+tailscale_status_json() {
+    TS_CLI=$(tailscale_cli_path) || return 1
+    with_timeout 5 env TAILSCALE_BE_CLI=1 "${TS_CLI}" status --json
+}
+
+is_tailscale_ipv4() {
+    TS_IPV4=${1:-}
+    printf '%s\n' "${TS_IPV4}" | awk -F. '
+        $0 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ &&
+        NF == 4 && $1 == 100 && $2 >= 64 && $2 <= 127 &&
+        $3 >= 0 && $3 <= 255 && $4 >= 0 && $4 <= 255 { found=1 }
+        END { exit(found ? 0 : 1) }
+    '
+}
+
+_tailscale_cli_ip() {
+    TS_CLI=$(tailscale_cli_path) || return 1
+    TS_IP_OUTPUT=$(with_timeout 3 env TAILSCALE_BE_CLI=1 "${TS_CLI}" ip -4 2>/dev/null || true)
+    for TS_IP_CANDIDATE in ${TS_IP_OUTPUT}; do
+        TS_IP_CANDIDATE=$(printf '%s' "${TS_IP_CANDIDATE}" | tr -cd '0-9.')
+        if is_tailscale_ipv4 "${TS_IP_CANDIDATE}"; then
+            printf '%s\n' "${TS_IP_CANDIDATE}"
+            return 0
+        fi
+    done
     return 1
 }
 
-# ---------------------------------------------------------------------------
-# get_tailscale_ip — prints 100.x.x.x or empty
-# ---------------------------------------------------------------------------
-get_tailscale_ip() {
-    if command -v tailscale >/dev/null 2>&1; then
-        with_timeout 3 tailscale ip -4 2>/dev/null | head -1 | tr -cd '0-9.' && return 0
-    fi
-    # Fallback: parse network interfaces
+_tailscale_interface_ip() {
+    TS_INTERFACE_OUTPUT=""
     if command -v ip >/dev/null 2>&1; then
-        ip addr 2>/dev/null \
-            | grep -o '100\.[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1
-    else
-        ifconfig 2>/dev/null \
-            | grep -o '100\.[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1
+        TS_INTERFACE_OUTPUT=$(ip addr 2>/dev/null || true)
     fi
+    if command -v ifconfig >/dev/null 2>&1; then
+        TS_INTERFACE_OUTPUT="${TS_INTERFACE_OUTPUT}
+$(ifconfig 2>/dev/null || true)"
+    fi
+    if command -v ipconfig.exe >/dev/null 2>&1; then
+        TS_INTERFACE_OUTPUT="${TS_INTERFACE_OUTPUT}
+$(with_timeout 3 ipconfig.exe 2>/dev/null || true)"
+    fi
+
+    TS_INTERFACE_IPS=$(printf '%s\n' "${TS_INTERFACE_OUTPUT}" \
+        | grep -Eo '100\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' 2>/dev/null || true)
+    for TS_IP_CANDIDATE in ${TS_INTERFACE_IPS}; do
+        if is_tailscale_ipv4 "${TS_IP_CANDIDATE}"; then
+            printf '%s\n' "${TS_IP_CANDIDATE}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Prints the local Tailscale IPv4 from the CLI or the OS-managed interface.
+get_tailscale_ip() {
+    TS_IP=$(_tailscale_cli_ip 2>/dev/null || true)
+    if [ -n "${TS_IP}" ]; then
+        printf '%s\n' "${TS_IP}"
+        return 0
+    fi
+
+    _tailscale_interface_ip 2>/dev/null || true
+    return 0
+}
+
+is_tailscale_backend_responding() {
+    TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
+    [ -n "${TS_STATUS}" ]
+}
+
+# True when an authenticated CLI backend or an OS-managed Tailscale interface
+# is available. The interface fallback covers macOS GUI, Windows/WSL and iSH.
+is_tailscale_mesh_operational() {
+    if is_tailscale_backend_responding && _tailscale_cli_ip >/dev/null 2>&1; then
+        TS_BACKEND_STATE=$(printf '%s\n' "${TS_STATUS}" \
+            | sed -n 's/.*"BackendState"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+            | head -1)
+        if [ -z "${TS_BACKEND_STATE}" ] || [ "${TS_BACKEND_STATE}" = "Running" ]; then
+            return 0
+        fi
+    fi
+    _tailscale_interface_ip >/dev/null 2>&1
+}
+
+is_on_tailscale_network() {
+    is_tailscale_mesh_operational
+}
+
+is_tailscale_daemon_running() {
+    if is_tailscale_backend_responding; then
+        return 0
+    fi
+    if command -v pgrep >/dev/null 2>&1 && pgrep tailscaled >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet tailscaled 2>/dev/null; then
+        return 0
+    fi
+    if command -v rc-service >/dev/null 2>&1 && rc-service tailscale status >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v sc.exe >/dev/null 2>&1 \
+        && with_timeout 3 sc.exe query Tailscale 2>/dev/null | grep -q 'RUNNING'; then
+        return 0
+    fi
+    return 1
 }
 
 _saved_hosts_file() {
@@ -239,11 +352,11 @@ list_fallback_targets() {
 }
 
 list_online_tailscale_hosts() {
-    if ! command -v tailscale >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if ! has_tailscale_cli || ! command -v jq >/dev/null 2>&1; then
         return 0
     fi
 
-    TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+    TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
     [ -z "${TS_STATUS}" ] && return 0
 
     printf '%s\n' "${TS_STATUS}" \
@@ -272,11 +385,11 @@ is_ip_target() {
 resolve_tailscale_ip_for_host() {
     HOST=$(safe_host "${1:-}")
     [ -z "${HOST}" ] && return 0
-    if ! command -v tailscale >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    if ! has_tailscale_cli || ! command -v jq >/dev/null 2>&1; then
         return 0
     fi
 
-    TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+    TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
     [ -z "${TS_STATUS}" ] && return 0
 
     printf '%s\n' "${TS_STATUS}" \
@@ -328,7 +441,7 @@ ping_host() {
 wait_for_tailscale() {
     MAX="${1:-15}"; I=0
     while [ "${I}" -lt "${MAX}" ]; do
-        tailscale status >/dev/null 2>&1 && return 0
+        tailscale_cli status >/dev/null 2>&1 && return 0
         printf '.'; sleep 1; I=$((I + 1))
     done
     printf '\n'; return 1

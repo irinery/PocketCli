@@ -16,6 +16,10 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
+
+Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.
+
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
 
 ```sh
@@ -27,7 +31,17 @@ go build -buildvcs=false -o /tmp/pocket-go ./cmd/pocket
 POCKETCLI_GO_BINARY=/tmp/pocket-go sh tests/run_smoke.sh
 ```
 
+Para reproduzir o bloco paralelo usado pelo GitHub Actions (`go vet`, regressões de menu e regressões shell), rode:
+
+```sh
+POCKETCLI_CI_PROFILE=macos sh scripts/ci/run_static_shell_gates.sh
+```
+
+Pré-requisitos: toolchain Go, shell POSIX e os mesmos comandos auxiliares exigidos pelas suítes shell. Variáveis opcionais: `POCKETCLI_CI_PROFILE`, `POCKETCLI_TEST_EXCLUDES` e `POCKETCLI_CI_SUMMARY_FILE`.
+
 Pré-requisitos: toolchain Go suportado pelo projeto, `git` no `PATH` e shell POSIX. Variáveis opcionais: `POCKETCLI_CI_PROFILE` para simular budgets de CI (`linux`, `macos`, `alpine`) e `POCKETCLI_TEST_EXCLUDES` para pular cenários específicos.
+
+Os testes da skill layer (`test_skill_layer_*.sh`) também exigem `python3`; o job Alpine instala essa dependência explicitamente antes da suíte.
 
 Para validar isoladamente a regressão de hardening de `set -eu` nas capabilities, rode `sh tests/test_capabilities_hardening.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `sed` e `ln`. Variáveis de ambiente: nenhuma obrigatória.
@@ -41,8 +55,17 @@ Pré-requisitos: toolchain Go suportado pelo projeto e `GOCACHE` gravável. Os t
 Para validar isoladamente o wrapper de requisitos do instalador, rode `sh tests/test_install_requirements.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `grep`, `cp` e `chmod`. O teste usa mocks locais de `ansible-playbook` e não exige Ansible real instalado. Variáveis de ambiente: nenhuma obrigatória.
 
+Para validar a detecção cross-platform do Tailscale, rode `sh tests/test_tailscale_runtime_detection.sh` e `sh tests/test_tailscale_setup_fallback.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep`, `env` e `chmod`. Os testes usam uma CLI nativa mockada fora do `PATH`, uma interface VPN mockada e não instalam nem alteram o Tailscale real. Variáveis de ambiente: nenhuma obrigatória; `POCKETCLI_TAILSCALE_CLI` é configurada internamente para validar o override de descoberta.
+
+Para validar a mesma descoberta nos fluxos Go de capabilities, status e connect, rode `go test ./internal/tailscale ./internal/capabilities ./internal/connect`.
+Pré-requisitos: toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória; os testes isolam `HOME`, `PATH` e `POCKETCLI_TAILSCALE_CLI` quando necessário.
+
 Para validar isoladamente a regressão de render incremental do menu, rode `sh tests/test_menu_incremental_render.sh`.
 Pré-requisitos: shell POSIX com `mktemp`, `awk`, `grep` e `sed`. Variáveis de ambiente: nenhuma obrigatória.
+
+Para validar isoladamente o autocomplete do input de envio da TUI, rode `sh tests/test_tui_autocomplete.sh`.
+Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `stat`, `chmod`, `mkdir`, `tr` e `dirname`. Variáveis de ambiente: nenhuma obrigatória; o teste usa diretórios temporários.
 
 Para validar a integridade visual interativa do `pocket menu`, rode:
 
@@ -81,6 +104,7 @@ Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e
    - Para rodar os testes do módulo TUI EventLoop (fase 2), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/event`.
    - Para rodar os testes do módulo TUI Renderer (fase 3), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/renderer`.
    - Para rodar os testes do módulo TUI Runtime (fase 4), use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/tui/runtime`.
+   - Para rodar os testes do módulo Command Catalogue, use `env GOCACHE=/tmp/pocketcli-go-build-cache go test ./internal/catalogue ./cmd/pocket`.
    - Pré-requisitos do Tool Contract: toolchain Go suportado pelo projeto e `git` disponível no `PATH` para o cenário `git_status`. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Context Collector: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
    - Pré-requisitos do Router: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória.
@@ -90,6 +114,7 @@ Pré-requisitos: shell POSIX com `mktemp`, `awk`, `sed`, `grep`, `find`, `seq` e
    - Pré-requisitos do TUI EventLoop: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI Renderer: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
    - Pré-requisitos do TUI Runtime: nenhum além do toolchain Go suportado pelo projeto. Variáveis de ambiente: nenhuma obrigatória além de `GOCACHE` quando o ambiente não puder escrever em `~/Library/Caches/go-build`.
+   - Pré-requisitos do Command Catalogue: toolchain Go suportado pelo projeto. Variáveis de ambiente: `HOME` pode ser apontado para diretório temporário para validar isolamento de `~/.pocketcli`; os testes Go já fazem isso nos cenários que escrevem state/history/docs.
 
 2. **Novo comando CLI (`cmd/pocket`)**
    - Cubra:

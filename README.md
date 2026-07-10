@@ -62,6 +62,12 @@ No modo Agent, o instalador agora oferece três estratégias de configuração:
 - Mostra um comparativo entre `tmux`, `starship` e integração de shell antes da escolha
 - Pode preservar a config atual do host, aplicar a do projeto ou alternar entre ambas com `~/.pocketcli/scripts/switch_config.sh`
 
+### Detecção do Tailscale
+
+O PocketCli valida primeiro se a malha já está operacional. No macOS ele descobre a CLI embutida em `/Applications/Tailscale.app`; no Windows/WSL, usa `tailscale.exe` e o serviço nativo. Se a CLI não estiver disponível, usa o endereço da interface VPN no range Tailscale `100.64.0.0/10`. Assim, `tailscale-setup` e `tailscale-start` preservam instalações gerenciadas pelo sistema e só tentam instalar/iniciar outro backend quando a malha realmente não está disponível.
+
+Para apontar uma instalação não padrão, use `POCKETCLI_TAILSCALE_CLI=/caminho/para/tailscale`. O valor é tratado como override explícito.
+
 ---
 
 ## Comandos disponíveis após instalação
