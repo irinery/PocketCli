@@ -11,6 +11,7 @@ Esta rodada revisou os caminhos de execucao remota, persistencia local, entrada 
 | [SEC-05](SEC-05-install-update-permissions.md) | 4 | corrigido |
 | [SEC-06](SEC-06-context-and-backend-boundaries.md) | 4 | corrigido |
 | [UX-01](UX-01-posix-runtime.md) | 3 | corrigido |
+| [UX-02](UX-02-tui-input-latency.md) | 3 | corrigido |
 | [CI-01](CI-01-macos-go-toolchain.md) | 3 | corrigido |
 | [SEC-07](SEC-07-tailscale-supply-chain.md) | 4 | aberto |
 
