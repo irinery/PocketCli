@@ -3,8 +3,9 @@
 . "${POCKETCLI_DIR}/scripts/inventory/selectors.sh"
 
 ssh_resolve_target() {
-    INPUT=$(safe_host "${1:-}")
-    [ -n "${INPUT}" ] || return 1
+    RAW_INPUT=${1:-}
+    INPUT=$(safe_host "${RAW_INPUT}")
+    [ -n "${INPUT}" ] && [ "${INPUT}" = "${RAW_INPUT}" ] || return 1
 
     if is_ip_target "${INPUT}"; then
         TARGET_HOST="${INPUT}"
@@ -37,4 +38,6 @@ ssh_resolve_target() {
     fi
 
     [ -n "${TARGET_HOST}" ] || TARGET_HOST="${INPUT}"
+    SAFE_TARGET=$(safe_host "${TARGET_HOST}")
+    [ -n "${SAFE_TARGET}" ] && [ "${SAFE_TARGET}" = "${TARGET_HOST}" ] || return 1
 }

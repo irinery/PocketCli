@@ -2,12 +2,14 @@ package safety
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -25,12 +27,16 @@ const (
 )
 
 var (
-	ErrApprovalRequired = errors.New("ERR_SAFETY_APPROVAL_REQUIRED")
-	ErrCommandInvalid   = errors.New("ERR_SAFETY_COMMAND_INVALID")
-	ErrPathBlocked      = errors.New("ERR_SAFETY_PATH_BLOCKED")
-	ErrApprovalExpired  = errors.New("ERR_APPROVAL_EXPIRED")
-	ErrApprovalNotFound = errors.New("ERR_APPROVAL_NOT_FOUND")
-	ErrApprovalBlocked  = errors.New("ERR_APPROVAL_BLOCKED")
+	ErrApprovalRequired  = errors.New("ERR_SAFETY_APPROVAL_REQUIRED")
+	ErrCommandInvalid    = errors.New("ERR_SAFETY_COMMAND_INVALID")
+	ErrPathBlocked       = errors.New("ERR_SAFETY_PATH_BLOCKED")
+	ErrApprovalExpired   = errors.New("ERR_APPROVAL_EXPIRED")
+	ErrApprovalNotFound  = errors.New("ERR_APPROVAL_NOT_FOUND")
+	ErrApprovalBlocked   = errors.New("ERR_APPROVAL_BLOCKED")
+	ErrRandomUnavailable = errors.New("ERR_RANDOM_UNAVAILABLE")
+
+	approvalIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	readRandom        = rand.Read
 )
 
 type Request struct {
@@ -121,8 +127,12 @@ func CreateRunEnvelope(request Request) (RunEnvelope, error) {
 	if decision.Classification == ClassificationBlocked {
 		return RunEnvelope{}, ErrApprovalBlocked
 	}
+	envelopeID, err := newID()
+	if err != nil {
+		return RunEnvelope{}, err
+	}
 	envelope := RunEnvelope{
-		EnvelopeID: newID(),
+		EnvelopeID: envelopeID,
 		Request:    request,
 		Decision:   decision,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
@@ -154,8 +164,12 @@ func Approve(envelopeID string, durationSeconds int, interactive bool) (Approval
 	if durationSeconds < MinApprovalTTL || durationSeconds > MaxApprovalTTL {
 		return ApprovalToken{}, fmt.Errorf("ERR_APPROVAL_BAD_DURATION")
 	}
+	tokenValue, err := randomHex(32)
+	if err != nil {
+		return ApprovalToken{}, err
+	}
 	token := ApprovalToken{
-		ApprovalToken: randomHex(32),
+		ApprovalToken: tokenValue,
 		EnvelopeID:    envelope.EnvelopeID,
 		ExpiresAt:     time.Now().UTC().Add(time.Duration(durationSeconds) * time.Second).Format(time.RFC3339),
 	}
@@ -175,7 +189,40 @@ func ValidateApproval(envelopeID, tokenValue string) error {
 	if err != nil {
 		return ErrApprovalNotFound
 	}
-	if token.ApprovalToken != tokenValue {
+	if subtle.ConstantTimeCompare([]byte(token.ApprovalToken), []byte(tokenValue)) != 1 {
+		return ErrApprovalNotFound
+	}
+	expires, err := time.Parse(time.RFC3339, token.ExpiresAt)
+	if err != nil || time.Now().UTC().After(expires) {
+		return ErrApprovalExpired
+	}
+	return nil
+}
+
+// ConsumeApproval claims a valid token exactly once. Renaming the file first
+// makes concurrent attempts fail closed instead of replaying one approval.
+func ConsumeApproval(envelopeID, tokenValue string) error {
+	envelopeID = strings.TrimSpace(envelopeID)
+	tokenValue = strings.TrimSpace(tokenValue)
+	if envelopeID == "" || tokenValue == "" {
+		return ErrApprovalRequired
+	}
+
+	path, err := approvalPath(envelopeID)
+	if err != nil {
+		return ErrApprovalNotFound
+	}
+	claimedPath := path + ".used"
+	if err := os.Rename(path, claimedPath); err != nil {
+		return ErrApprovalNotFound
+	}
+	defer os.Remove(claimedPath)
+
+	token, err := loadApprovalAt(claimedPath)
+	if err != nil {
+		return ErrApprovalNotFound
+	}
+	if subtle.ConstantTimeCompare([]byte(token.ApprovalToken), []byte(tokenValue)) != 1 {
 		return ErrApprovalNotFound
 	}
 	expires, err := time.Parse(time.RFC3339, token.ExpiresAt)
@@ -315,8 +362,14 @@ func isBlockedPath(path string) bool {
 		return false
 	}
 	expanded := expandHome(path)
+	if resolved, err := filepath.EvalSymlinks(expanded); err == nil {
+		expanded = resolved
+	}
 	lower := strings.ToLower(filepath.ToSlash(expanded))
 	home, _ := pocketpath.HomeDir()
+	if resolvedHome, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolvedHome
+	}
 	home = strings.ToLower(filepath.ToSlash(home))
 
 	blockedPrefixes := []string{
@@ -382,6 +435,10 @@ func loadApproval(envelopeID string) (ApprovalToken, error) {
 	if err != nil {
 		return ApprovalToken{}, err
 	}
+	return loadApprovalAt(path)
+}
+
+func loadApprovalAt(path string) (ApprovalToken, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ApprovalToken{}, err
@@ -416,17 +473,13 @@ func approvalPath(envelopeID string) (string, error) {
 }
 
 func safeID(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || value == "." || value == ".." {
-		return false
-	}
-	return !strings.ContainsAny(value, `/\`)
+	return approvalIDPattern.MatchString(strings.ToLower(strings.TrimSpace(value)))
 }
 
-func newID() string {
+func newID() (string, error) {
 	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+	if _, err := readRandom(raw[:]); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrRandomUnavailable, err)
 	}
 	raw[6] = (raw[6] & 0x0f) | 0x40
 	raw[8] = (raw[8] & 0x3f) | 0x80
@@ -440,13 +493,13 @@ func newID() string {
 	hex.Encode(dst[19:23], raw[8:10])
 	dst[23] = '-'
 	hex.Encode(dst[24:36], raw[10:16])
-	return string(dst)
+	return string(dst), nil
 }
 
-func randomHex(bytesLen int) string {
+func randomHex(bytesLen int) (string, error) {
 	raw := make([]byte, bytesLen)
-	if _, err := rand.Read(raw); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+	if _, err := readRandom(raw); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrRandomUnavailable, err)
 	}
-	return hex.EncodeToString(raw)
+	return hex.EncodeToString(raw), nil
 }

@@ -11,7 +11,7 @@ LOCK_DIR="${WORKDIR}/locks"
 LOG_FILE="${WORKDIR}/skills.jsonl"
 MOCKBIN="${WORKDIR}/mockbin"
 mkdir -p "${HOME_DIR}" "${ANSIBLE_DIR}" "${LOCK_DIR}" "${MOCKBIN}"
-cp -R "${REPO_ROOT}/ansible/." "${ANSIBLE_DIR}/"
+cp "${REPO_ROOT}/scripts/skills/allowed_skills.txt" "${ANSIBLE_DIR}/allowed_skills.txt"
 cat > "${ANSIBLE_DIR}/inventory.ini" <<'EOF'
 [test]
 srv-prod-01 ansible_host=127.0.0.1
@@ -128,7 +128,8 @@ run_endpoint() {
     mode=${3:-success}
     timeout_mode=${4:-0}
     set +e
-    env HOME="${HOME_DIR}" \
+        env HOME="${HOME_DIR}" \
+        POCKETCLI_DIR="${REPO_ROOT}" \
         PATH="${MOCKBIN}:/usr/bin:/bin:/opt/homebrew/bin" \
         POCKETCLI_ANSIBLE_DIR="${ANSIBLE_DIR}" \
         POCKETCLI_SKILL_LOCK_DIR="${LOCK_DIR}" \

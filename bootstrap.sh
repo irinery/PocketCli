@@ -40,6 +40,36 @@ have_git() {
     command -v git >/dev/null 2>&1
 }
 
+restore_update_stash() {
+    local stash_ref="$1"
+    [ -n "${stash_ref}" ] || return 0
+    if git -C "${INSTALL_DIR}" stash pop --quiet >/dev/null 2>&1; then
+        info "Restored local changes after update."
+    else
+        warn "Update completed; local changes remain in git stash for manual conflict resolution."
+    fi
+}
+
+update_git_install() {
+    local stash_ref="" before_stash="" after_stash=""
+    if [ -n "$(git -C "${INSTALL_DIR}" status --porcelain 2>/dev/null || true)" ]; then
+        before_stash=$(git -C "${INSTALL_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+        git -C "${INSTALL_DIR}" stash push --include-untracked --quiet -m "pocketcli-bootstrap-update"
+        after_stash=$(git -C "${INSTALL_DIR}" rev-parse -q --verify refs/stash 2>/dev/null || true)
+        if [ -n "${after_stash}" ] && [ "${after_stash}" != "${before_stash}" ]; then
+            stash_ref="${after_stash}"
+        fi
+    fi
+
+    if ! git -C "${INSTALL_DIR}" fetch --quiet origin || \
+        ! git -C "${INSTALL_DIR}" checkout --quiet "${POCKETCLI_VERSION}" || \
+        ! git -C "${INSTALL_DIR}" pull --quiet --ff-only; then
+        restore_update_stash "${stash_ref}"
+        die "Could not update the existing installation."
+    fi
+    restore_update_stash "${stash_ref}"
+}
+
 download_archive_install() {
     local archive_url tmp_dir tmp_tgz extracted_dir backup_dir
     archive_url="${ARCHIVE_URL_BASE}/${POCKETCLI_VERSION}"
@@ -63,6 +93,7 @@ download_archive_install() {
     rm -rf "${INSTALL_DIR}"
     mkdir -p "${INSTALL_DIR}"
     cp -R "${extracted_dir}/." "${INSTALL_DIR}/"
+    chmod 700 "${INSTALL_DIR}"
 
     if [ -n "${backup_dir}" ]; then
         mkdir -p "${INSTALL_DIR}/profile"
@@ -96,9 +127,7 @@ echo ""
 # ---------------------------------------------------------------------------
 if [ -d "${INSTALL_DIR}/.git" ] && have_git; then
     info "PocketCli already installed at ${INSTALL_DIR} — updating via git..."
-    git -C "${INSTALL_DIR}" fetch --quiet origin
-    git -C "${INSTALL_DIR}" checkout --quiet "${POCKETCLI_VERSION}"
-    git -C "${INSTALL_DIR}" pull --quiet --ff-only
+    update_git_install
 elif have_git; then
     info "Cloning PocketCli into ${INSTALL_DIR}..."
     if ! git clone --quiet --branch "${POCKETCLI_VERSION}" "${REPO_URL}" "${INSTALL_DIR}"; then
@@ -111,6 +140,7 @@ else
 fi
 
 success "Repository ready."
+chmod 700 "${INSTALL_DIR}"
 
 # ---------------------------------------------------------------------------
 # Hand off to install.sh

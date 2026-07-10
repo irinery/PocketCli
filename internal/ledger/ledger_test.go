@@ -54,3 +54,34 @@ func TestRebuildIndexSkipsTruncatedLine(t *testing.T) {
 		t.Fatalf("unexpected rebuild result: %#v", result)
 	}
 }
+
+func TestAppendRepairsExistingLedgerPermissions(t *testing.T) {
+	base := t.TempDir()
+	store := NewStoreAt(base)
+	result, err := store.Append(Event{Type: EventCommandCompleted, SessionID: "s1", Status: "ok"})
+	if err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	if err := os.Chmod(filepath.Dir(result.Path), 0o755); err != nil {
+		t.Fatalf("Chmod directory error = %v", err)
+	}
+	if err := os.Chmod(result.Path, 0o644); err != nil {
+		t.Fatalf("Chmod file error = %v", err)
+	}
+	if _, err := store.Append(Event{Type: EventCommandCompleted, SessionID: "s1", Status: "ok"}); err != nil {
+		t.Fatalf("second Append() error = %v", err)
+	}
+	assertLedgerMode(t, filepath.Dir(result.Path), 0o700)
+	assertLedgerMode(t, result.Path, 0o600)
+}
+
+func assertLedgerMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %#o, want %#o", path, got, want)
+	}
+}

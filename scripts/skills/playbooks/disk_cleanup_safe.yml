@@ -1,0 +1,18 @@
+---
+- name: PocketCli safe disk cleanup
+  hosts: all
+  gather_facts: false
+  vars:
+    target_path: /var/log
+  tasks:
+    - name: Validate cleanup target
+      ansible.builtin.assert:
+        that:
+          - target_path is match('^/(var/log|tmp|var/cache)(/.*)?$')
+        fail_msg: "target_path fora da allowlist"
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg:
+          target_path: "{{ target_path }}"
+          changed: false

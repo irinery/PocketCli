@@ -1,0 +1,126 @@
+---
+- name: PocketCli system requirements
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    pocketcli_os: "{{ pocketcli_os | default('linux') }}"
+    pocketcli_mode: "{{ pocketcli_mode | default('viewer') }}"
+    pocketcli_viewer_packages:
+      - git
+      - curl
+      - jq
+      - tmux
+      - zsh
+    pocketcli_agent_packages:
+      - git
+      - curl
+      - jq
+      - tmux
+      - zsh
+      - ripgrep
+      - htop
+      - python3
+      - ansible
+    pocketcli_packages: "{{ pocketcli_agent_packages if pocketcli_mode == 'agent' else pocketcli_viewer_packages }}"
+
+  tasks:
+    - name: Validate installer mode
+      ansible.builtin.assert:
+        that:
+          - pocketcli_mode in ['viewer', 'agent']
+          - pocketcli_os in ['alpine', 'ish', 'debian', 'wsl', 'linux', 'mac']
+        fail_msg: "Unsupported PocketCli requirements target"
+
+    - name: Update apk indexes
+      ansible.builtin.command: apk update
+      changed_when: false
+      when: pocketcli_os in ['alpine', 'ish']
+
+    - name: Install Alpine/iSH packages
+      ansible.builtin.command: "apk add --no-cache {{ pocketcli_packages | join(' ') }}"
+      when: pocketcli_os in ['alpine', 'ish']
+
+    - name: Try optional qrencode on Alpine/iSH
+      ansible.builtin.command: apk add --no-cache qrencode
+      register: pocketcli_apk_qrencode
+      changed_when: pocketcli_apk_qrencode.rc == 0
+      failed_when: false
+      when: pocketcli_os in ['alpine', 'ish']
+
+    - name: Update apt indexes
+      ansible.builtin.command: sudo apt-get update -qq
+      changed_when: false
+      when: pocketcli_os in ['debian', 'wsl', 'linux']
+
+    - name: Install apt packages
+      ansible.builtin.command: "sudo apt-get install -y --no-install-recommends {{ pocketcli_packages | join(' ') }}"
+      when: pocketcli_os in ['debian', 'wsl', 'linux']
+
+    - name: Try optional qrencode on apt systems
+      ansible.builtin.command: sudo apt-get install -y --no-install-recommends qrencode
+      register: pocketcli_apt_qrencode
+      changed_when: pocketcli_apt_qrencode.rc == 0
+      failed_when: false
+      when: pocketcli_os in ['debian', 'wsl', 'linux']
+
+    - name: Install Homebrew packages
+      ansible.builtin.command: "brew install {{ pocketcli_packages | join(' ') }} qrencode"
+      register: pocketcli_brew_core
+      changed_when: "'Installing' in pocketcli_brew_core.stdout or 'Pouring' in pocketcli_brew_core.stdout"
+      failed_when: >
+        pocketcli_brew_core.rc != 0 and
+        'already installed' not in ((pocketcli_brew_core.stdout | default('')) + (pocketcli_brew_core.stderr | default('')))
+      when: pocketcli_os == 'mac'
+
+    - name: Check lazygit on Linux agent
+      ansible.builtin.command: lazygit --version
+      register: pocketcli_lazygit_check
+      changed_when: false
+      failed_when: false
+      when: pocketcli_mode == 'agent' and pocketcli_os in ['debian', 'wsl', 'linux']
+
+    - name: Install lazygit on Linux agent
+      ansible.builtin.shell: |
+        set -eu
+        LG_VER=$(curl -fsSL "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" | jq -r '.tag_name' | tr -d 'v')
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VER}/lazygit_${LG_VER}_Linux_x86_64.tar.gz" -o "${TMP}/lazygit.tar.gz"
+        tar -xzf "${TMP}/lazygit.tar.gz" -C "${TMP}"
+        sudo install "${TMP}/lazygit" /usr/local/bin/lazygit
+      args:
+        executable: /bin/sh
+      when:
+        - pocketcli_mode == 'agent'
+        - pocketcli_os in ['debian', 'wsl', 'linux']
+        - pocketcli_lazygit_check.rc != 0
+
+    - name: Install lazygit on macOS agent
+      ansible.builtin.command: brew install lazygit
+      register: pocketcli_brew_lazygit
+      changed_when: "'Installing' in pocketcli_brew_lazygit.stdout or 'Pouring' in pocketcli_brew_lazygit.stdout"
+      failed_when: >
+        pocketcli_brew_lazygit.rc != 0 and
+        'already installed' not in ((pocketcli_brew_lazygit.stdout | default('')) + (pocketcli_brew_lazygit.stderr | default('')))
+      when: pocketcli_mode == 'agent' and pocketcli_os == 'mac'
+
+    - name: Check starship on agent
+      ansible.builtin.command: starship --version
+      register: pocketcli_starship_check
+      changed_when: false
+      failed_when: false
+      when: pocketcli_mode == 'agent'
+
+    - name: Install starship on agent
+      ansible.builtin.shell: |
+        set -eu
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        curl -fsSL https://starship.rs/install.sh -o "${TMP}/starship-install.sh"
+        sh "${TMP}/starship-install.sh" -- --yes
+      args:
+        executable: /bin/sh
+      when:
+        - pocketcli_mode == 'agent'
+        - pocketcli_starship_check.rc != 0

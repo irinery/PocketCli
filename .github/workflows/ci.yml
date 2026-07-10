@@ -25,9 +25,11 @@ jobs:
           - name: linux
             os: ubuntu-latest
             ci_profile: linux
+            go_version: "1.22.12"
           - name: macos
             os: macos-latest
             ci_profile: macos
+            go_version: "1.26.x"
 
     steps:
       - name: Checkout
@@ -36,7 +38,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go_version }}
           cache: true   # restaura módulos e build cache automaticamente
 
       - name: Run static and shell quality gates

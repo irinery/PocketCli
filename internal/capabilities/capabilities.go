@@ -141,7 +141,7 @@ func Save(manifest Manifest) (Manifest, error) {
 		manifest.CacheStatus = "write_failed"
 		return manifest, errors.New("ERR_CAP_MANIFEST_TOO_LARGE")
 	}
-	if err := pocketpath.AtomicWrite(filepath.Join(dataDir, "capabilities.json"), append(data, '\n'), 0o644); err != nil {
+	if err := pocketpath.AtomicWrite(filepath.Join(dataDir, "capabilities.json"), append(data, '\n'), 0o600); err != nil {
 		manifest.CacheStatus = "write_failed"
 		return manifest, err
 	}
@@ -283,10 +283,18 @@ func tailscaleCLIExists(ctx context.Context) bool {
 
 func stdinIsTTY() bool {
 	info, err := os.Stdin.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice != 0 {
+		return true
+	}
+
+	tty, err := os.OpenFile("/dev/tty", os.O_RDONLY, 0)
 	if err != nil {
 		return false
 	}
-	return info.Mode()&os.ModeCharDevice != 0
+	defer tty.Close()
+
+	info, err = tty.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func terminalSize() (int, int) {

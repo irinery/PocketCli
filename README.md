@@ -22,13 +22,15 @@ curl -fsSL https://raw.githubusercontent.com/irinery/PocketCli/main/bootstrap.sh
 
 ## O que o instalador faz
 
-1. Clona o repositório em `~/.pocketcli`
-2. Detecta o sistema operacional
+1. `bootstrap.sh` clona ou baixa o repositório em `~/.pocketcli`
+2. `install.sh` detecta o sistema operacional
 3. Pergunta o modo de instalação
-4. Instala as dependências necessárias
-5. Configura ZSH + Starship + TMUX
-6. Instala e ativa o Tailscale
-7. Inicia o ambiente
+4. Chama `scripts/install_requirements.sh`
+5. Roda o playbook Ansible local de requisitos quando `ansible-playbook` está disponível
+6. Usa fallback shell mínimo apenas para destravar Ansible ou viewer/iSH sem Ansible em runtime
+7. Configura profile + TMUX + Starship
+8. Instala/ativa Tailscale quando possível
+9. Inicia o ambiente
 
 ---
 
@@ -198,8 +200,11 @@ PocketCli/
 │   └── starship.toml     ← prompt padrão compartilhado
 │
 ├── scripts/
-│   ├── install_deps.sh       ← instala pacotes por OS/modo
+│   ├── install_requirements.sh ← caminho feliz dos requisitos via Ansible
+│   ├── install_deps.sh       ← fallback mínimo para destravar Ansible/viewer
 │   ├── install_tailscale.sh  ← instala e faz login no Tailscale
+│   ├── setup/
+│   │   └── requirements.yml  ← playbook local de requisitos por OS/modo
 │   ├── start_agent.sh        ← inicia tmux com sizing adaptativo e fallback para comandos ausentes
 │   ├── start_viewer.sh       ← prepara SSH; `pocket` sem args cai no menu em terminais interativos
 │   └── pocketcli_menu.sh     ← dashboard TUI com layout responsivo (split, stack, compact) e fallback leve
@@ -210,23 +215,21 @@ PocketCli/
 
 ---
 
-## Dependências instaladas
+## Requisitos
 
-| Ferramenta | Uso |
-|---|---|
-| `git` | controle de versão |
-| `curl` | downloads |
-| `jq` | parsing JSON |
-| `python3` | validação JSON e fallback de timeout na Skill Layer |
-| `ansible` / `ansible-core` | execução de playbooks da Skill Layer no modo Agent |
-| `tmux` | sessões de terminal |
-| `zsh` | shell principal |
-| `fzf` | menus interativos |
-| `ripgrep` | busca rápida (agent) |
-| `htop` | monitor de recursos (agent) |
-| `lazygit` | git TUI (agent) |
-| `starship` | prompt (agent) |
-| `tailscale` | rede privada + SSH |
+O padrão do projeto é: requisitos de sistema entram em `scripts/setup/requirements.yml` e o instalador chama esse playbook por `scripts/install_requirements.sh`. Shell direto fica restrito ao bootstrap/download e ao fallback para conseguir rodar Ansible quando ele ainda não existe.
+
+Resumo:
+
+| Perfil | Ansible em runtime? | Requisitos principais |
+|---|---|---|
+| `viewer` | não | `sh`, `ssh`, `git`, `curl`, `jq`, `tmux`, `zsh`, Tailscale recomendado |
+| `agent` | sim | viewer + `python3`, `ansible-playbook`, `ripgrep`, `htop`, `lazygit`, `starship` |
+| desenvolvimento/teste | sim para validar tudo | agent + `go`, `gofmt`, `bash` e ferramentas de teste |
+
+Detalhes em [docs/system-requirements.md](docs/system-requirements.md).
+
+Achados de seguranca, usabilidade e integracoes da rodada atual estao em [docs/reviews/2026-07-09](docs/reviews/2026-07-09/README.md).
 
 ---
 

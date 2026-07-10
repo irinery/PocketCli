@@ -3,6 +3,7 @@
 inventory_reconcile_to_json() {
     TMP_FILE="$1"
     NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+    TAB=$(printf '\t')
 
     KNOWN_COUNT=$(awk -F'\t' 'NF>0{print $1}' "${TMP_FILE}" | awk '!seen[$0]++{c++} END{print c+0}')
     ONLINE_COUNT=$(awk -F'\t' '$3=="true"{print $1}' "${TMP_FILE}" | awk '!seen[$0]++{c++} END{print c+0}')
@@ -15,7 +16,7 @@ inventory_reconcile_to_json() {
         echo '  "hosts": ['
 
         FIRST=1
-        awk -F'\t' 'NF>0{if(!seen[$1]++){print $0}}' "${TMP_FILE}" | while IFS=$'\t' read -r HOST IP ONLINE SOURCE; do
+        awk -F'\t' 'NF>0{if(!seen[$1]++){print $0}}' "${TMP_FILE}" | while IFS="${TAB}" read -r HOST IP ONLINE SOURCE; do
             [ -n "${HOST}" ] || continue
             if [ "${FIRST}" -eq 0 ]; then
                 echo '    ,'
@@ -46,6 +47,7 @@ JSON
         echo '  ]'
         echo '}'
     } > "$(pocket_inventory_file)"
+    chmod 600 "$(pocket_inventory_file)"
 
     # shellcheck disable=SC2034
     INVENTORY_LAST_REFRESH_AT="${NOW}"

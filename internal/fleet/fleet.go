@@ -52,11 +52,17 @@ type RunResult struct {
 }
 
 type HostRunResult struct {
-	HostID        string `json:"host_id"`
-	Status        string `json:"status"`
-	ExitCode      int    `json:"exit_code,omitempty"`
-	DurationMS    int    `json:"duration_ms"`
-	OutputPreview string `json:"output_preview,omitempty"`
+	HostID         string      `json:"host_id"`
+	HostAlias      string      `json:"host_alias,omitempty"`
+	CommandID      string      `json:"command_id,omitempty"`
+	Status         string      `json:"status"`
+	RemoteStatus   string      `json:"remote_status,omitempty"`
+	ExitCode       int         `json:"exit_code,omitempty"`
+	DurationMS     int         `json:"duration_ms"`
+	OutputPreview  string      `json:"output_preview,omitempty"`
+	StderrPreview  string      `json:"stderr_preview,omitempty"`
+	Truncated      bool        `json:"truncated,omitempty"`
+	PolicyDecision interface{} `json:"policy_decision,omitempty"`
 }
 
 type rawInventory struct {
@@ -154,9 +160,10 @@ func CreatePlan(selector string, command []string, maxParallel int) (Plan, error
 			HostCount:   len(targets),
 			Interactive: true,
 		})
-		if err == nil {
-			envelopeID = envelope.EnvelopeID
+		if err != nil {
+			return Plan{}, err
 		}
+		envelopeID = envelope.EnvelopeID
 	}
 
 	plan := Plan{
@@ -197,7 +204,7 @@ func SavePlan(plan Plan) error {
 	if err != nil {
 		return err
 	}
-	return pocketpath.AtomicWrite(path, append(data, '\n'), 0o644)
+	return pocketpath.AtomicWrite(path, append(data, '\n'), 0o600)
 }
 
 func LoadPlan(planID string) (Plan, error) {

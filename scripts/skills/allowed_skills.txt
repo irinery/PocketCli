@@ -1,0 +1,6 @@
+# Built-in skills allowed by the local Skill Layer guard rails.
+disk_check
+disk_cleanup_safe
+service_status
+service_restart_safe
+log_tail

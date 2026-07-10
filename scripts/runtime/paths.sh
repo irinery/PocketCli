@@ -41,5 +41,7 @@ pocket_seed_hosts_file() {
 }
 
 pocket_paths_init() {
+    umask 077
     mkdir -p "$(pocket_config_dir)" "$(pocket_data_dir)" "$(pocket_cache_dir)"
+    chmod 700 "$(pocket_config_dir)" "$(pocket_data_dir)" "$(pocket_cache_dir)"
 }

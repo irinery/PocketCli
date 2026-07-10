@@ -1,0 +1,26 @@
+---
+- name: PocketCli safe service restart
+  hosts: all
+  gather_facts: false
+  vars:
+    service_name: ""
+  tasks:
+    - name: Validate service name
+      ansible.builtin.assert:
+        that:
+          - service_name is match('^[A-Za-z0-9_.@-]{1,80}$')
+        fail_msg: "service_name invalido"
+
+    - name: Restart service
+      ansible.builtin.service:
+        name: "{{ service_name }}"
+        state: restarted
+      become: true
+      register: pocket_service_restart
+
+    - name: pocket_result
+      ansible.builtin.debug:
+        msg:
+          restarted: true
+          state: restarted
+          changed: "{{ pocket_service_restart.changed | default(true) }}"

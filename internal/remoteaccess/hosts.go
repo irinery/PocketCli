@@ -54,12 +54,27 @@ func (s *JSONHostStore) Load() ([]RemoteHost, error) {
 	if err != nil {
 		return nil, err
 	}
+	parentInfo, err := os.Stat(filepath.Dir(path))
+	if err == nil && (!parentInfo.IsDir() || parentInfo.Mode().Perm()&0o022 != 0) {
+		return nil, ErrUnsafeHostStore
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o022 != 0 {
+		return nil, ErrUnsafeHostStore
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, err
 	}
 

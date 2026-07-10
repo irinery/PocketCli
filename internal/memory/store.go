@@ -2,6 +2,7 @@ package memory
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"pocketcli/internal/pocketpath"
 )
 
 const (
@@ -167,11 +170,7 @@ func (s *Store) RememberInteraction(interaction LastInteraction) error {
 		return err
 	}
 
-	if err := os.MkdirAll(s.stateDir(), 0o755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(s.lastInteractionPath(), append(data, '\n'), 0o644)
+	return pocketpath.AtomicWrite(s.lastInteractionPath(), append(data, '\n'), 0o600)
 }
 
 func (s *Store) LoadLastInteraction() (LastInteraction, error) {
@@ -450,39 +449,14 @@ func (s *Store) loadEntries(path string) ([]Entry, error) {
 }
 
 func (s *Store) writeEntries(path string, entries []Entry) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-
-	success := false
-	defer func() {
-		tmpFile.Close()
-		if !success {
-			_ = os.Remove(tmpFile.Name())
-		}
-	}()
-
-	encoder := json.NewEncoder(tmpFile)
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
 	for _, entry := range entries {
 		if err := encoder.Encode(entry); err != nil {
 			return err
 		}
 	}
-
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpFile.Name(), path); err != nil {
-		return err
-	}
-
-	success = true
-	return nil
+	return pocketpath.AtomicWrite(path, data.Bytes(), 0o600)
 }
 
 func (s *Store) memoryDir() string {

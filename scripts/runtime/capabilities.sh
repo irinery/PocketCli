@@ -6,7 +6,9 @@ pocket_capability_has() {
 
 pocket_detect_capabilities() {
     HAS_TTY=false
-    [ -t 0 ] && HAS_TTY=true
+    if [ -t 0 ] || (stty -g < /dev/tty >/dev/null 2>&1) 2>/dev/null; then
+        HAS_TTY=true
+    fi
 
     HAS_TMUX=false
     pocket_capability_has tmux && HAS_TMUX=true
@@ -42,11 +44,10 @@ pocket_detect_capabilities() {
     HAS_GO=false
     pocket_capability_has go && HAS_GO=true
 
-    # Consumida por scripts que carregam este runtime via source.
-    # shellcheck disable=SC2034
+    # shellcheck disable=SC2034 # consumed by sourced runtime/context.sh callers
     IS_ISH=false
     if command -v is_ish >/dev/null 2>&1 && is_ish; then
-        # shellcheck disable=SC2034
+        # shellcheck disable=SC2034 # consumed by sourced runtime/context.sh callers
         IS_ISH=true
     fi
 }

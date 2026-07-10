@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"pocketcli/internal/ssh"
 	"pocketcli/internal/tailscale"
 )
 
@@ -160,5 +161,9 @@ func runHostsTUI(in io.Reader, out io.Writer, fetch statusFetcher, openHost host
 }
 
 func defaultHostsViewer(in io.Reader, out io.Writer) error {
-	return runHostsTUI(in, out, tailscale.GetStatus, ssh.Open)
+	return runHostsTUI(in, out, tailscale.GetStatus, func(host string) error { return openHostFromHostsTUI(in, out, host) })
+}
+
+func openHostFromHostsTUI(in io.Reader, out io.Writer, host string) error {
+	return connectInteractive(context.Background(), host, in, out, os.Stderr)
 }

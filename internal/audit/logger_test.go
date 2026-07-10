@@ -31,6 +31,8 @@ func TestWriteAL01AddsFormattedLineWithRequiredFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
+	assertFileMode(t, logger.activePath(), 0o600)
+	assertFileMode(t, logger.baseDir, 0o700)
 
 	got := strings.TrimSpace(string(data))
 	want := "2026-04-06T14:32:11Z | ask | local | tokens=420 | latency=1200ms | memory_hit=false | session_id=550e8400-e29b-41d4-a716-446655440000"
@@ -259,4 +261,15 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func assertFileMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) returned error: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("mode(%s) = %#o, want %#o", path, got, want)
+	}
 }

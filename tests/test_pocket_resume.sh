@@ -3,6 +3,10 @@ set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/tests/lib/test_helpers.sh"
+
+quoted_path=$(sh -c '. "$1/scripts/layout/tmux_restore.sh"; layout_shell_quote "$2"' sh "$REPO_ROOT" "path/with'quote/pocket")
+[ "$quoted_path" = "'path/with'\\''quote/pocket'" ]
+
 WORKDIR=$(mktemp -d)
 HOME_DIR="$WORKDIR/home"
 MOCKBIN="$WORKDIR/mockbin"
@@ -57,6 +61,55 @@ grep -F 'resume' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1 && ex
 grep -F 'menu' "$HOME_DIR/.pocketcli/state/last-command" >/dev/null 2>&1
 printf 'PASS pocket resume creates tmux session, queues the restore command, and keeps last command state
 '
+
+run_manager_resume_test() {
+    WORKDIR=$(mktemp -d)
+    HOME_DIR="$WORKDIR/home"
+    MOCKBIN="$WORKDIR/mockbin"
+    LOG_FILE="$WORKDIR/log"
+    mkdir -p "$HOME_DIR/.pocketcli" "$MOCKBIN"
+    cp "$REPO_ROOT/pocket" "$HOME_DIR/.pocketcli/pocket"
+    cp -R "$REPO_ROOT/lib" "$HOME_DIR/.pocketcli/lib"
+    cp -R "$REPO_ROOT/scripts" "$HOME_DIR/.pocketcli/scripts"
+    cp -R "$REPO_ROOT/specs" "$HOME_DIR/.pocketcli/specs"
+    chmod +x "$HOME_DIR/.pocketcli/pocket"
+
+    cat > "$MOCKBIN/tmux" <<'EOS'
+#!/usr/bin/env sh
+set -eu
+printf 'tmux:%s
+' "$*" >> "$POCKETCLI_TEST_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  new-session)
+    [ "$#" -eq 4 ] || exit 1
+    [ "$2" = "-d" ] || exit 1
+    [ "$3" = "-s" ] || exit 1
+    [ "$4" = "pocketcli" ] || exit 1
+    exit 0 ;;
+  send-keys)
+    [ "$2" = "-t" ] || exit 1
+    [ "$3" = "pocketcli" ] || exit 1
+    [ "$4" = "POCKETCLI_RESTORE=1 '$HOME/.pocketcli/pocket' __restore" ] || exit 1
+    [ "$5" = "C-m" ] || exit 1
+    exit 0 ;;
+  source-file) exit 0 ;;
+  attach-session) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOS
+    chmod +x "$MOCKBIN/tmux"
+
+    run_pty_command 3 /dev/null "env HOME='$HOME_DIR' PATH='$MOCKBIN:/usr/bin:/bin:/opt/homebrew/bin' POCKETCLI_TEST_LOG='$LOG_FILE' sh '$HOME_DIR/.pocketcli/pocket' resume" >/dev/null 2>&1 || true
+
+    grep -F 'tmux:new-session -d -s pocketcli' "$LOG_FILE" >/dev/null 2>&1
+    grep -F "tmux:send-keys -t pocketcli POCKETCLI_RESTORE=1 '$HOME_DIR/.pocketcli/pocket' __restore C-m" "$LOG_FILE" >/dev/null 2>&1
+    grep -F 'tmux:attach-session -t pocketcli' "$LOG_FILE" >/dev/null 2>&1
+    printf 'PASS pocket resume through session manager recreates tmux state
+'
+}
+
+run_manager_resume_test
 
 run_default_menu_with_dev_tty_test() {
     WORKDIR=$(mktemp -d)

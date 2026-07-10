@@ -3,6 +3,7 @@ package contextcollector
 import (
 	stdctx "context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -22,11 +23,13 @@ import (
 const (
 	MaxContextTokens = 4000
 
-	mainFileLineLimit = 100
-	readmeLineLimit   = 50
-	gitDiffLineLimit  = 200
-	gitLogCommitLimit = 10
-	commandTimeout    = 3 * time.Second
+	mainFileLineLimit     = 100
+	readmeLineLimit       = 50
+	gitDiffLineLimit      = 200
+	gitLogCommitLimit     = 10
+	commandTimeout        = 3 * time.Second
+	maxCollectedFileBytes = 128 * 1024
+	maxMainFiles          = 64
 )
 
 var (
@@ -201,13 +204,14 @@ func collectReadme(cwd string) (*string, bool, error) {
 		return nil, false, nil
 	}
 
-	content, err := readTextFile(candidates[0])
+	content, byteTruncated, err := readTextFile(candidates[0])
 	if err != nil {
 		return nil, false, nil
 	}
 
 	content = sanitizeContent(content)
-	content, truncated := truncateLines(content, readmeLineLimit)
+	content, lineTruncated := truncateLines(content, readmeLineLimit)
+	truncated := byteTruncated || lineTruncated
 	if content == "" {
 		return nil, truncated, nil
 	}
@@ -245,8 +249,12 @@ func collectMainFiles(cwd string) ([]MainFile, bool, error) {
 		if strings.HasPrefix(name, ".") {
 			return nil
 		}
+		if len(files) >= maxMainFiles {
+			partial = true
+			return errMainFileLimit
+		}
 
-		content, err := readTextFile(path)
+		content, byteTruncated, err := readTextFile(path)
 		if err != nil {
 			return nil
 		}
@@ -255,8 +263,8 @@ func collectMainFiles(cwd string) ([]MainFile, bool, error) {
 		}
 
 		content = sanitizeContent(content)
-		content, truncated := truncateLines(content, mainFileLineLimit)
-		partial = partial || truncated
+		content, lineTruncated := truncateLines(content, mainFileLineLimit)
+		partial = partial || byteTruncated || lineTruncated
 
 		relPath, err := filepath.Rel(cwd, path)
 		if err != nil {
@@ -269,7 +277,7 @@ func collectMainFiles(cwd string) ([]MainFile, bool, error) {
 		})
 		return nil
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, errMainFileLimit) {
 		return nil, false, err
 	}
 
@@ -281,13 +289,13 @@ func collectMainFiles(cwd string) ([]MainFile, bool, error) {
 }
 
 func collectGitContext(cwd string) (bool, *string, *string, *string, bool) {
-	output, err := runCommand(cwd, "git", "rev-parse", "--is-inside-work-tree")
+	output, _, err := runCommand(cwd, "git", "rev-parse", "--is-inside-work-tree")
 	if err != nil || strings.TrimSpace(output) != "true" {
 		return false, nil, nil, nil, false
 	}
 
 	var branch *string
-	if out, err := runCommand(cwd, "git", "branch", "--show-current"); err == nil {
+	if out, _, err := runCommand(cwd, "git", "branch", "--show-current"); err == nil {
 		trimmed := strings.TrimSpace(out)
 		if trimmed != "" {
 			branch = stringPtr(trimmed)
@@ -296,22 +304,23 @@ func collectGitContext(cwd string) (bool, *string, *string, *string, bool) {
 
 	var gitDiff *string
 	partial := false
-	if out, err := runCommand(cwd, "git", "diff", "HEAD", "--"); err == nil {
+	if out, byteTruncated, err := runCommand(cwd, "git", "diff", "HEAD", "--"); err == nil {
 		sanitized := sanitizeGitDiff(out)
 		if sanitized != "" {
 			var truncated bool
 			sanitized, truncated = truncateLines(sanitized, gitDiffLineLimit)
-			partial = partial || truncated
+			partial = partial || byteTruncated || truncated
 			gitDiff = stringPtr(sanitized)
 		}
 	}
 
 	var gitLog *string
-	if out, err := runCommand(cwd, "git", "log", "--oneline", "-n", strconv.Itoa(gitLogCommitLimit)); err == nil {
+	if out, byteTruncated, err := runCommand(cwd, "git", "log", "--oneline", "-n", strconv.Itoa(gitLogCommitLimit)); err == nil {
 		trimmed := strings.TrimSpace(out)
 		if trimmed != "" {
 			gitLog = stringPtr(trimmed)
 		}
+		partial = partial || byteTruncated
 	}
 
 	return true, branch, gitDiff, gitLog, partial
@@ -461,18 +470,29 @@ func truncateLines(content string, maxLines int) (string, bool) {
 	return strings.Join(truncated, "\n"), true
 }
 
-func readTextFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
+var errMainFileLimit = errors.New("main file limit reached")
+
+func readTextFile(path string) (string, bool, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", false, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxCollectedFileBytes+1))
+	if err != nil {
+		return "", false, err
+	}
+	truncated := len(data) > maxCollectedFileBytes
+	if truncated {
+		data = data[:maxCollectedFileBytes]
 	}
 	if len(data) == 0 {
-		return "", nil
+		return "", truncated, nil
 	}
 	if !utf8.Valid(data) || bytesContainsZero(data) {
-		return "", nil
+		return "", truncated, nil
 	}
-	return strings.TrimRight(string(data), "\n"), nil
+	return strings.TrimRight(string(data), "\n"), truncated, nil
 }
 
 func bytesContainsZero(data []byte) bool {
@@ -518,18 +538,49 @@ func splitLines(content string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-func runCommand(cwd string, name string, args ...string) (string, error) {
+func runCommand(cwd string, name string, args ...string) (string, bool, error) {
 	commandCtx, cancel := stdctx.WithTimeout(stdctx.Background(), commandTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(commandCtx, name, args...)
 	cmd.Dir = cwd
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
+	output := newCappedCommandOutput(maxCollectedFileBytes)
+	cmd.Stdout = &output
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return output.String(), output.Truncated(), err
 	}
-	return string(output), nil
+	return output.String(), output.Truncated(), nil
 }
+
+type cappedCommandOutput struct {
+	data      []byte
+	maxBytes  int
+	truncated bool
+}
+
+func newCappedCommandOutput(maxBytes int) cappedCommandOutput {
+	return cappedCommandOutput{maxBytes: maxBytes}
+}
+
+func (b *cappedCommandOutput) Write(value []byte) (int, error) {
+	remaining := b.maxBytes - len(b.data)
+	if remaining <= 0 {
+		b.truncated = b.truncated || len(value) > 0
+		return len(value), nil
+	}
+	if len(value) > remaining {
+		b.data = append(b.data, value[:remaining]...)
+		b.truncated = true
+		return len(value), nil
+	}
+	b.data = append(b.data, value...)
+	return len(value), nil
+}
+
+func (b *cappedCommandOutput) String() string { return string(b.data) }
+
+func (b *cappedCommandOutput) Truncated() bool { return b.truncated }
 
 func totalTokenCount(ctx TaskContext) int {
 	total := approxTokens(ctx.Project.Path)
