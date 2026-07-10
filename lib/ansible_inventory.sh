@@ -5,6 +5,11 @@
 set -u
 
 POCKET_DIR="${POCKET_DIR:-${POCKETCLI_DIR:-${HOME}/.pocketcli}}"
+if [ -r "${POCKET_DIR}/lib/common.sh" ]; then
+    # Reuse cross-platform Tailscale CLI discovery when running via PocketCli.
+    # shellcheck disable=SC1090
+    . "${POCKET_DIR}/lib/common.sh"
+fi
 ANSIBLE_DIR="${ANSIBLE_DIR:-${POCKET_DIR}/ansible}"
 INVENTORY_DIR="${INVENTORY_DIR:-${ANSIBLE_DIR}/inventory}"
 STATIC_INVENTORY="${STATIC_INVENTORY:-${INVENTORY_DIR}/hosts.yml}"
@@ -424,11 +429,14 @@ tailscale_cache_timestamp() {
 }
 
 tailscale_is_online() {
-    command -v tailscale >/dev/null 2>&1 || return 1
-    tailscale status --json >/dev/null 2>&1
+    tailscale_status_json >/dev/null 2>&1
 }
 
 tailscale_status_json() {
+    if command -v tailscale_cli >/dev/null 2>&1; then
+        tailscale_cli status --json
+        return $?
+    fi
     command -v tailscale >/dev/null 2>&1 || return 1
     tailscale status --json
 }

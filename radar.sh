@@ -24,8 +24,8 @@ printf "  %-20s %-15s %-10s\n" "Hostname" "IP" "Status"
 printf "  %-20s %-15s %-10s\n" "────────────────────" "───────────────" "──────────"
 
 TS_STATUS=""
-if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-    TS_STATUS=$(with_timeout 5 tailscale status --json 2>/dev/null || true)
+if has_tailscale_cli && command -v jq >/dev/null 2>&1; then
+    TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
 fi
 
 if [ -n "${TS_STATUS}" ]; then

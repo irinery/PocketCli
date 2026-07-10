@@ -17,7 +17,7 @@ PID_FILE="/tmp/tailscaled.pid"
 LOG_FILE="/tmp/tailscaled.log"
 
 # =============================================================================
-# iSH guard — called at the top of any command that needs the daemon
+# iSH guard — called at the top of any command that needs a local backend
 # =============================================================================
 _assert_not_ish() {
     if is_ish; then
@@ -35,15 +35,114 @@ _assert_not_ish() {
 # Daemon lifecycle
 # =============================================================================
 
+_run_privileged() {
+    if [ "$(id -u 2>/dev/null || printf '1')" = "0" ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
+_is_windows_host() {
+    case "$(uname -s 2>/dev/null || true)" in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    esac
+    [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+    grep -qi microsoft /proc/version 2>/dev/null
+}
+
+_is_native_tailscale_client() {
+    TS_CLI=$(tailscale_cli_path 2>/dev/null || true)
+    case "${TS_CLI}" in
+        */Tailscale.app/Contents/MacOS/Tailscale|*.exe) return 0 ;;
+    esac
+    return 1
+}
+
+_start_system_backend() {
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+        if command -v open >/dev/null 2>&1 && _is_native_tailscale_client; then
+            info "Opening the macOS Tailscale app..."
+            open -gja Tailscale >/dev/null 2>&1
+            return $?
+        fi
+        return 1
+    fi
+
+    if _is_windows_host; then
+        info "Starting the Windows Tailscale service..."
+        if command -v powershell.exe >/dev/null 2>&1; then
+            powershell.exe -NoProfile -NonInteractive -Command \
+                'Start-Service -Name Tailscale -ErrorAction Stop' >/dev/null 2>&1 && return 0
+        fi
+        if command -v net.exe >/dev/null 2>&1; then
+            net.exe start Tailscale >/dev/null 2>&1 && return 0
+        fi
+        return 1
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        info "Starting the system tailscaled service..."
+        _run_privileged systemctl start tailscaled >/dev/null 2>&1 && return 0
+    fi
+    if command -v rc-service >/dev/null 2>&1; then
+        info "Starting the OpenRC Tailscale service..."
+        _run_privileged rc-service tailscale start >/dev/null 2>&1 && return 0
+    fi
+    if command -v service >/dev/null 2>&1; then
+        info "Starting the Tailscale service..."
+        _run_privileged service tailscaled start >/dev/null 2>&1 && return 0
+    fi
+    return 1
+}
+
+_wait_for_backend() {
+    MAX=${1:-10}
+    I=0
+    while [ "${I}" -lt "${MAX}" ]; do
+        if is_tailscale_backend_responding; then
+            return 0
+        fi
+        sleep 1
+        I=$((I + 1))
+    done
+    return 1
+}
+
 _daemon_start() {
     _assert_not_ish
 
-    if is_tailscale_daemon_running; then
-        ok "tailscaled already running (PID $(pgrep tailscaled | head -1))"
+    if is_tailscale_mesh_operational; then
+        TS_IP=$(get_tailscale_ip 2>/dev/null || true)
+        ok "Tailscale mesh already operational${TS_IP:+ (IP: ${TS_IP})}."
+        info "Using the existing system/app-managed backend; no extra daemon was started."
         return 0
     fi
 
-    command -v tailscaled >/dev/null 2>&1 || die "tailscaled not installed. Run: pocket tailscale-setup"
+    if is_tailscale_backend_responding; then
+        ok "Tailscale backend is already responding (authentication pending)."
+        return 0
+    fi
+
+    if _start_system_backend; then
+        info "Waiting for the system/app-managed backend..."
+        if _wait_for_backend 12; then
+            ok "Tailscale backend is ready."
+            return 0
+        fi
+    fi
+
+    if _is_native_tailscale_client; then
+        warn "The native Tailscale client is installed, but its backend did not start."
+        return 1
+    fi
+
+    command -v tailscaled >/dev/null 2>&1 || {
+        warn "tailscaled is not installed and no system/app-managed backend was found."
+        return 1
+    }
 
     info "Starting tailscaled (userspace networking)..."
     : > "${LOG_FILE}"
@@ -67,7 +166,7 @@ _daemon_start() {
             head -20 "${LOG_FILE}"
             return 1
         fi
-        if tailscale status >/dev/null 2>&1; then
+        if tailscale_cli status >/dev/null 2>&1; then
             printf '\n'; ok "tailscaled is ready."; return 0
         fi
         I=$((I + 1))
@@ -79,6 +178,17 @@ _daemon_start() {
 
 _daemon_stop() {
     _assert_not_ish
+
+    if _is_native_tailscale_client; then
+        info "Disconnecting the system-managed Tailscale client..."
+        if tailscale_cli down >/dev/null 2>&1; then
+            ok "Tailscale disconnected."
+            return 0
+        fi
+        warn "Could not disconnect the native Tailscale client."
+        return 1
+    fi
+
     info "Stopping tailscaled..."
     if [ -f "${PID_FILE}" ]; then
         PID=$(cat "${PID_FILE}" 2>/dev/null || true)
@@ -94,57 +204,40 @@ _daemon_stop() {
 _daemon_status() {
     step "Tailscale Status"
 
-    # iSH path — no daemon, check via iOS VPN
-    if is_ish; then
-        warn "iSH: tailscaled daemon not available (kernel limitation)"
-        TS_IP=$(get_tailscale_ip)
-        if [ -n "${TS_IP}" ]; then
-            ok "On Tailscale network via iOS app (IP: ${TS_IP})"
+    TS_IP=$(get_tailscale_ip 2>/dev/null || true)
+    if ! is_tailscale_mesh_operational; then
+        if is_tailscale_backend_responding; then
+            warn "Tailscale backend is responding, but this device is not connected."
+            info "Run: pocket tailscale-auth"
+        elif has_tailscale_cli; then
+            warn "Tailscale is installed, but the backend/mesh is unavailable."
+            info "Run: pocket tailscale-start"
         else
-            warn "Not on Tailscale network. Open the Tailscale iOS app and connect."
+            warn "Tailscale mesh and CLI were not detected."
+            info "Run: pocket tailscale-setup"
         fi
-        echo ""
-        info "Saved hosts (pocket menu for interactive selection):"
-        HOSTS_FILE="${POCKETCLI_DIR}/hosts"
-        if [ -f "${HOSTS_FILE}" ]; then
-            if grep -qv '^\s*$' "${HOSTS_FILE}" 2>/dev/null; then
-                grep -v '^\s*#' "${HOSTS_FILE}" | grep -v '^\s*$' \
-                    | while IFS= read -r h; do
-                        REACHABLE=""
-                        ping_host "${h}" 2 && REACHABLE=" ${C_GREEN}[reachable]${C_NC}" \
-                                           || REACHABLE=" ${C_YELLOW}[no response]${C_NC}"
-                        printf "  %-25s%b\n" "${h}" "${REACHABLE}"
-                      done
-            else
-                info "No saved hosts yet. Use option 2 in pocket menu to add them."
-            fi
-        else
-            info "No saved hosts yet. Use option 2 in pocket menu to add them."
-        fi
+        return 1
+    fi
+
+    if is_tailscale_backend_responding; then
+        ok "Tailscale backend and mesh are operational."
+    else
+        ok "Tailscale mesh is operational through the system-managed VPN."
+        info "The PocketCli fallback is using the OS network interface."
+    fi
+
+    printf "\n  ${C_BOLD}%-18s${C_NC} %s\n" "This device IP:" "${TS_IP:-not assigned}"
+    echo ""
+
+    if ! has_tailscale_cli; then
+        info "Peer listing requires the optional Tailscale CLI integration."
         echo ""
         return 0
     fi
 
-    # Normal path
-    if ! command -v tailscale >/dev/null 2>&1; then
-        warn "tailscale not installed."; return 1
-    fi
-    if is_tailscale_daemon_running; then
-        PID=$(pgrep tailscaled | head -1 || echo "?")
-        ok "tailscaled running (PID ${PID})"
-    else
-        warn "tailscaled NOT running"; return 1
-    fi
-    if ! with_timeout 5 tailscale status >/dev/null 2>&1; then
-        warn "Daemon running but socket not responding"; return 1
-    fi
-
-    TS_IP=$(get_tailscale_ip)
-    printf "\n  ${C_BOLD}%-18s${C_NC} %s\n" "This device IP:" "${TS_IP:-not assigned}"
-    echo ""
     printf "  ${C_BOLD}%-22s %-16s %-8s${C_NC}\n" "Hostname" "IP" "Online"
     printf "  %-22s %-16s %-8s\n" "----------------------" "----------------" "--------"
-    tailscale status 2>/dev/null \
+    tailscale_cli status 2>/dev/null \
         | grep -v '^#\|^$\|offers exit' \
         | while IFS= read -r line; do
             HOST=$(printf '%s' "${line}" | awk '{print $2}' | tr -cd 'a-zA-Z0-9._-')
@@ -175,13 +268,30 @@ _ts_ping() {
 }
 
 _install_tailscale() {
-    if command -v tailscale >/dev/null 2>&1; then
+    if has_tailscale_cli; then
         ok "tailscale already installed."
         return 0
     fi
 
     info "Installing tailscale..."
-    if command -v apk >/dev/null 2>&1; then
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+        if command -v brew >/dev/null 2>&1 \
+            && brew install --cask tailscale-app; then
+            ok "Tailscale macOS app installed."
+            return 0
+        fi
+        warn "Could not install the Tailscale macOS app automatically."
+        return 1
+    elif _is_windows_host; then
+        if command -v winget.exe >/dev/null 2>&1 \
+            && winget.exe install --exact --id Tailscale.Tailscale \
+                --accept-package-agreements --accept-source-agreements; then
+            ok "Tailscale Windows app installed."
+            return 0
+        fi
+        warn "Could not install the Tailscale Windows app automatically."
+        return 1
+    elif command -v apk >/dev/null 2>&1; then
         if apk add --no-cache tailscale >/dev/null 2>&1; then
             ok "apk add tailscale"
             if apk add --no-cache qrencode 2>/dev/null; then
@@ -299,6 +409,14 @@ _setup_install_fallback() {
 _full_setup() {
     step "Tailscale Full Setup"
 
+    if is_tailscale_mesh_operational; then
+        TS_IP=$(get_tailscale_ip 2>/dev/null || true)
+        ok "Tailscale mesh already operational${TS_IP:+ (IP: ${TS_IP})}."
+        info "Keeping the existing system/app-managed installation."
+        _daemon_status
+        return 0
+    fi
+
     # On iSH — no daemon possible, just validate iOS connectivity
     if is_ish; then
         echo ""
@@ -327,7 +445,7 @@ _full_setup() {
         die "Cannot install tailscale automatically. See: https://tailscale.com/download"
     fi
 
-    _daemon_start || die "Could not start tailscaled. Check: ${LOG_FILE}"
+    _daemon_start || die "Could not start the Tailscale backend. Run: pocket tailscale-status"
     _authenticate
     _daemon_status
 }
@@ -338,7 +456,7 @@ _full_setup() {
 _authenticate() {
     _assert_not_ish
 
-    if with_timeout 5 tailscale status >/dev/null 2>&1; then
+    if is_tailscale_mesh_operational; then
         TS_IP=$(get_tailscale_ip)
         [ -n "${TS_IP}" ] && { ok "Already authenticated (IP: ${TS_IP})"; return 0; }
     fi
@@ -347,7 +465,15 @@ _authenticate() {
     AUTH_LOG="/tmp/ts_auth_$$.log"
     : > "${AUTH_LOG}"
 
-    tailscale up --ssh > "${AUTH_LOG}" 2>&1 &
+    TS_CLI=$(tailscale_cli_path 2>/dev/null || true)
+    case "${TS_CLI}" in
+        */Tailscale.app/Contents/MacOS/Tailscale|*.exe)
+            tailscale_cli up > "${AUTH_LOG}" 2>&1 &
+        ;;
+        *)
+            tailscale_cli up --ssh > "${AUTH_LOG}" 2>&1 &
+        ;;
+    esac
     TS_UP_PID=$!
 
     I=0; AUTH_URL=""
@@ -376,7 +502,7 @@ _authenticate() {
         wait "${TS_UP_PID}" 2>/dev/null || true
         TS_IP=$(get_tailscale_ip)
         if [ -n "${TS_IP}" ]; then ok "Authenticated (IP: ${TS_IP})"
-        else warn "Could not get auth URL. Run: tailscale up --ssh"
+        else warn "Could not authenticate. Run: pocket tailscale-auth"
         fi
     fi
 
@@ -423,7 +549,7 @@ shift 2>/dev/null || true
 case "${CMD}" in
     start)   _daemon_start   ;;
     stop)    _daemon_stop    ;;
-    restart) _daemon_stop; _daemon_start ;;
+    restart) _daemon_stop; _daemon_start; _authenticate ;;
     status)  _daemon_status  ;;
     auth)    _authenticate   ;;
     setup)   _full_setup     ;;
@@ -432,9 +558,9 @@ case "${CMD}" in
         echo ""
         printf "  Usage: pocket tailscale-<command>\n\n"
         printf "  setup    Full install + start + auth\n"
-        printf "  start    Start daemon (non-iSH only)\n"
-        printf "  stop     Stop daemon\n"
-        printf "  restart  Restart daemon\n"
+        printf "  start    Start the available Tailscale backend\n"
+        printf "  stop     Stop or disconnect the Tailscale backend\n"
+        printf "  restart  Restart and reconnect the Tailscale backend\n"
         printf "  status   Status + peers (iSH: shows connectivity)\n"
         printf "  auth     Re-authenticate (shows QR)\n"
         printf "  ping     Check host reachability via ping\n"

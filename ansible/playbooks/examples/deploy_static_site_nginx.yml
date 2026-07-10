@@ -1,0 +1,33 @@
+- name: pocket_meta
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pocket_meta:
+      name: "deploy_static_site_nginx"
+      description: "Publica site estático servido por nginx"
+      author: "pocketcli"
+      version: "1.0.0"
+      category: "deploy"
+      safe_modes:
+        - check
+        - diff
+        - run
+      inventory_source: merged
+      tags: []
+      min_ansible_version: "2.14"
+      created_at: "2026-05-11"
+      updated_at: "2026-05-11"
+  tasks: []
+
+- name: Deploy de site estático
+  hosts: all
+  gather_facts: true
+  vars:
+    static_site_root: /var/www/html
+  tasks:
+    - name: Criar diretório do site
+      ansible.builtin.file:
+        path: "{{ static_site_root }}"
+        state: directory
+        mode: "0755"
+      tags: [deploy]

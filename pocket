@@ -36,8 +36,8 @@ _cmd_help() {
     printf "  ${C_CYAN}resume${C_NC}                   Restore/attach the PocketCli tmux session\n"
     echo ""
     printf "  ${C_CYAN}tailscale-setup${C_NC}          Install + start + auth (shows QR)\n"
-    printf "  ${C_CYAN}tailscale-start${C_NC}          Start tailscaled daemon\n"
-    printf "  ${C_CYAN}tailscale-restart${C_NC}        Restart tailscaled daemon\n"
+    printf "  ${C_CYAN}tailscale-start${C_NC}          Start the Tailscale backend\n"
+    printf "  ${C_CYAN}tailscale-restart${C_NC}        Restart the Tailscale backend\n"
     printf "  ${C_CYAN}tailscale-status${C_NC}         Show Tailscale peers and IP\n"
     printf "  ${C_CYAN}tailscale-auth${C_NC}           Re-authenticate (shows QR)\n"
     printf "  ${C_CYAN}tailscale-ping${C_NC}  <host>   Check host reachability via ping\n"
@@ -55,9 +55,38 @@ _cmd_help() {
 }
 
 _cmd_list() {
-    require tailscale; require jq
-    TS_STATUS=$(with_timeout 10 tailscale status --json 2>/dev/null) \
-        || die "Cannot reach Tailscale daemon. Run: pocket tailscale-start"
+    TS_STATUS=""
+    if has_tailscale_cli && command -v jq >/dev/null 2>&1; then
+        TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
+    fi
+
+    if [ -z "${TS_STATUS}" ]; then
+        TARGETS=$(list_fallback_targets)
+        if [ -z "${TARGETS}" ]; then
+            if is_tailscale_mesh_operational; then
+                die "Tailscale mesh is operational, but peer listing requires CLI integration or saved hosts."
+            fi
+            die "Tailscale mesh unavailable and no saved hosts found. Run: pocket tailscale-setup"
+        fi
+
+        echo ""
+        warn "Tailscale peer API unavailable — listing saved/seed hosts."
+        printf "  ${C_BOLD}%-22s %-16s %-10s${C_NC}\n" "Hostname" "IP" "Status"
+        printf "  %-22s %-16s %-10s\n" "----------------------" "----------------" "----------"
+        printf '%s\n' "${TARGETS}" | while IFS= read -r host; do
+            [ -n "${host}" ] || continue
+            ip=$(resolve_tailscale_ip_for_host "${host}" 2>/dev/null || true)
+            if is_ip_target "${host}"; then
+                ip="${host}"
+            fi
+            [ -n "${ip}" ] || ip="n/a"
+            status="saved"
+            ping_host "${host}" 2 && status="reachable"
+            printf "  %-22s %-16s %-10s\n" "${host}" "${ip}" "${status}"
+        done
+        echo ""
+        return 0
+    fi
 
     echo ""
     printf "  ${C_BOLD}%-22s %-16s %-8s %-12s${C_NC}\n" "Hostname" "IP" "Online" "OS"
@@ -80,11 +109,8 @@ _cmd_connect() {
     HOST="${1:-}"
 
     if [ -z "${HOST}" ]; then
-        # Get online peers
-        PEERS=$(with_timeout 10 tailscale status --json 2>/dev/null \
-            | jq -r '.Peer | to_entries[] | .value | select(.Online) | .HostName' \
-            | sort 2>/dev/null || true)
-        [ -z "${PEERS}" ] && die "No online Tailscale machines found."
+        PEERS=$(list_known_hosts || true)
+        [ -z "${PEERS}" ] && die "No Tailscale or saved machines found."
 
         echo ""
         echo "  Online machines:"

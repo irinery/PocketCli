@@ -28,6 +28,7 @@ MENU_ACTION=""
 SUB_ACTION=""
 LAST_MESSAGE="Use j/k para navegar, Enter para abrir, h/l para panes, q para sair."
 INPUT_BUFFER=""
+TUI_INPUT_HISTORY_LIMIT=50
 TERM_WIDTH=80
 TERM_HEIGHT=24
 PANEL_WIDTH=34
@@ -82,6 +83,77 @@ _cursor_move() {
 
 _clear_line() {
     printf '\033[2K'
+}
+
+_tui_input_history_file() {
+    printf '%s/state/tui-input-history' "${POCKETCLI_DIR}"
+}
+
+_tui_input_sanitize() {
+    printf '%s' "$1" | tr -cd 'a-zA-Z0-9._-'
+}
+
+_tui_string_chop_last() {
+    printf '%s\n' "$1" | awk '{ print substr($0, 1, length($0) - 1); exit }'
+}
+
+_tui_suggestion_for() {
+    CURRENT=$(_tui_input_sanitize "$1")
+    CANDIDATES_FILE="$2"
+    HISTORY_FILE=$(_tui_input_history_file)
+
+    {
+        [ -f "${HISTORY_FILE}" ] && cat "${HISTORY_FILE}"
+        [ -f "${CANDIDATES_FILE}" ] && cat "${CANDIDATES_FILE}"
+    } 2>/dev/null | awk -v current="${CURRENT}" '
+        {
+            value = $0
+            gsub(/[^A-Za-z0-9._-]/, "", value)
+            if (value == "") {
+                next
+            }
+            if (seen[value]++) {
+                next
+            }
+            if (current == "") {
+                print value
+                exit
+            }
+            if (index(value, current) == 1 && value != current) {
+                print value
+                exit
+            }
+        }
+    '
+}
+
+_tui_record_input() {
+    VALUE=$(_tui_input_sanitize "$1")
+    [ -n "${VALUE}" ] || return 0
+
+    HISTORY_FILE=$(_tui_input_history_file)
+    HISTORY_DIR=$(dirname "${HISTORY_FILE}")
+    mkdir -p "${HISTORY_DIR}" 2>/dev/null || return 0
+    chmod 700 "${HISTORY_DIR}" 2>/dev/null || true
+
+    TMP_FILE=$(mktemp "${HISTORY_FILE}.tmp.XXXXXX") || return 0
+    {
+        printf '%s\n' "${VALUE}"
+        if [ -f "${HISTORY_FILE}" ]; then
+            awk -v value="${VALUE}" '($0 != value) { print }' "${HISTORY_FILE}"
+        fi
+    } | awk -v limit="${TUI_INPUT_HISTORY_LIMIT}" '
+        NF && !seen[$0]++ {
+            print
+            count += 1
+            if (count >= limit) {
+                exit
+            }
+        }
+    ' > "${TMP_FILE}"
+
+    chmod 600 "${TMP_FILE}" 2>/dev/null || true
+    mv "${TMP_FILE}" "${HISTORY_FILE}" 2>/dev/null || rm -f "${TMP_FILE}"
 }
 
 _line_count_file() {
@@ -342,9 +414,9 @@ _load_mesh_counts() {
         return
     fi
 
-    if command -v tailscale >/dev/null 2>&1; then
+    if has_tailscale_cli; then
         if command -v jq >/dev/null 2>&1; then
-            TS_STATUS=$(with_timeout 3 tailscale status --json 2>/dev/null || true)
+            TS_STATUS=$(tailscale_status_json 2>/dev/null || true)
             if [ -n "${TS_STATUS}" ]; then
                 MESH_TOTAL=$(printf '%s\n' "${TS_STATUS}" | jq -r '.Peer | length' 2>/dev/null || true)
                 MESH_ONLINE=$(printf '%s\n' "${TS_STATUS}" | jq -r '[.Peer | to_entries[] | .value | select(.Online)] | length' 2>/dev/null || true)
@@ -707,6 +779,8 @@ tui_app_cleanup() {
 
 _pick_host() {
     HOSTS=$(_list_hosts 2>/dev/null || true)
+    CANDIDATES_FILE=$(mktemp "${TMPDIR:-/tmp}/pocketcli-host-candidates.XXXXXX")
+    [ -n "${HOSTS}" ] && printf '%s\n' "${HOSTS}" > "${CANDIDATES_FILE}"
 
     printf '\n' > /dev/tty
     if [ -n "${HOSTS}" ]; then
@@ -717,18 +791,25 @@ _pick_host() {
             I=$((I + 1))
         done
         printf '\n' > /dev/tty
-        printf '  Número ou hostname: ' > /dev/tty
+        PROMPT='  Número ou hostname: '
     else
-        printf '  Hostname (ex: server-01): ' > /dev/tty
+        PROMPT='  Hostname (ex: server-01): '
     fi
 
-    read -r INPUT < /dev/tty
+    INPUT=$(_tui_prompt_with_suggestions "${PROMPT}" "${CANDIDATES_FILE}") || {
+        rm -f "${CANDIDATES_FILE}"
+        return 1
+    }
+    rm -f "${CANDIDATES_FILE}"
     [ -z "${INPUT}" ] && return 1
 
     case "${INPUT}" in
-        ''|*[!0-9]*) printf '%s' "${INPUT}" | tr -cd 'a-zA-Z0-9._-' ;;
-        *) printf '%s\n' "${HOSTS}" | sed -n "${INPUT}p" | tr -cd 'a-zA-Z0-9._-' ;;
+        ''|*[!0-9]*) HOST=$(_tui_input_sanitize "${INPUT}") ;;
+        *) HOST=$(printf '%s\n' "${HOSTS}" | sed -n "${INPUT}p" | tr -cd 'a-zA-Z0-9._-') ;;
     esac
+    [ -n "${HOST}" ] || return 1
+    _tui_record_input "${HOST}"
+    printf '%s' "${HOST}"
 }
 
 _manage_hosts() {
@@ -879,27 +960,11 @@ _run_action() {
                 sh -c 'printf "\n  Conectando em %s...\n\n" "$2"; [ -x "$1/scripts/ssh/open.sh" ] || { printf "Wrapper SSH seguro indisponível.\n" >&2; exit 127; }; exec sh "$1/scripts/ssh/open.sh" --run interactive "$2"' sh "${POCKETCLI_DIR}" "${HOST}"
         ;;
         radar-run)
-            if ! command -v tailscale >/dev/null 2>&1; then
-                _leave_tui_for_action
-                _render_header_screen
-                printf '\n  Tailscale não instalado. Rode: pocket tailscale-setup\n'
-                LAST_MESSAGE='Radar indisponível sem tailscale.'
-                _pause_for_user '\n  Pressione Enter para voltar...'
-                _enter_tui || return 1
-            elif ! is_tailscale_daemon_running 2>/dev/null && ! is_ish; then
-                _leave_tui_for_action
-                _render_header_screen
-                printf '\n  tailscaled não está rodando. Rode: pocket tailscale-start\n'
-                LAST_MESSAGE='Inicie o daemon para usar o radar.'
-                _pause_for_user '\n  Pressione Enter para voltar...'
-                _enter_tui || return 1
-            else
-                _run_with_pause \
-                    'Radar executado.' \
-                    'Radar indisponível (exit %s).' \
-                    '\n  Pressione Enter para voltar...' \
-                    sh "${HOME}/.pocketcli/radar.sh"
-            fi
+            _run_with_pause \
+                'Radar executado.' \
+                'Radar indisponível (exit %s).' \
+                '\n  Pressione Enter para voltar...' \
+                sh "${HOME}/.pocketcli/radar.sh"
         ;;
         radar)
             CURRENT_SCREEN="radar"
@@ -941,6 +1006,67 @@ _read_key() {
     KEY=$(dd bs=1 count=1 2>/dev/null < /dev/tty || true)
     stty sane < /dev/tty 2>/dev/null || true
     printf '%s' "${KEY}"
+}
+
+_read_prompt_key() {
+    PROMPT_TAB=$(printf '\011')
+    PROMPT_CR=$(printf '\015')
+    PROMPT_LF=$(printf '\012')
+    PROMPT_DEL=$(printf '\177')
+    PROMPT_BS=$(printf '\010')
+    PROMPT_ESC=$(printf '\033')
+
+    stty -echo -icanon min 1 time 0 < /dev/tty 2>/dev/null || true
+    BYTE=$(dd bs=1 count=1 2>/dev/null < /dev/tty || true)
+    stty sane < /dev/tty 2>/dev/null || true
+
+    case "${BYTE}" in
+        "${PROMPT_CR}"|"${PROMPT_LF}") printf 'ENTER' ;;
+        "${PROMPT_TAB}") printf 'TAB' ;;
+        "${PROMPT_DEL}"|"${PROMPT_BS}") printf 'BACKSPACE' ;;
+        "${PROMPT_ESC}") printf 'ESC' ;;
+        *) printf '%s' "${BYTE}" ;;
+    esac
+}
+
+_tui_prompt_with_suggestions() {
+    PROMPT="$1"
+    CANDIDATES_FILE="$2"
+    INPUT_VALUE=""
+
+    while true; do
+        SUGGESTION=$(_tui_suggestion_for "${INPUT_VALUE}" "${CANDIDATES_FILE}")
+        printf '\r\033[2K%s%s' "${PROMPT}" "${INPUT_VALUE}" > /dev/tty
+        if [ -n "${SUGGESTION}" ]; then
+            printf '  %bTab:%b %s' "${C_DIM}" "${C_NC}" "${SUGGESTION}" > /dev/tty
+        fi
+
+        KEY=$(_read_prompt_key)
+        case "${KEY}" in
+            ENTER)
+                printf '\n' > /dev/tty
+                printf '%s' "${INPUT_VALUE}"
+                return 0
+            ;;
+            TAB)
+                [ -n "${SUGGESTION}" ] && INPUT_VALUE="${SUGGESTION}"
+            ;;
+            BACKSPACE)
+                [ -n "${INPUT_VALUE}" ] && INPUT_VALUE=$(_tui_string_chop_last "${INPUT_VALUE}")
+            ;;
+            ESC)
+                printf '\n' > /dev/tty
+                return 1
+            ;;
+            '')
+                true
+            ;;
+            *)
+                CLEAN_KEY=$(_tui_input_sanitize "${KEY}")
+                [ -n "${CLEAN_KEY}" ] && INPUT_VALUE="${INPUT_VALUE}${CLEAN_KEY}"
+            ;;
+        esac
+    done
 }
 
 _handle_main_key() {
