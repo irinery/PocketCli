@@ -192,8 +192,18 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			d.Coverage = append(d.Coverage, c.coverage(r, col.name, "not_selected", 0, "módulo não selecionado"))
 			continue
 		}
+		cursor, err := c.githubCursor(ctx, plan, r, col.name)
+		if err != nil {
+			return err
+		}
 		cutoff := ""
+		if cursor.value.Watermark != "" && cursor.coversWindowStart(plan.WindowStart) {
+			cutoff = cursor.deltaStart(plan)
+		}
 		for _, old := range previous.Coverage {
+			if cursor.value.Watermark != "" {
+				break
+			}
 			if old.Source == "github" && old.ResourceID == r.ID && old.Collection == col.name && old.Status == "complete" {
 				// An expanded window needs its older gap; the recent delta alone is insufficient.
 				if previous.WindowStart != "" && plan.WindowStart >= previous.WindowStart {
@@ -212,7 +222,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 		} else if !os.IsNotExist(err) {
 			return fault("ERR_AUDIT_FAILED", "journal de coleta corrompido")
 		}
-		var err error
+		err = nil
 		if !journal.Complete && journal.Pages < 20 {
 			path := col.path
 			if journal.Cursor != "" {
@@ -228,6 +238,9 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				journal.Complete = next == ""
 				if e := c.store.Put("journals", journalID, journal); e != nil {
 					return fault("ERR_AUDIT_FAILED", "falha ao persistir página")
+				}
+				if e := c.saveSourceCheckpoint(&cursor, plan.ID, next); e != nil {
+					return e
 				}
 				run.Requests++
 				run.Bytes += responseBytes
@@ -332,6 +345,9 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			}
 		}
 		d.Coverage = append(d.Coverage, c.coverage(r, col.name, status, int64(len(items)), reason))
+		if err := c.finishSourceCursor(&cursor, plan, status); err != nil {
+			return err
+		}
 	}
 	if err := c.collectComments(ctx, plan, r, previous, d, run); err != nil {
 		return err
@@ -355,8 +371,18 @@ func (c *Core) collectReviewComments(ctx context.Context, plan contract.Plan, r 
 
 func (c *Core) collectRepositoryComments(ctx context.Context, plan contract.Plan, r contract.Resource, previous contract.Snapshot, d *query.Dataset, run *contract.Run, collection, endpoint, locatorKind string) error {
 	path := "/repos/" + r.Name + "/" + endpoint + "?sort=updated&direction=desc&per_page=100"
+	cursor, err := c.githubCursor(ctx, plan, r, collection)
+	if err != nil {
+		return err
+	}
 	since := plan.WindowStart
+	if cursor.value.Watermark != "" {
+		since = cursor.deltaStart(plan)
+	}
 	for _, old := range previous.Coverage {
+		if cursor.value.Watermark != "" {
+			break
+		}
 		if old.Source == "github" && old.ResourceID == r.ID && old.Collection == collection && old.Status == "complete" && (previous.WindowStart == "" || plan.WindowStart >= previous.WindowStart) {
 			if observed, err := time.Parse(time.RFC3339, previous.ObservationFinishedAt); err == nil {
 				candidate := observed.Add(-48 * time.Hour)
@@ -400,6 +426,9 @@ func (c *Core) collectRepositoryComments(ctx context.Context, plan contract.Plan
 			if err := c.store.Put("journals", journalID, journal); err != nil {
 				return fault("ERR_AUDIT_FAILED", "falha ao persistir comentários")
 			}
+			if err := c.saveSourceCheckpoint(&cursor, plan.ID, next); err != nil {
+				return err
+			}
 			run.Requests++
 			run.Bytes += responseBytes
 			if !c.saveRun(run) {
@@ -438,6 +467,9 @@ func (c *Core) collectRepositoryComments(ctx context.Context, plan contract.Plan
 	if !journal.Complete && status == "complete" {
 		status = "partial"
 		reason = "paginação de comentários incompleta"
+	} else if journal.Pages > 1 && status == "complete" {
+		status = "partial"
+		reason = "lista de comentários paginada sem snapshot estável"
 	}
 	for _, raw := range journal.Items {
 		var comment struct {
@@ -470,6 +502,9 @@ func (c *Core) collectRepositoryComments(ctx context.Context, plan contract.Plan
 		}
 	}
 	d.Coverage = append(d.Coverage, c.coverage(r, collection, status, int64(len(journal.Items)), reason))
+	if err := c.finishSourceCursor(&cursor, plan, status); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -484,7 +519,18 @@ func upsertEvent(d *query.Dataset, event query.Event) {
 }
 
 func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.Resource, d *query.Dataset, run *contract.Run) error {
-	const gql = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	cursor, err := c.linearCursor(ctx, plan, r, "issues")
+	if err != nil {
+		return err
+	}
+	const fullQuery = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	const deltaQuery = `query TeamIssuesDelta($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	gql := fullQuery
+	since := ""
+	if cursor.value.Watermark != "" && cursor.coversWindowStart(plan.WindowStart) {
+		since = cursor.deltaStart(plan)
+		gql = deltaQuery
+	}
 	journalID := storage.Hash([]byte(plan.ID + ":" + r.ID + ":linear:issues"))
 	journal := linearJournal{PlanID: plan.ID, ResourceID: r.ID, Items: []json.RawMessage{}}
 	if err := c.store.Get("journals", journalID, &journal); err == nil {
@@ -497,6 +543,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	status, reason := "complete", ""
 	for !journal.Complete && journal.Pages < 20 {
 		vars := map[string]string{"team": r.ID}
+		if since != "" {
+			vars["since"] = since
+		}
 		if journal.Cursor != "" {
 			vars["after"] = journal.Cursor
 		}
@@ -544,6 +593,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 		if err := c.store.Put("journals", journalID, journal); err != nil {
 			return fault("ERR_AUDIT_FAILED", "falha ao persistir página Linear")
 		}
+		if err := c.saveSourceCheckpoint(&cursor, plan.ID, next); err != nil {
+			return err
+		}
 		run.Bytes += int64(len(data))
 		if !c.saveRun(run) {
 			return fault("ERR_AUDIT_FAILED", "falha ao auditar página Linear")
@@ -555,6 +607,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	if !journal.Complete && status == "complete" {
 		status = "partial"
 		reason = "paginação Linear incompleta"
+	} else if journal.Pages > 1 && status == "complete" {
+		status = "partial"
+		reason = "lista Linear paginada sem snapshot estável"
 	}
 	projectIDs := make(map[string]bool)
 	for _, raw := range journal.Items {
@@ -622,6 +677,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 		}
 	}
 	d.Coverage = append(d.Coverage, c.coverage(r, "issues", status, int64(len(journal.Items)), reason))
+	if err := c.finishSourceCursor(&cursor, plan, status); err != nil {
+		return err
+	}
 	if status != "complete" {
 		for _, name := range []string{"history", "comments"} {
 			d.Coverage = append(d.Coverage, c.coverage(r, name, "partial", 0, "coleta de issues pendente"))
