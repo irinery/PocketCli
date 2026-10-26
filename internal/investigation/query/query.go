@@ -10,6 +10,7 @@ type Service interface {
 	Available() bool
 	Execute(context.Context, string, contract.QueryRequest) (contract.QueryResult, error)
 	Publish(string, Dataset) error
+	VerifyPublished(string, string) error
 }
 
 type Dataset struct {
