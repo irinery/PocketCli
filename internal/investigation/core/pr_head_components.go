@@ -135,8 +135,13 @@ func (c *Core) mapPRHeadFiles(ctx context.Context, plan contract.Plan, r contrac
 				}
 			}
 		}
+		currentFiles := 0
 		for _, fileLink := range fileLinks[pr.ID] {
 			file := files[fileLink.TargetID]
+			if file.ID != prFileComponentID(r.ID, pr.HeadSHA, file.Path) {
+				continue // Kept for historical evidence after a force-push.
+			}
+			currentFiles++
 			bestDepth := -1
 			var best gitTreeEntry
 			ambiguous := false
@@ -188,6 +193,9 @@ func (c *Core) mapPRHeadFiles(ctx context.Context, plan contract.Plan, r contrac
 			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: file.ID, Relation: "maps_to_component", TargetID: componentID, Status: "direct", EvidenceID: e.ID, ValidFrom: pr.UpdatedAt})
 			mapped++
 			run.Items++
+		}
+		if currentFiles == 0 {
+			status, reason = "partial", "arquivos preservados pertencem a head anterior; head atual ainda não foi inventariado"
 		}
 		lastProcessed = pr.ID
 	}

@@ -834,7 +834,8 @@ func TestFileMapsToComponentOnlyAtExactObservedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeDataset := func(head string) query.Dataset {
-		return query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-1", Repository: r.Name, HeadSHA: head}}, Components: []contract.ComponentRecord{{ID: "cmp-root", Repository: r.Name, Path: "go.mod", Kind: "go_module"}, {ID: "cmp-api", Repository: r.Name, Path: "services/api/go.mod", Kind: "go_module"}, {ID: "file-one", Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link", SourceID: "pr-1", Relation: "modifies_file", TargetID: "file-one", EvidenceID: "ev-file"}}}
+		fileID := prFileComponentID(r.ID, head, "services/api/handler.go")
+		return query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-1", Repository: r.Name, HeadSHA: head}}, Components: []contract.ComponentRecord{{ID: "cmp-root", Repository: r.Name, Path: "go.mod", Kind: "go_module"}, {ID: "cmp-api", Repository: r.Name, Path: "services/api/go.mod", Kind: "go_module"}, {ID: fileID, Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link", SourceID: "pr-1", Relation: "modifies_file", TargetID: fileID, EvidenceID: "ev-file"}}}
 	}
 	d := makeDataset(oid)
 	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &d); err != nil {
@@ -851,6 +852,13 @@ func TestFileMapsToComponentOnlyAtExactObservedVersion(t *testing.T) {
 	ambiguous.Components = append(ambiguous.Components, contract.ComponentRecord{ID: "cmp-api-container", Repository: r.Name, Path: "services/api/Dockerfile", Kind: "container"})
 	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &ambiguous); err != nil || len(ambiguous.Links) != 1 {
 		t.Fatalf("manifestos ambíguos mapeados: %+v %v", ambiguous, err)
+	}
+	forcePushed := makeDataset(oid)
+	oldFileID := prFileComponentID(r.ID, strings.Repeat("c", 40), "services/api/old.go")
+	forcePushed.Components = append(forcePushed.Components, contract.ComponentRecord{ID: oldFileID, Repository: r.Name, Path: "services/api/old.go", Kind: "file_change"})
+	forcePushed.Links = append(forcePushed.Links, contract.LinkRecord{ID: "old-file-link", SourceID: "pr-1", Relation: "modifies_file", TargetID: oldFileID})
+	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &forcePushed); err != nil || len(forcePushed.Links) != 3 {
+		t.Fatalf("arquivo de head anterior mapeado após force-push: %+v %v", forcePushed, err)
 	}
 }
 
@@ -885,24 +893,30 @@ func TestPRHeadFileMappingUsesManifestFromThatCommit(t *testing.T) {
 	}
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	run := contract.Run{ID: "pr-head-run"}
-	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head, UpdatedAt: "2026-01-10T00:00:00Z"}}, Components: []contract.ComponentRecord{{ID: "cmp-current", Repository: r.Name, Path: "services/other/go.mod", Kind: "go_module"}, {ID: "file-7", Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: "file-7", EvidenceID: "ev-file-7"}}}
+	fileID := prFileComponentID(r.ID, head, "services/api/handler.go")
+	oldFileID := prFileComponentID(r.ID, strings.Repeat("d", 40), "services/api/old.go")
+	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head, UpdatedAt: "2026-01-10T00:00:00Z"}}, Components: []contract.ComponentRecord{{ID: "cmp-current", Repository: r.Name, Path: "services/other/go.mod", Kind: "go_module"}, {ID: fileID, Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}, {ID: oldFileID, Repository: r.Name, Path: "services/api/old.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: fileID, EvidenceID: "ev-file-7"}, {ID: "old-file-link", SourceID: "pr-7", Relation: "modifies_file", TargetID: oldFileID}}}
 	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || len(d.Links) != 2 || d.Links[1].Relation != "maps_to_component" || d.Links[1].TargetID == "cmp-current" || d.Coverage[0].Status != "complete" {
+	if calls != 2 || len(d.Links) != 3 || d.Links[2].Relation != "maps_to_component" || d.Links[2].SourceID != fileID || d.Links[2].TargetID == "cmp-current" || d.Coverage[0].Status != "complete" {
 		t.Fatalf("mapeamento temporal=%+v calls=%d", d, calls)
 	}
 	linked := false
 	for _, component := range d.Components {
-		if component.ID == d.Links[1].TargetID && component.Path == "services/api/go.mod" {
+		if component.ID == d.Links[2].TargetID && component.Path == "services/api/go.mod" {
 			linked = true
 		}
 	}
 	if !linked {
 		t.Fatalf("manifesto do head não encontrado: %+v", d.Components)
 	}
-	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil || calls != 2 || len(d.Links) != 2 {
+	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil || calls != 2 || len(d.Links) != 3 {
 		t.Fatalf("cache da árvore não reutilizado: calls=%d links=%+v err=%v", calls, d.Links, err)
+	}
+	oldOnly := query.Dataset{PullRequests: d.PullRequests, Components: []contract.ComponentRecord{{ID: oldFileID, Repository: r.Name, Path: "services/api/old.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "old-file-link", SourceID: "pr-7", Relation: "modifies_file", TargetID: oldFileID}}}
+	if err := c.mapPRHeadFiles(context.Background(), plan, r, &oldOnly, &run); err != nil || len(oldOnly.Links) != 1 || oldOnly.Coverage[0].Status != "partial" {
+		t.Fatalf("head novo sem inventário de arquivos tratado como completo: %+v %v", oldOnly, err)
 	}
 }
 
@@ -929,7 +943,8 @@ func TestPRHeadMappingRejectsCommitFromAnotherSHA(t *testing.T) {
 	}
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	run := contract.Run{ID: "bad-head-run"}
-	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head}}, Components: []contract.ComponentRecord{{ID: "file-7", Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: "file-7"}}}
+	fileID := prFileComponentID(r.ID, head, "services/api/handler.go")
+	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head}}, Components: []contract.ComponentRecord{{ID: fileID, Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: fileID}}}
 	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil {
 		t.Fatal(err)
 	}
