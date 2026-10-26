@@ -86,7 +86,7 @@ func (c *Core) collectPRFiles(ctx context.Context, plan contract.Plan, r contrac
 			if version == "" {
 				version = pr.ID
 			}
-			fileID := "file-" + storage.Hash([]byte(r.ID + ":" + version + ":" + item.Filename))[:24]
+			fileID := prFileComponentID(r.ID, version, item.Filename)
 			upsertComponent(d, contract.ComponentRecord{ID: fileID, Name: item.Filename, Repository: r.Name, Path: item.Filename, Kind: "file_change", ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
 			linkID := "lnk-" + storage.Hash([]byte(pr.ID + ":modifies_file:" + fileID + ":" + e.ID))[:24]
 			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: pr.ID, Relation: "modifies_file", TargetID: fileID, Status: "direct", EvidenceID: e.ID})
@@ -106,6 +106,10 @@ func (c *Core) collectPRFiles(ctx context.Context, plan contract.Plan, r contrac
 	}
 	d.Coverage = append(d.Coverage, c.coverage(r, "pr_files", status, observed, reason))
 	return nil
+}
+
+func prFileComponentID(resourceID, version, filename string) string {
+	return "file-" + storage.Hash([]byte(resourceID + ":" + version + ":" + filename))[:24]
 }
 
 func validGitPath(value string) bool {

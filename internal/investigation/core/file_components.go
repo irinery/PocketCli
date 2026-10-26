@@ -58,7 +58,7 @@ func (c *Core) mapCurrentRefFiles(ctx context.Context, plan contract.Plan, r con
 				continue
 			}
 			file, ok := files[fileLink.TargetID]
-			if !ok {
+			if !ok || file.ID != prFileComponentID(r.ID, pr.HeadSHA, file.Path) {
 				continue
 			}
 			bestDepth := -1
