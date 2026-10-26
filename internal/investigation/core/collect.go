@@ -853,11 +853,16 @@ func (c *Core) evidence(source, locator, updated string, raw json.RawMessage) (c
 	if err := json.Compact(&compact, raw); err != nil {
 		return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "evidência JSON inválida")
 	}
-	raw = compact.Bytes()
+	// Store.Put marshals json.RawMessage with HTML escaping. Hash the same
+	// representation that will be read back from disk.
+	raw, err := json.Marshal(json.RawMessage(compact.Bytes()))
+	if err != nil {
+		return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "evidência JSON inválida")
+	}
 	hash := storage.Hash(raw)
 	id := "ev-" + storage.Hash([]byte(source + ":" + locator + ":" + hash))[:24]
 	var existing json.RawMessage
-	err := c.store.Get("objects", id, &existing)
+	err = c.store.Get("objects", id, &existing)
 	if os.IsNotExist(err) {
 		if err := c.store.Put("objects", id, raw); err != nil {
 			return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "falha ao persistir evidência")

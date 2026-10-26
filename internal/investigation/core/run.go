@@ -112,6 +112,10 @@ func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.
 }
 
 func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan) {
+	// A CLI start/resume loads the prepared plan in a fresh process. Restore
+	// its pacing before any collector request, including on resumed runs.
+	c.collector.SetRPH("github", plan.Input.Limits.GitHubRPH)
+	c.collector.SetRPH("linear", plan.Input.Limits.LinearRPH)
 	defer func() {
 		c.mu.Lock()
 		if cancel := c.runs[run.ID]; cancel != nil {
