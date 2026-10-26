@@ -84,15 +84,21 @@ func (f *fakeGitObserver) WalkTree(_ context.Context, oid string, visit func(git
 
 func (f *fakeFinalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (contract.ReportArtifact, error) {
 	f.calls.Add(1)
-	page, err := f.core.ReadReportPage(ctx, in.SnapshotID, "", 1000)
-	if err != nil {
-		return contract.ReportArtifact{}, err
-	}
 	count := int64(0)
-	for _, r := range page.Records {
-		if r.Kind == "finding" {
-			count++
+	for cursor := ""; ; {
+		page, err := f.core.ReadReportPage(ctx, in.SnapshotID, cursor, 1000)
+		if err != nil {
+			return contract.ReportArtifact{}, err
 		}
+		for _, r := range page.Records {
+			if r.Kind == "finding" {
+				count++
+			}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
 	}
 	return contract.ReportArtifact{SnapshotID: in.SnapshotID, Status: "completed", FindingCount: count}, nil
 }
