@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 					return d, err
 				}
 				if err := c.mapCurrentRefFiles(ctx, plan, r, &d); err != nil {
+					return d, err
+				}
+				if err := c.mapPRHeadFiles(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
 			}
@@ -265,6 +269,11 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			if len(items) == 0 && status == "partial" {
 				status = "unavailable"
 			}
+		} else if cutoff != "" || journal.Pages > 1 {
+			// GitHub list pagination has no snapshot isolation. An item moved
+			// between pages can be missed even when each response succeeds.
+			status = "partial"
+			reason = "lista paginada ou delta sem snapshot estável; reconciliação pendente"
 		}
 		for _, raw := range items {
 			if err := ctx.Err(); err != nil {
@@ -770,13 +779,21 @@ func upsertLink(d *query.Dataset, v contract.LinkRecord) {
 }
 
 func (c *Core) evidence(source, locator, updated string, raw json.RawMessage) (contract.Evidence, error) {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "evidência JSON inválida")
+	}
+	raw = compact.Bytes()
 	hash := storage.Hash(raw)
 	id := "ev-" + storage.Hash([]byte(source + ":" + locator + ":" + hash))[:24]
 	var existing json.RawMessage
-	if c.store.Get("objects", id, &existing) != nil {
+	err := c.store.Get("objects", id, &existing)
+	if os.IsNotExist(err) {
 		if err := c.store.Put("objects", id, raw); err != nil {
 			return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "falha ao persistir evidência")
 		}
+	} else if err != nil || !json.Valid(existing) || storage.Hash(existing) != hash {
+		return contract.Evidence{}, fault("ERR_AUDIT_FAILED", "objeto de evidência local corrompido")
 	}
 	if _, err := url.Parse(locator); err != nil {
 		locator = ""

@@ -414,7 +414,7 @@ func TestGitHubJournalResumesFromCommittedPage(t *testing.T) {
 	if err := c.collectRepository(context.Background(), plan, resource, contract.Snapshot{}, second, &run); err != nil {
 		t.Fatal(err)
 	}
-	if pageOne != 1 || pageTwo != 2 || len(second.PullRequests) != 2 || second.Coverage[0].Status != "complete" {
+	if pageOne != 1 || pageTwo != 2 || len(second.PullRequests) != 2 || second.Coverage[0].Status != "partial" {
 		t.Fatalf("resume pages=%d,%d prs=%d coverage=%+v", pageOne, pageTwo, len(second.PullRequests), second.Coverage)
 	}
 }
@@ -854,6 +854,94 @@ func TestFileMapsToComponentOnlyAtExactObservedVersion(t *testing.T) {
 	}
 }
 
+func TestPRHeadFileMappingUsesManifestFromThatCommit(t *testing.T) {
+	store, _ := storage.Open(t.TempDir())
+	ss := secrets.NewSessionStore()
+	ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"})
+	head := strings.Repeat("a", 40)
+	treeSHA := strings.Repeat("b", 40)
+	blobSHA := strings.Repeat("c", 40)
+	calls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var body string
+		switch r.URL.Path {
+		case "/repos/acme/api/git/commits/" + head:
+			body = fmt.Sprintf(`{"sha":%q,"tree":{"sha":%q}}`, head, treeSHA)
+		case "/repos/acme/api/git/trees/" + treeSHA:
+			body = fmt.Sprintf(`{"sha":%q,"truncated":false,"tree":[{"path":"services/api/go.mod","mode":"100644","type":"blob","sha":%q}]}`, treeSHA, blobSHA)
+		default:
+			t.Fatalf("endpoint inesperado: %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "pr-head-plan", InvestigationID: "investigation-pr-head", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20, MaxLocalBytes: 1 << 20}}}
+	if err := store.Put("planauth", plan.ID, planAuth{GitHub: "test-auth"}); err != nil {
+		t.Fatal(err)
+	}
+	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
+	run := contract.Run{ID: "pr-head-run"}
+	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head, UpdatedAt: "2026-01-10T00:00:00Z"}}, Components: []contract.ComponentRecord{{ID: "cmp-current", Repository: r.Name, Path: "services/other/go.mod", Kind: "go_module"}, {ID: "file-7", Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: "file-7", EvidenceID: "ev-file-7"}}}
+	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(d.Links) != 2 || d.Links[1].Relation != "maps_to_component" || d.Links[1].TargetID == "cmp-current" || d.Coverage[0].Status != "complete" {
+		t.Fatalf("mapeamento temporal=%+v calls=%d", d, calls)
+	}
+	linked := false
+	for _, component := range d.Components {
+		if component.ID == d.Links[1].TargetID && component.Path == "services/api/go.mod" {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Fatalf("manifesto do head não encontrado: %+v", d.Components)
+	}
+	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil || calls != 2 || len(d.Links) != 2 {
+		t.Fatalf("cache da árvore não reutilizado: calls=%d links=%+v err=%v", calls, d.Links, err)
+	}
+}
+
+func TestPRHeadMappingRejectsCommitFromAnotherSHA(t *testing.T) {
+	store, _ := storage.Open(t.TempDir())
+	ss := secrets.NewSessionStore()
+	ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"})
+	head := strings.Repeat("a", 40)
+	other := strings.Repeat("b", 40)
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/repos/acme/api/git/commits/"+head {
+			t.Fatalf("árvore consultada após commit incompatível: %s", r.URL)
+		}
+		body := fmt.Sprintf(`{"sha":%q,"tree":{"sha":%q}}`, other, other)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "bad-head-plan", InvestigationID: "investigation-bad-head", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20, MaxLocalBytes: 1 << 20}}}
+	if err := store.Put("planauth", plan.ID, planAuth{GitHub: "test-auth"}); err != nil {
+		t.Fatal(err)
+	}
+	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
+	run := contract.Run{ID: "bad-head-run"}
+	d := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-7", Repository: r.Name, Number: 7, HeadSHA: head}}, Components: []contract.ComponentRecord{{ID: "file-7", Repository: r.Name, Path: "services/api/handler.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "file-link-7", SourceID: "pr-7", Relation: "modifies_file", TargetID: "file-7"}}}
+	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Links) != 1 || d.Coverage[0].Status != "partial" {
+		t.Fatalf("commit incompatível gerou vínculo: %+v", d)
+	}
+	ids, err := store.List("gitcommits")
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("commit incompatível entrou no cache: %v %v", ids, err)
+	}
+}
+
 func TestActionsCollectsPagedRunsWithoutInferringDeployment(t *testing.T) {
 	store, _ := storage.Open(t.TempDir())
 	ss := secrets.NewSessionStore()
@@ -1236,6 +1324,40 @@ func TestCorruptSnapshotDoesNotDisappearFromHistory(t *testing.T) {
 	}
 	if _, err := c.ListSnapshots(context.Background(), "inv"); err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") {
 		t.Fatalf("corrupt snapshot silently skipped: %v", err)
+	}
+}
+
+func TestEvidenceCacheRejectsCorruptionWithoutOverwriting(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage("{ \"id\": 7, \"title\": \"example\" }")
+	first, err := c.evidence("github", "acme/api#7", "2026-01-01T00:00:00Z", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.evidence("github", "acme/api#7", "2026-01-01T00:00:00Z", raw)
+	if err != nil || second.ID != first.ID {
+		t.Fatalf("evidência idêntica não reutilizada: %+v %v", second, err)
+	}
+	path, err := store.Path("objects", first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.evidence("github", "acme/api#7", "2026-01-01T00:00:00Z", raw); err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") {
+		t.Fatalf("objeto corrompido aceito: %v", err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil || string(stored) != "corrupt" {
+		t.Fatalf("objeto corrompido sobrescrito: %q %v", stored, err)
 	}
 }
 
