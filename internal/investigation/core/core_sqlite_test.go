@@ -180,6 +180,46 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 	}
 }
 
+func TestRunKeyWithoutRunRecoversSameID(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: &fakeTransport{title: "PR"}}, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := c.PreparePlan(context.Background(), contract.PlanInput{SchemaVersion: contract.Version, GitHubEnabled: true, Scope: &contract.Scope{Mode: "selected", Repositories: []string{"acme/api"}}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}, Limits: contract.Limits{GitHubRPH: 3600000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "interrupted-before-run-write"}
+	keyHash := storage.Hash([]byte(req.IdempotencyKey))
+	if err := store.Put("runkeys", keyHash, runKey{RunID: "recovered-run", PlanID: plan.ID, Hash: plan.Hash}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := c.StartRun(context.Background(), req)
+	if err != nil || run.ID != "recovered-run" {
+		t.Fatalf("run=%+v err=%v", run, err)
+	}
+	again, err := c.StartRun(context.Background(), req)
+	if err != nil || again.ID != run.ID {
+		t.Fatalf("retry=%+v err=%v", again, err)
+	}
+	run = waitRun(t, c, run.ID)
+	if run.State != "report_failed" || run.SnapshotID == "" {
+		t.Fatalf("run=%+v", run)
+	}
+	stored, err := store.List("runs")
+	if err != nil || len(stored) != 1 || stored[0] != run.ID {
+		t.Fatalf("runs=%v err=%v", stored, err)
+	}
+}
+
 func TestRecoverPublishedSnapshotBeforePDF(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

@@ -45,40 +45,62 @@ func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.
 		if existing.PlanID != req.PlanID || existing.Hash != req.ConfirmedPlanHash {
 			return contract.Run{}, fault("ERR_PLAN_CHANGED", "chave de idempotência usada para outro plano")
 		}
-		return c.GetRun(ctx, existing.RunID)
+		var run contract.Run
+		if err := c.store.Get("runs", existing.RunID, &run); err == nil {
+			return run, nil
+		} else if !os.IsNotExist(err) {
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "run de idempotência corrompido")
+		}
 	} else if !os.IsNotExist(err) {
 		return contract.Run{}, fault("ERR_AUDIT_FAILED", "chave de idempotência corrompida")
 	}
 	release, err := c.store.Lock(plan.InvestigationID)
 	if err != nil {
 		if c.store.Get("runkeys", keyHash, &existing) == nil && existing.PlanID == req.PlanID && existing.Hash == req.ConfirmedPlanHash {
-			return c.GetRun(ctx, existing.RunID)
+			var run contract.Run
+			if c.store.Get("runs", existing.RunID, &run) == nil {
+				return run, nil
+			}
 		}
 		return contract.Run{}, fault("ERR_AUDIT_FAILED", "outra escrita da investigação está ativa")
 	}
+	var id string
 	if err := c.store.Get("runkeys", keyHash, &existing); err == nil {
-		release()
 		if existing.PlanID != req.PlanID || existing.Hash != req.ConfirmedPlanHash {
+			release()
 			return contract.Run{}, fault("ERR_PLAN_CHANGED", "chave de idempotência usada para outro plano")
 		}
-		return c.GetRun(ctx, existing.RunID)
+		var run contract.Run
+		if err := c.store.Get("runs", existing.RunID, &run); err == nil {
+			release()
+			return run, nil
+		} else if !os.IsNotExist(err) {
+			release()
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "run de idempotência corrompido")
+		}
+		id = existing.RunID
+		if id == "" {
+			release()
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "chave de idempotência sem run")
+		}
 	} else if !os.IsNotExist(err) {
 		release()
 		return contract.Run{}, fault("ERR_AUDIT_FAILED", "chave de idempotência corrompida")
-	}
-	id, err := storage.ID()
-	if err != nil {
-		release()
-		return contract.Run{}, err
+	} else {
+		id, err = storage.ID()
+		if err != nil {
+			release()
+			return contract.Run{}, err
+		}
+		if err := c.store.Put("runkeys", keyHash, runKey{RunID: id, PlanID: req.PlanID, Hash: req.ConfirmedPlanHash}); err != nil {
+			release()
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao persistir idempotência")
+		}
 	}
 	run := contract.Run{ID: id, PlanID: plan.ID, State: "queued", Stage: "queued", Coverage: "pending"}
 	if err := c.store.Put("runs", id, run); err != nil {
 		release()
 		return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao criar run")
-	}
-	if err := c.store.Put("runkeys", keyHash, runKey{RunID: id, PlanID: req.PlanID, Hash: req.ConfirmedPlanHash}); err != nil {
-		release()
-		return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao persistir idempotência")
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Duration(plan.Input.Limits.MaxSessionMS)*time.Millisecond)
 	c.mu.Lock()
