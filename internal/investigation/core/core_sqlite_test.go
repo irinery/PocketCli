@@ -597,6 +597,72 @@ func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
 	}
 }
 
+func TestLinearHistoricalGapResumesFromCommittedPage(t *testing.T) {
+	store, _ := storage.Open(t.TempDir())
+	ss := secrets.NewSessionStore()
+	ss.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "linear-secret", Persistence: "session"})
+	failedSecondPage := false
+	var requests []string
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			Query     string            `json:"query"`
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		kind := "delta"
+		if strings.Contains(request.Query, "TeamIssuesGap") {
+			kind = "gap"
+		}
+		requests = append(requests, kind+":"+request.Variables["after"])
+		body := `{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`
+		if kind == "gap" && request.Variables["after"] == "" {
+			body = `{"data":{"issues":{"nodes":[{"id":"old-1","identifier":"T-1","createdAt":"2025-12-01T00:00:00Z","updatedAt":"2025-12-02T00:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}`
+		} else if kind == "gap" && !failedSecondPage {
+			failedSecondPage = true
+			body = `{"errors":[{"message":"transient"}]}`
+		} else if kind == "gap" {
+			body = `{"data":{"issues":{"nodes":[{"id":"old-2","identifier":"T-2","createdAt":"2025-12-03T00:00:00Z","updatedAt":"2025-12-04T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := contract.Resource{Source: "linear", ID: "team-1", Name: "T"}
+	oldPlan := contract.Plan{ID: "old-window", InvestigationID: "gap-resume", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z"}
+	cursor, err := c.linearCursor(context.Background(), oldPlan, r, "issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.finishSourceCursor(&cursor, oldPlan, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	plan := oldPlan
+	plan.ID = "expanded-window"
+	plan.WindowStart = "2025-12-01T00:00:00Z"
+	plan.WindowEnd = "2026-01-12T00:00:00Z"
+	plan.Input.Limits.MaxTransferBytes = 1 << 20
+	run := contract.Run{ID: "gap-resume-run"}
+	first := &query.Dataset{}
+	if err := c.collectTeam(context.Background(), plan, r, first, &run); err != nil || first.Coverage[0].Status != "partial" {
+		t.Fatalf("primeira coleta: coverage=%+v err=%v", first.Coverage, err)
+	}
+	second := &query.Dataset{}
+	if err := c.collectTeam(context.Background(), plan, r, second, &run); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(requests, ",") != "gap:,gap:next,delta:,gap:next" || len(second.Issues) != 2 || second.Coverage[0].Status != "partial" {
+		t.Fatalf("retomada: requests=%v issues=%+v coverage=%+v", requests, second.Issues, second.Coverage)
+	}
+	cursor, err = c.linearCursor(context.Background(), plan, r, "issues")
+	if err != nil || cursor.value.Watermark != oldPlan.WindowEnd {
+		t.Fatalf("watermark avançou na paginação parcial: %+v err=%v", cursor.value, err)
+	}
+}
+
 func TestCommentEditPreservesBothObservedVersions(t *testing.T) {
 	store, _ := storage.Open(t.TempDir())
 	secretStore := secrets.NewSessionStore()
