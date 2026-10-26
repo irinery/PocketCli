@@ -68,13 +68,13 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 					referenced[p.EvidenceID] = true
 				}
 			}
-			reusePriorPRFileGraph(&d, prior, plan.WindowEnd, referenced)
 			for _, event := range prior.Events {
 				if timestampInWindow(plan.WindowStart, plan.WindowEnd, event.EventAt) {
 					d.Events = append(d.Events, event)
 					referenced[event.EvidenceID] = true
 				}
 			}
+			reusePriorFileGraph(&d, prior, plan.WindowEnd, referenced)
 			for _, evidence := range prior.Evidence {
 				if referenced[evidence.ID] || timestampInWindow(plan.WindowStart, plan.WindowEnd, evidence.SourceUpdatedAt) {
 					d.Evidence = append(d.Evidence, evidence)
@@ -109,6 +109,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 					return d, err
 				}
 				if err := c.collectGitCommits(ctx, plan, r, &d, run); err != nil {
+					return d, err
+				}
+				if err := c.collectGitCommitFiles(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
 				if err := c.collectPRFiles(ctx, plan, r, &d, run); err != nil {

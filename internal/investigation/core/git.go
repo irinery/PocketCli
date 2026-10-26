@@ -17,6 +17,9 @@ import (
 type gitObserver interface {
 	Observe(context.Context, string, []byte, gitmirror.RefState, int64) (gitmirror.Observation, error)
 	WalkCommits(context.Context, string, func(gitmirror.Commit) (bool, error)) (bool, error)
+	EnsureTrees(context.Context, string, []byte, string, string, int64) (int64, error)
+	ChangedFiles(context.Context, string, int) ([]gitmirror.ChangedFile, bool, error)
+	WalkTree(context.Context, string, func(gitmirror.TreeEntry) (bool, error)) (bool, error)
 }
 
 type gitMirrorFactory func(string) (gitObserver, error)
@@ -145,6 +148,6 @@ func (c *Core) collectGitRef(ctx context.Context, plan contract.Plan, r contract
 	if err := c.collectManifestPaths(ctx, plan, r, observation.TreeOID, auth.GitHub, now, d, run); err != nil {
 		return err
 	}
-	d.Coverage = append(d.Coverage, c.coverage(gitResource, "code_history", "partial", 1, "ref e manifestos atuais observados; histórico de arquivos e associação temporal a PRs ainda não mapeados"))
+	d.Coverage = append(d.Coverage, c.coverage(gitResource, "code_history", "partial", 1, "ref e manifestos atuais observados; cobertura final depende das filas de commits, arquivos e heads de PR"))
 	return nil
 }

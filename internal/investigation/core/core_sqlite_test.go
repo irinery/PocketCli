@@ -44,6 +44,8 @@ type fakeGitObserver struct {
 	priors  []gitmirror.RefState
 	result  gitmirror.Observation
 	commits []gitmirror.Commit
+	changes map[string][]gitmirror.ChangedFile
+	trees   map[string][]gitmirror.TreeEntry
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
@@ -55,6 +57,24 @@ func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior g
 func (f *fakeGitObserver) WalkCommits(_ context.Context, _ string, visit func(gitmirror.Commit) (bool, error)) (bool, error) {
 	for _, commit := range f.commits {
 		proceed, err := visit(commit)
+		if err != nil || !proceed {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (f *fakeGitObserver) EnsureTrees(context.Context, string, []byte, string, string, int64) (int64, error) {
+	return 0, nil
+}
+
+func (f *fakeGitObserver) ChangedFiles(_ context.Context, oid string, _ int) ([]gitmirror.ChangedFile, bool, error) {
+	return f.changes[oid], true, nil
+}
+
+func (f *fakeGitObserver) WalkTree(_ context.Context, oid string, visit func(gitmirror.TreeEntry) (bool, error)) (bool, error) {
+	for _, entry := range f.trees[oid] {
+		proceed, err := visit(entry)
 		if err != nil || !proceed {
 			return false, err
 		}

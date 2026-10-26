@@ -39,6 +39,7 @@ func TestMirrorDetectsAdvanceAndDivergenceWithoutRunningRepositoryCode(t *testin
 	runGit(t, work, "commit", "-m", "initial")
 	initial := runGit(t, work, "rev-parse", "HEAD")
 	runGit(t, root, "init", "--bare", remote)
+	runGit(t, remote, "config", "uploadpack.allowFilter", "true")
 	runGit(t, work, "remote", "add", "origin", remote)
 	runGit(t, work, "push", "origin", "main")
 	runGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
@@ -55,6 +56,36 @@ func TestMirrorDetectsAdvanceAndDivergenceWithoutRunningRepositoryCode(t *testin
 	if err != nil || first.NewOID != initial || !oidPattern.MatchString(first.TreeOID) || first.Relationship != "initial" || !first.GraphComplete {
 		t.Fatalf("initial=%+v err=%v", first, err)
 	}
+	legacy, err := New(filepath.Join(root, "legacy-mirror.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.allowLocal = true
+	if err := legacy.init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.command(context.Background(), remoteURL, nil, "fetch", "--quiet", "--filter=tree:0", remoteURL, "+"+first.Ref+":refs/pocketcli/observations/"+first.NewOID); err != nil || legacy.treesComplete(context.Background(), first.NewOID) {
+		t.Fatalf("fixture commit-only inválida: %v", err)
+	}
+	used, err := legacy.EnsureTrees(context.Background(), remoteURL, nil, first.Ref, first.NewOID, 10*1024*1024)
+	if err != nil || used <= 0 || !legacy.treesComplete(context.Background(), first.NewOID) {
+		t.Fatalf("migração sem blobs: used=%d err=%v", used, err)
+	}
+	if used, err := legacy.EnsureTrees(context.Background(), remoteURL, nil, first.Ref, first.NewOID, 10*1024*1024); err != nil || used != 0 {
+		t.Fatalf("migração repetida: used=%d err=%v", used, err)
+	}
+	rootFiles, allRootFiles, err := legacy.ChangedFiles(context.Background(), first.NewOID, 100)
+	if err != nil || !allRootFiles || len(rootFiles) != 1 || rootFiles[0].Path != ".gitconfig" || rootFiles[0].Status != "A" {
+		t.Fatalf("diff de commit raiz: files=%+v complete=%v err=%v", rootFiles, allRootFiles, err)
+	}
+	var treeFiles []TreeEntry
+	completeTree, err := legacy.WalkTree(context.Background(), first.TreeOID, func(entry TreeEntry) (bool, error) {
+		treeFiles = append(treeFiles, entry)
+		return true, nil
+	})
+	if err != nil || !completeTree || len(treeFiles) != 1 || treeFiles[0].Path != ".gitconfig" {
+		t.Fatalf("árvore local: files=%+v complete=%v err=%v", treeFiles, completeTree, err)
+	}
 	second, err := m.Observe(context.Background(), remoteURL, nil, RefState{Ref: first.Ref, OID: first.NewOID}, 10*1024*1024)
 	if err != nil || second.Relationship != "unchanged" || second.LocalBytes != 0 {
 		t.Fatalf("unchanged=%+v err=%v", second, err)
@@ -68,6 +99,10 @@ func TestMirrorDetectsAdvanceAndDivergenceWithoutRunningRepositoryCode(t *testin
 	third, err := m.Observe(context.Background(), remoteURL, nil, RefState{Ref: first.Ref, OID: first.NewOID}, 10*1024*1024)
 	if err != nil || third.Relationship != "advanced" || third.NewOID == initial {
 		t.Fatalf("advance=%+v err=%v", third, err)
+	}
+	changed, allChanged, err := m.ChangedFiles(context.Background(), third.NewOID, 100)
+	if err != nil || !allChanged || len(changed) != 1 || changed[0].Path != "change.txt" || changed[0].Status != "A" {
+		t.Fatalf("diff de avanço: files=%+v complete=%v err=%v", changed, allChanged, err)
 	}
 	var commits []Commit
 	complete, err := m.WalkCommits(context.Background(), third.NewOID, func(commit Commit) (bool, error) {
@@ -130,5 +165,49 @@ func TestMirrorRejectsUnapprovedRemote(t *testing.T) {
 		if _, err := m.Observe(context.Background(), remote, nil, RefState{}, 1000); err == nil {
 			t.Fatalf("accepted remote %q", remote)
 		}
+	}
+}
+
+func TestChangedFilesUsesParentTreeForDeletion(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	remote := filepath.Join(root, "remote.git")
+	runGit(t, root, "init", "-q", "-b", "main", work)
+	runGit(t, work, "config", "user.name", "Fixture")
+	runGit(t, work, "config", "user.email", "fixture@example.invalid")
+	if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte("module example.invalid/api\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "old.go"), []byte("package api\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-qm", "initial")
+	first := runGit(t, work, "rev-parse", "HEAD")
+	parentTree := runGit(t, work, "rev-parse", "HEAD^{tree}")
+	if err := os.Remove(filepath.Join(work, "old.go")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", "-A")
+	runGit(t, work, "commit", "-qm", "delete")
+	runGit(t, root, "init", "-q", "--bare", remote)
+	runGit(t, remote, "config", "uploadpack.allowFilter", "true")
+	runGit(t, work, "push", "-q", remote, "main")
+	runGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	m, err := New(filepath.Join(root, "mirror.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.allowLocal = true
+	observed, err := m.Observe(context.Background(), "file://"+remote, nil, RefState{}, 10*1024*1024)
+	if err != nil || !m.treesComplete(context.Background(), observed.NewOID) {
+		t.Fatalf("espelho com árvores indisponível: %+v %v", observed, err)
+	}
+	changes, complete, err := m.ChangedFiles(context.Background(), observed.NewOID, 100)
+	if err != nil || !complete || len(changes) != 1 || changes[0].Path != "old.go" || changes[0].Status != "D" || changes[0].TreeOID != parentTree {
+		t.Fatalf("exclusão mapeada contra árvore incorreta: %+v complete=%v err=%v", changes, complete, err)
+	}
+	if _, err := m.command(context.Background(), "", nil, "cat-file", "-e", first+"^{commit}"); err != nil {
+		t.Fatal("commit pai não está no espelho")
 	}
 }

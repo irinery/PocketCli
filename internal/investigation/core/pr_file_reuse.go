@@ -4,16 +4,21 @@ import (
 	"pocketcli/internal/investigation/query"
 )
 
-// Preserve mappings made against a PR's earlier head. Refresh can observe a
-// new head, but the older file identities and their evidence remain historical.
-func reusePriorPRFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string, referenced map[string]bool) {
-	activePRs := make(map[string]bool, len(d.PullRequests))
+// Preserve version-specific PR and commit file mappings. A refreshed head can
+// differ while earlier file identities and their evidence remain historical.
+func reusePriorFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string, referenced map[string]bool) {
+	activeSources := make(map[string]bool, len(d.PullRequests)+len(d.Events))
 	for _, pr := range d.PullRequests {
-		activePRs[pr.ID] = true
+		activeSources[pr.ID] = true
+	}
+	for _, event := range d.Events {
+		if event.Type == "commit_reachable_observed" {
+			activeSources[event.ID] = true
+		}
 	}
 	fileComponents := make(map[string]bool)
 	for _, link := range prior.Links {
-		if link.Relation == "modifies_file" && activePRs[link.SourceID] {
+		if link.Relation == "modifies_file" && activeSources[link.SourceID] {
 			upsertLink(d, link)
 			fileComponents[link.TargetID] = true
 			referenced[link.EvidenceID] = true
