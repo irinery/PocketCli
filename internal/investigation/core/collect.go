@@ -68,23 +68,7 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 					referenced[p.EvidenceID] = true
 				}
 			}
-			activePRs := make(map[string]bool, len(d.PullRequests))
-			for _, p := range d.PullRequests {
-				activePRs[p.ID] = true
-			}
-			fileComponents := make(map[string]bool)
-			for _, link := range prior.Links {
-				if link.Relation == "modifies_file" && activePRs[link.SourceID] {
-					upsertLink(&d, link)
-					fileComponents[link.TargetID] = true
-					referenced[link.EvidenceID] = true
-				}
-			}
-			for _, component := range prior.Components {
-				if component.Kind == "file_change" && fileComponents[component.ID] {
-					upsertComponent(&d, component)
-				}
-			}
+			reusePriorPRFileGraph(&d, prior, plan.WindowEnd, referenced)
 			for _, event := range prior.Events {
 				if timestampInWindow(plan.WindowStart, plan.WindowEnd, event.EventAt) {
 					d.Events = append(d.Events, event)

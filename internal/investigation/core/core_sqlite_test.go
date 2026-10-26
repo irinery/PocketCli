@@ -1129,14 +1129,14 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	modules := contract.Modules{CodeHistory: true}
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	prior := contract.Snapshot{ID: "prior-file-snapshot", PlanID: "prior-file-plan", InvestigationID: "file-investigation", Resources: []contract.Resource{r}, Modules: modules, WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", ObservationFinishedAt: "2026-01-09T00:00:00Z"}
-	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
+	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}, {ID: "manifest-old", Name: "go.mod", Repository: r.Name, Path: "go.mod", Kind: "go_module"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}, {ID: "link-map-old", SourceID: "file-old", Relation: "maps_to_component", TargetID: "manifest-old", Status: "direct", ValidFrom: "2026-01-03T00:00:00Z", EvidenceID: "ev-map"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-map", Source: "git", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
 	if err := store.Put("snapshots", prior.ID, prior); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put("datasets", prior.ID, priorData); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"ev-pr", "ev-file"} {
+	for _, id := range []string{"ev-pr", "ev-file", "ev-map"} {
 		if err := store.Put("objects", id, json.RawMessage(`{"body":""}`)); err != nil {
 			t.Fatal(err)
 		}
@@ -1154,18 +1154,21 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileFound, linkFound, evidenceFound := false, false, false
+	fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound := false, false, false, false, false, false
 	for _, component := range d.Components {
 		fileFound = fileFound || component.ID == "file-old"
+		manifestFound = manifestFound || component.ID == "manifest-old"
 	}
 	for _, link := range d.Links {
 		linkFound = linkFound || link.ID == "link-file-old"
+		mappingFound = mappingFound || link.ID == "link-map-old"
 	}
 	for _, evidence := range d.Evidence {
 		evidenceFound = evidenceFound || evidence.ID == "ev-file"
+		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map"
 	}
-	if !fileFound || !linkFound || !evidenceFound {
-		t.Fatalf("observação anterior desapareceu: files=%v links=%v evidence=%v", fileFound, linkFound, evidenceFound)
+	if !fileFound || !manifestFound || !linkFound || !mappingFound || !evidenceFound || !mappingEvidenceFound {
+		t.Fatalf("observação temporal anterior desapareceu: file=%v manifest=%v file_link=%v mapping=%v file_evidence=%v mapping_evidence=%v", fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound)
 	}
 }
 
