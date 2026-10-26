@@ -172,7 +172,13 @@ func (h cursorHandle) coversWindowStart(start string) bool {
 // update delta. Linear supports both bounds on updatedAt; an unbounded
 // all-history window still needs the full inventory query.
 func (h cursorHandle) linearIssueSpans(plan contract.Plan) []sourceInterval {
-	if h.value.Watermark == "" || plan.WindowStart == "" || !validSourceCursor(h.value) {
+	if h.value.Watermark == "" || !validSourceCursor(h.value) {
+		return []sourceInterval{{}}
+	}
+	if plan.WindowStart == "" {
+		if h.coversWindowStart("") {
+			return []sourceInterval{{Start: h.deltaStart(plan)}}
+		}
 		return []sourceInterval{{}}
 	}
 	upper := h.value.Watermark
