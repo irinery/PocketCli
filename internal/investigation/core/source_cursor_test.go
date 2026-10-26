@@ -94,4 +94,8 @@ func TestLinearIssueSpansScheduleHistoricalGapsAndRecentDelta(t *testing.T) {
 	if all := h.linearIssueSpans(contract.Plan{WindowEnd: "2026-01-12T00:00:00Z"}); len(all) != 1 || all[0] != (sourceInterval{}) {
 		t.Fatalf("all history=%+v", all)
 	}
+	allCovered := cursorHandle{value: sourceCursor{Watermark: "2026-01-10T00:00:00Z", CoveredIntervals: []sourceInterval{{End: "2026-01-10T00:00:00Z"}}}}
+	if delta := allCovered.linearIssueSpans(contract.Plan{WindowEnd: "2026-01-12T00:00:00Z"}); len(delta) != 1 || delta[0] != (sourceInterval{Start: "2026-01-08T00:00:00Z"}) {
+		t.Fatalf("all history refresh=%+v", delta)
+	}
 }
