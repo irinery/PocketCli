@@ -108,6 +108,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				if err := c.collectGitRef(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
+				if err := c.collectGitCommits(ctx, plan, r, &d, run); err != nil {
+					return d, err
+				}
 				if err := c.collectPRFiles(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}

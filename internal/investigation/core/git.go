@@ -16,6 +16,7 @@ import (
 
 type gitObserver interface {
 	Observe(context.Context, string, []byte, gitmirror.RefState, int64) (gitmirror.Observation, error)
+	WalkCommits(context.Context, string, func(gitmirror.Commit) (bool, error)) (bool, error)
 }
 
 type gitMirrorFactory func(string) (gitObserver, error)
