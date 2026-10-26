@@ -1,0 +1,60 @@
+package core
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"pocketcli/internal/investigation/contract"
+)
+
+func TestParseStrictAndDefaults(t *testing.T) {
+	s := NewSetup(func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC) })
+	for _, suffix := range []string{"yml", "yaml"} {
+		p, err := s.Parse(context.Background(), contract.SetupParseRequest{Filename: "plan." + suffix, Content: "schema_version: investigate.v1\nname: example\nperiod:\n  preset: 90d\n  timezone: UTC\n"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Input.Scope == nil || p.Input.Scope.Mode != "all_authorized" || !p.Input.GitHubEnabled || !p.Input.LinearEnabled {
+			t.Fatalf("defaults: %+v", p.Input)
+		}
+	}
+	for _, content := range []string{
+		"schema_version: investigate.v1\nname: a\nname: b\n",
+		"schema_version: investigate.v1\nname: a\ntoken: secret\n",
+		"schema_version: investigate.v1\nname: a\nunknown: x\n",
+		"schema_version: investigate.v1\nname: !custom a\n",
+	} {
+		if _, err := s.Parse(context.Background(), contract.SetupParseRequest{Filename: "plan.yaml", Content: content}); err == nil {
+			t.Fatalf("accepted %q", content)
+		}
+	}
+}
+
+func TestResolveLeapYearAndMissing(t *testing.T) {
+	s := NewSetup(func() time.Time { return time.Date(2024, 2, 29, 10, 0, 0, 0, time.UTC) })
+	p, err := s.ResolvePeriod(context.Background(), contract.Period{Preset: "1y", Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(p.WindowStart, "2023-02-28T10:00:00Z") {
+		t.Fatal(p.WindowStart)
+	}
+	if _, err := s.ResolvePeriod(context.Background(), contract.Period{}); err == nil {
+		t.Fatal("period required")
+	}
+}
+
+func TestHistoricalWindowDoesNotProjectCurrentOpenStateBackwards(t *testing.T) {
+	start, end := "2023-01-01T00:00:00Z", "2024-01-01T00:00:00Z"
+	if activeInWindow(start, end, "2022-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "open", false) {
+		t.Fatal("current open state projected into historical window")
+	}
+	if !activeInWindow(start, end, "2022-01-01T00:00:00Z", "2023-06-01T00:00:00Z", "closed", false) {
+		t.Fatal("activity inside historical window excluded")
+	}
+	if !activeInWindow(start, end, "2022-01-01T00:00:00Z", "2023-06-01T00:00:00Z", "open", true) {
+		t.Fatal("open item active in current window excluded")
+	}
+}
