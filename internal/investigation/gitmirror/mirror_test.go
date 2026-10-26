@@ -69,6 +69,25 @@ func TestMirrorDetectsAdvanceAndDivergenceWithoutRunningRepositoryCode(t *testin
 	if err != nil || third.Relationship != "advanced" || third.NewOID == initial {
 		t.Fatalf("advance=%+v err=%v", third, err)
 	}
+	var commits []Commit
+	complete, err := m.WalkCommits(context.Background(), third.NewOID, func(commit Commit) (bool, error) {
+		commits = append(commits, commit)
+		return true, nil
+	})
+	if err != nil || !complete || len(commits) != 2 || commits[0].OID != third.NewOID || commits[1].OID != initial || commits[0].CommittedAt == "" {
+		t.Fatalf("grafo de commits=%+v complete=%v err=%v", commits, complete, err)
+	}
+	commits = nil
+	complete, err = m.WalkCommits(context.Background(), third.NewOID, func(commit Commit) (bool, error) {
+		commits = append(commits, commit)
+		return false, nil
+	})
+	if err != nil || complete || len(commits) != 1 || commits[0].OID != third.NewOID {
+		t.Fatalf("interrupção do walk=%+v complete=%v err=%v", commits, complete, err)
+	}
+	if _, err := m.WalkCommits(context.Background(), "--all", func(Commit) (bool, error) { return true, nil }); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("OID inválido aceito: %v", err)
+	}
 	runGit(t, work, "reset", "--hard", initial)
 	if err := os.WriteFile(filepath.Join(work, "change.txt"), []byte("rewritten"), 0o600); err != nil {
 		t.Fatal(err)

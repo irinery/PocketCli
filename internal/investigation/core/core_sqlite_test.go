@@ -41,14 +41,25 @@ type fakeFinalizer struct {
 }
 
 type fakeGitObserver struct {
-	priors []gitmirror.RefState
-	result gitmirror.Observation
+	priors  []gitmirror.RefState
+	result  gitmirror.Observation
+	commits []gitmirror.Commit
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
 	f.priors = append(f.priors, prior)
 	f.result.OldOID = prior.OID
 	return f.result, nil
+}
+
+func (f *fakeGitObserver) WalkCommits(_ context.Context, _ string, visit func(gitmirror.Commit) (bool, error)) (bool, error) {
+	for _, commit := range f.commits {
+		proceed, err := visit(commit)
+		if err != nil || !proceed {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (f *fakeFinalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (contract.ReportArtifact, error) {

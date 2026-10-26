@@ -1,6 +1,7 @@
 package gitmirror
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -42,6 +43,62 @@ type Observation struct {
 	Relationship  string // initial, unchanged, advanced, ref_diverged, ref_changed, unknown
 	GraphComplete bool
 	LocalBytes    int64
+}
+
+type Commit struct {
+	OID         string
+	CommittedAt string
+}
+
+// WalkCommits streams the graph reachable from a fixed OID without loading
+// trees or blobs. Returning false from visit leaves the remaining graph for a
+// later refresh. The git process is stopped before the function returns.
+func (m *Mirror) WalkCommits(ctx context.Context, head string, visit func(Commit) (bool, error)) (bool, error) {
+	if !oidPattern.MatchString(head) {
+		return false, ErrCorrupt
+	}
+	command := exec.CommandContext(ctx, m.GitPath, "--git-dir="+m.Path, "log", "--no-patch", "--topo-order", "--format=%H%x09%cI", head)
+	command.Dir = m.Path
+	command.Env = m.environment("", nil)
+	command.Stderr = io.Discard
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return false, ErrCorrupt
+	}
+	if err := command.Start(); err != nil {
+		return false, ErrCorrupt
+	}
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 256), 1024)
+	for scanner.Scan() {
+		parts := strings.Split(scanner.Text(), "\t")
+		if len(parts) != 2 || !oidPattern.MatchString(parts[0]) {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			return false, ErrCorrupt
+		}
+		proceed, visitErr := visit(Commit{OID: parts[0], CommittedAt: parts[1]})
+		if visitErr != nil || !proceed {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			return false, visitErr
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, ErrCorrupt
+	}
+	if err := command.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return false, ErrCorrupt
+	}
+	return true, nil
 }
 
 type Mirror struct {
