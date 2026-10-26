@@ -93,7 +93,7 @@ func waitRun(t *testing.T, c *Core, id string) contract.Run {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if r.State == "report_failed" || r.State == "failed" || r.State == "completed" {
+		if r.State == "report_failed" || r.State == "failed" || r.State == "completed" || r.State == "completed_partial" {
 			return r
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -299,6 +299,125 @@ func TestRecoverPublishedSnapshotBeforePDF(t *testing.T) {
 		if err != nil || run.State != "report_failed" || run.SnapshotID != "snap-immutable" || run.LastError == nil {
 			t.Fatalf("estado %s não recuperado: %+v %v", state, run, err)
 		}
+	}
+}
+
+func TestResumeAfterSnapshotPublicationKeepsSameSnapshot(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := secrets.NewSessionStore()
+	if _, err := ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	transport := &fakeTransport{title: "PR"}
+	config := CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }}
+	firstCore, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCore.SetFinalizer(&fakeFinalizer{core: firstCore})
+	plan, err := firstCore.PreparePlan(context.Background(), contract.PlanInput{SchemaVersion: contract.Version, GitHubEnabled: true, Scope: &contract.Scope{Mode: "selected", Repositories: []string{"acme/api"}}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}, Limits: contract.Limits{GitHubRPH: 3600000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := firstCore.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "publication-interrupted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run = waitRun(t, firstCore, run.ID)
+	if run.State != "completed" || run.SnapshotID == "" {
+		t.Fatalf("primeiro run=%+v", run)
+	}
+	beforeID := run.SnapshotID
+	transport.mu.Lock()
+	beforeRequests := transport.requests
+	transport.mu.Unlock()
+	// Simulates the recovered state after publication and before the run's
+	// analysis_ready write. The snapshot and projection already exist.
+	run.State, run.Stage, run.SnapshotID = "paused", "building", ""
+	if err := store.Put("runs", run.ID, run); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.SetFinalizer(&fakeFinalizer{core: restarted})
+	if _, err := restarted.ResumeRun(context.Background(), run.ID); err != nil {
+		t.Fatal(err)
+	}
+	resumed := waitRun(t, restarted, run.ID)
+	transport.mu.Lock()
+	afterRequests := transport.requests
+	transport.mu.Unlock()
+	snapshots, err := store.List("snapshots")
+	if err != nil || resumed.State != "completed" || resumed.SnapshotID != beforeID || afterRequests != beforeRequests || len(snapshots) != 1 {
+		t.Fatalf("retomada duplicou publicação: run=%+v requests=%d->%d snapshots=%v err=%v", resumed, beforeRequests, afterRequests, snapshots, err)
+	}
+	var published contract.Snapshot
+	if err := store.Get("snapshots", beforeID, &published); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.query.VerifyPublished(beforeID, published.DatasetHash); err != nil {
+		t.Fatalf("projeção publicada inválida: %v", err)
+	}
+	if err := restarted.query.VerifyPublished(beforeID, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("projeção aceitou hash de dataset divergente")
+	}
+	if _, err := restarted.Query(context.Background(), contract.QueryRequest{SnapshotID: beforeID, SQL: "SELECT * FROM projection_meta"}); err == nil {
+		t.Fatal("metadados internos da projeção ficaram acessíveis por SQL público")
+	}
+	for _, kind := range []string{"datasets", "snapshots"} {
+		path, err := store.Path(kind, beforeID)
+		if err != nil {
+			t.Fatalf("remoção da fixture %s: %v", kind, err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remoção da fixture %s: %v", kind, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(store.Root, "projection", beforeID+".sqlite")); err != nil {
+		t.Fatal(err)
+	}
+	resumed.State, resumed.Stage, resumed.SnapshotID = "paused", "building", ""
+	if err := store.Put("runs", resumed.ID, resumed); err != nil {
+		t.Fatal(err)
+	}
+	restartedAgain, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedAgain.SetFinalizer(&fakeFinalizer{core: restartedAgain})
+	if _, err := restartedAgain.ResumeRun(context.Background(), resumed.ID); err != nil {
+		t.Fatal(err)
+	}
+	republished := waitRun(t, restartedAgain, resumed.ID)
+	transport.mu.Lock()
+	afterRepublishRequests := transport.requests
+	transport.mu.Unlock()
+	if republished.State != "completed" || republished.SnapshotID != beforeID || afterRepublishRequests != beforeRequests {
+		t.Fatalf("build persistido não republicado: run=%+v requests=%d->%d", republished, beforeRequests, afterRepublishRequests)
+	}
+	if err := store.Put("datasets", beforeID, query.Dataset{}); err != nil {
+		t.Fatal(err)
+	}
+	republished.State, republished.Stage, republished.SnapshotID = "paused", "building", ""
+	if err := store.Put("runs", republished.ID, republished); err != nil {
+		t.Fatal(err)
+	}
+	corrupted, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupted.SetFinalizer(&fakeFinalizer{core: corrupted})
+	if _, err := corrupted.ResumeRun(context.Background(), republished.ID); err != nil {
+		t.Fatal(err)
+	}
+	rejected := waitRun(t, corrupted, republished.ID)
+	if rejected.State != "failed" || rejected.LastError == nil || rejected.LastError.Code != "ERR_AUDIT_FAILED" {
+		t.Fatalf("dataset divergente não interrompeu retomada: %+v", rejected)
 	}
 }
 

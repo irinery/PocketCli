@@ -369,6 +369,8 @@ func (s *sqliteService) Publish(id string, d Dataset) error {
 	}
 	if _, err := os.Stat(path); err == nil {
 		return denied("ERR_VALIDATION", "snapshot já publicado")
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 	f, err := os.CreateTemp(s.root, ".projection-*.sqlite")
 	if err != nil {
@@ -386,12 +388,18 @@ func (s *sqliteService) Publish(id string, d Dataset) error {
 	if _, err := db.Exec(string(schema)); err != nil {
 		return err
 	}
+	if _, err := db.Exec(`CREATE TABLE projection_meta (snapshot_id TEXT PRIMARY KEY, dataset_hash TEXT NOT NULL)`); err != nil {
+		return err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if err := insertDataset(tx, d); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO projection_meta (snapshot_id, dataset_hash) VALUES (?, ?)`, id, d.Snapshot.DatasetHash); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -423,6 +431,30 @@ func (s *sqliteService) Publish(id string, d Dataset) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
+}
+
+// VerifyPublished is internal crash recovery. The public SQL connection uses
+// the restricted authorizer and cannot read projection_meta.
+func (s *sqliteService) VerifyPublished(id, datasetHash string) error {
+	path, err := s.path(id)
+	if err != nil || datasetHash == "" {
+		return denied("ERR_AUDIT_FAILED", "projeção inválida")
+	}
+	u := url.URL{Scheme: "file", Path: path}
+	db, err := sql.Open("sqlite3", u.String()+"?mode=ro&immutable=1&_query_only=1")
+	if err != nil {
+		return denied("ERR_AUDIT_FAILED", "projeção indisponível")
+	}
+	defer db.Close()
+	var check string
+	if err := db.QueryRow(`PRAGMA quick_check`).Scan(&check); err != nil || check != "ok" {
+		return denied("ERR_AUDIT_FAILED", "integridade da projeção falhou")
+	}
+	var storedID, storedHash string
+	if err := db.QueryRow(`SELECT snapshot_id, dataset_hash FROM projection_meta`).Scan(&storedID, &storedHash); err != nil || storedID != id || storedHash != datasetHash {
+		return denied("ERR_AUDIT_FAILED", "projeção não corresponde ao build")
+	}
+	return nil
 }
 
 func insertDataset(tx *sql.Tx, d Dataset) error {

@@ -128,44 +128,76 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		}
 		c.mu.Unlock()
 	}()
-	started := c.setup.now().UTC().Format(time.RFC3339)
-	run.State = "collecting"
-	run.Stage = "collecting"
-	run.Items = 0 // Reconstructed from persisted pages on resume.
-	if !c.saveRun(&run) {
-		return
-	}
-	d, err := c.collectDataset(ctx, plan, &run)
-	if err == nil {
-		err = ctx.Err()
-	}
+	d, hasBuild, err := c.loadRunBuild(run.ID, plan)
 	if err != nil {
-		var coded *contract.ErrorResponse
-		if errors.As(err, &coded) {
-			run.LastError = coded
-		} else if ctx.Err() != nil {
-			run.LastError = &contract.ErrorResponse{Code: "ERR_TIMEOUT", Message: "coleta interrompida"}
-		} else {
-			run.LastError = &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "coleta incompleta"}
+		run.State = "failed"
+		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "build de run indisponível"}
+		c.saveRun(&run)
+		return
+	}
+	if !hasBuild {
+		started := c.setup.now().UTC().Format(time.RFC3339)
+		run.State = "collecting"
+		run.Stage = "collecting"
+		run.Items = 0 // Reconstructed from persisted pages on resume.
+		if !c.saveRun(&run) {
+			return
 		}
-		if ctx.Err() != nil || (run.LastError != nil && (run.LastError.Code == "ERR_RESOURCE_EXHAUSTED" || run.LastError.Code == "ERR_RATE_LIMITED")) {
-			current, _ := c.GetRun(context.Background(), run.ID)
-			if current.State == "cancelled" {
-				run.State = "cancelled"
+		d, err = c.collectDataset(ctx, plan, &run)
+		if err == nil {
+			err = ctx.Err()
+		}
+		if err != nil {
+			var coded *contract.ErrorResponse
+			if errors.As(err, &coded) {
+				run.LastError = coded
+			} else if ctx.Err() != nil {
+				run.LastError = &contract.ErrorResponse{Code: "ERR_TIMEOUT", Message: "coleta interrompida"}
 			} else {
-				run.State = "paused"
+				run.LastError = &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "coleta incompleta"}
 			}
-			run.Stage = "collecting"
-		} else {
+			if ctx.Err() != nil || (run.LastError != nil && (run.LastError.Code == "ERR_RESOURCE_EXHAUSTED" || run.LastError.Code == "ERR_RATE_LIMITED")) {
+				current, _ := c.GetRun(context.Background(), run.ID)
+				if current.State == "cancelled" {
+					run.State = "cancelled"
+				} else {
+					run.State = "paused"
+				}
+				run.Stage = "collecting"
+			} else {
+				run.State = "failed"
+			}
+			c.saveRun(&run)
+			return
+		}
+		run.State = "building"
+		run.Stage = "building"
+		if !c.saveRun(&run) {
+			return
+		}
+		d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: "1.0.0", MappingVersion: "1.0.0", QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Status: "published"}
+		canonical, marshalErr := json.Marshal(d)
+		if marshalErr != nil {
 			run.State = "failed"
+			run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "dataset inválido"}
+			c.saveRun(&run)
+			return
 		}
-		c.saveRun(&run)
-		return
-	}
-	run.State = "building"
-	run.Stage = "building"
-	if !c.saveRun(&run) {
-		return
+		d.Snapshot.DatasetHash = storage.Hash(canonical)
+		d.Snapshot.ID = "snap-" + d.Snapshot.DatasetHash[:24]
+		d.Snapshot.PublishedAt = c.setup.now().UTC().Format(time.RFC3339)
+		if err := c.saveRunBuild(run.ID, plan, d); err != nil {
+			run.State = "failed"
+			run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao persistir build"}
+			c.saveRun(&run)
+			return
+		}
+	} else {
+		run.State = "building"
+		run.Stage = "building"
+		if !c.saveRun(&run) {
+			return
+		}
 	}
 	if ctx.Err() != nil {
 		current, _ := c.GetRun(context.Background(), run.ID)
@@ -178,35 +210,19 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		c.saveRun(&run)
 		return
 	}
-	d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: "1.0.0", MappingVersion: "1.0.0", QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Status: "published"}
-	canonical, _ := json.Marshal(d)
-	d.Snapshot.DatasetHash = storage.Hash(canonical)
-	d.Snapshot.ID = "snap-" + d.Snapshot.DatasetHash[:24]
-	d.Snapshot.PublishedAt = c.setup.now().UTC().Format(time.RFC3339)
-	if ctx.Err() != nil {
-		current, _ := c.GetRun(context.Background(), run.ID)
-		if current.State == "cancelled" {
-			run.State = "cancelled"
-		} else {
-			run.State = "paused"
-		}
-		run.LastError = &contract.ErrorResponse{Code: "ERR_TIMEOUT", Message: "execução interrompida antes da publicação"}
-		c.saveRun(&run)
-		return
-	}
-	if err := c.query.Publish(d.Snapshot.ID, d); err != nil {
+	if err := c.ensureProjection(d); err != nil {
 		run.State = "failed"
 		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao publicar projeção"}
 		c.saveRun(&run)
 		return
 	}
-	if err := c.store.Put("datasets", d.Snapshot.ID, d); err != nil {
+	if err := c.putImmutable("datasets", d.Snapshot.ID, d); err != nil {
 		run.State = "failed"
 		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao publicar dados"}
 		c.saveRun(&run)
 		return
 	}
-	if err := c.store.Put("snapshots", d.Snapshot.ID, d.Snapshot); err != nil {
+	if err := c.putImmutable("snapshots", d.Snapshot.ID, d.Snapshot); err != nil {
 		run.State = "failed"
 		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao publicar snapshot"}
 		c.saveRun(&run)

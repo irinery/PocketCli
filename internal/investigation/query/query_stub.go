@@ -17,3 +17,6 @@ func (unavailable) Execute(context.Context, string, contract.QueryRequest) (cont
 func (unavailable) Publish(string, Dataset) error {
 	return &contract.ErrorResponse{Code: "ERR_SQL_DENIED", Message: "motor SQL indisponível; compile Agent com -tags investigate_sqlite e CGO_ENABLED=1"}
 }
+func (unavailable) VerifyPublished(string, string) error {
+	return &contract.ErrorResponse{Code: "ERR_SQL_DENIED", Message: "motor SQL indisponível; compile Agent com -tags investigate_sqlite e CGO_ENABLED=1"}
+}
