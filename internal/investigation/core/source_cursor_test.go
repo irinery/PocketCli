@@ -68,3 +68,30 @@ func TestSourceCursorKeepsPartialCheckpointWithoutAdvancingWatermark(t *testing.
 		t.Fatalf("cursor reutilizado entre credenciais: %+v %v", other, err)
 	}
 }
+
+func TestLinearIssueSpansScheduleHistoricalGapsAndRecentDelta(t *testing.T) {
+	h := cursorHandle{value: sourceCursor{
+		Watermark: "2026-01-10T00:00:00Z",
+		CoveredIntervals: []sourceInterval{
+			{Start: "2025-12-01T00:00:00Z", End: "2025-12-15T00:00:00Z"},
+			{Start: "2026-01-01T00:00:00Z", End: "2026-01-10T00:00:00Z"},
+		},
+	}}
+	spans := h.linearIssueSpans(contract.Plan{WindowStart: "2025-11-01T00:00:00Z", WindowEnd: "2026-01-12T00:00:00Z"})
+	want := []sourceInterval{
+		{Start: "2025-11-01T00:00:00Z", End: "2025-12-01T00:00:00Z"},
+		{Start: "2025-12-15T00:00:00Z", End: "2026-01-01T00:00:00Z"},
+		{Start: "2026-01-08T00:00:00Z"},
+	}
+	if len(spans) != len(want) {
+		t.Fatalf("spans=%+v", spans)
+	}
+	for i := range want {
+		if spans[i] != want[i] {
+			t.Fatalf("span[%d]=%+v want=%+v", i, spans[i], want[i])
+		}
+	}
+	if all := h.linearIssueSpans(contract.Plan{WindowEnd: "2026-01-12T00:00:00Z"}); len(all) != 1 || all[0] != (sourceInterval{}) {
+		t.Fatalf("all history=%+v", all)
+	}
+}

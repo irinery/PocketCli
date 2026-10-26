@@ -167,3 +167,51 @@ func (h cursorHandle) coversWindowStart(start string) bool {
 	}
 	return false
 }
+
+// linearIssueSpans schedules uncovered history separately from the recent
+// update delta. Linear supports both bounds on updatedAt; an unbounded
+// all-history window still needs the full inventory query.
+func (h cursorHandle) linearIssueSpans(plan contract.Plan) []sourceInterval {
+	if h.value.Watermark == "" || plan.WindowStart == "" || !validSourceCursor(h.value) {
+		return []sourceInterval{{}}
+	}
+	upper := h.value.Watermark
+	if plan.WindowEnd != "" && plan.WindowEnd < upper {
+		upper = plan.WindowEnd
+	}
+	spans := uncoveredSourceIntervals(plan.WindowStart, upper, h.value.CoveredIntervals)
+	watermark, _ := time.Parse(time.RFC3339, h.value.Watermark)
+	since := watermark.Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	if since < plan.WindowStart || (plan.WindowEnd != "" && since >= plan.WindowEnd) {
+		since = plan.WindowStart
+	}
+	spans = append(spans, sourceInterval{Start: since})
+	return spans
+}
+
+func uncoveredSourceIntervals(start, end string, covered []sourceInterval) []sourceInterval {
+	if start == "" || end == "" || start >= end {
+		return nil
+	}
+	current := start
+	var gaps []sourceInterval
+	for _, interval := range covered {
+		if interval.End <= current {
+			continue
+		}
+		if interval.Start > current {
+			gapEnd := interval.Start
+			if gapEnd > end {
+				gapEnd = end
+			}
+			gaps = append(gaps, sourceInterval{Start: current, End: gapEnd})
+		}
+		if interval.End > current {
+			current = interval.End
+		}
+		if current >= end {
+			return gaps
+		}
+	}
+	return append(gaps, sourceInterval{Start: current, End: end})
+}
