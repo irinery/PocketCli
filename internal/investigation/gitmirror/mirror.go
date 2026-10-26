@@ -182,7 +182,7 @@ func (m *Mirror) Observe(ctx context.Context, remote string, secret []byte, prio
 		if err != nil {
 			return out, ErrCorrupt
 		}
-		peak, fetchErr := m.fetch(ctx, remote, secret, maxAdditionalBytes, before, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--filter=tree:0", remote, "+"+ref+":"+destination)
+		peak, fetchErr := m.fetch(ctx, remote, secret, maxAdditionalBytes, before, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "--no-auto-maintenance", "--filter=blob:none", remote, "+"+ref+":"+destination)
 		after, err := directoryBytes(m.Path)
 		if err != nil {
 			return out, ErrCorrupt

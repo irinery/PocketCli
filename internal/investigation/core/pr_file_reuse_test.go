@@ -24,7 +24,7 @@ func TestRefreshKeepsOldHeadFileMappings(t *testing.T) {
 	}
 	current := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-1", HeadSHA: "new-head"}}}
 	referenced := make(map[string]bool)
-	reusePriorPRFileGraph(&current, prior, "2026-02-01T00:00:00Z", referenced)
+	reusePriorFileGraph(&current, prior, "2026-02-01T00:00:00Z", referenced)
 	if len(current.Links) != 2 || current.Links[0].ID != "pr-file" || current.Links[1].ID != "file-component" {
 		t.Fatalf("vínculos históricos não preservados ou fora da janela: %+v", current.Links)
 	}
@@ -33,5 +33,21 @@ func TestRefreshKeepsOldHeadFileMappings(t *testing.T) {
 	}
 	if !referenced["ev-pr-file"] || !referenced["ev-file-component"] || referenced["ev-future"] || referenced["ev-other"] {
 		t.Fatalf("evidências históricas incorretas: %+v", referenced)
+	}
+}
+
+func TestRefreshKeepsCommitFileMappings(t *testing.T) {
+	prior := query.Dataset{
+		Components: []contract.ComponentRecord{{ID: "commit-file", Kind: "file_change"}, {ID: "commit-manifest", Kind: "go_module"}},
+		Links: []contract.LinkRecord{
+			{ID: "commit-file-link", SourceID: "commit-event", Relation: "modifies_file", TargetID: "commit-file", EvidenceID: "ev-diff"},
+			{ID: "commit-map-link", SourceID: "commit-file", Relation: "maps_to_component", TargetID: "commit-manifest", EvidenceID: "ev-map"},
+		},
+	}
+	current := query.Dataset{Events: []query.Event{{ID: "commit-event", Type: "commit_reachable_observed"}}}
+	referenced := make(map[string]bool)
+	reusePriorFileGraph(&current, prior, "2026-02-01T00:00:00Z", referenced)
+	if len(current.Links) != 2 || len(current.Components) != 2 || !referenced["ev-diff"] || !referenced["ev-map"] {
+		t.Fatalf("histórico de arquivos do commit perdido: %+v", current)
 	}
 }
