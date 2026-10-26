@@ -220,6 +220,61 @@ func TestRunKeyWithoutRunRecoversSameID(t *testing.T) {
 	}
 }
 
+func TestStartRunRestoresRequestPacingFromPreparedPlan(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	base := &fakeTransport{title: "PR"}
+	var mu sync.Mutex
+	var pullsAt, issuesAt time.Time
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		switch r.URL.Path {
+		case "/repos/acme/api/pulls":
+			if pullsAt.IsZero() {
+				pullsAt = time.Now()
+			}
+		case "/repos/acme/api/issues":
+			if issuesAt.IsZero() {
+				issuesAt = time.Now()
+			}
+		}
+		mu.Unlock()
+		return base.RoundTrip(r)
+	})
+	config := CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: transport}, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }}
+	preparer, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := preparer.PreparePlan(context.Background(), contract.PlanInput{SchemaVersion: contract.Version, GitHubEnabled: true, Scope: &contract.Scope{Mode: "selected", Repositories: []string{"acme/api"}}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}, Modules: contract.Modules{GitHubIssues: true}, Limits: contract.Limits{GitHubRPH: 36000, MaxSessionMS: 10000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start in a new Core, as the separate CLI invocation does.
+	runner, err := NewCore(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := runner.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "pacing-after-restart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRun(t, runner, run.ID)
+	mu.Lock()
+	delay := issuesAt.Sub(pullsAt)
+	missing := pullsAt.IsZero() || issuesAt.IsZero()
+	mu.Unlock()
+	if missing || delay < 80*time.Millisecond {
+		t.Fatalf("limite de 100ms não aplicado: pulls=%v issues=%v delay=%v", pullsAt, issuesAt, delay)
+	}
+}
+
 func TestRecoverPublishedSnapshotBeforePDF(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

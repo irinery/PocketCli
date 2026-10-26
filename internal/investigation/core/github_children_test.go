@@ -22,7 +22,7 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 		"/repos/acme/api/pulls":             `[ {"id":100,"number":7,"title":"PR","state":"open","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","user":{"id":1}} ]`,
 		"/repos/acme/api/issues":            `[ {"id":200,"number":8,"title":"Issue","state":"open","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z"} ]`,
 		"/repos/acme/api/pulls/7/reviews":   `[ {"id":14,"submitted_at":"2026-01-01T12:00:00Z","state":"COMMENTED","user":{"id":2,"type":"User"}}, {"id":11,"submitted_at":"2026-01-02T06:00:00Z","state":"APPROVED","user":{"id":1,"type":"User"}}, {"id":12,"submitted_at":"2026-01-02T12:00:00Z","state":"APPROVED","user":{"id":3,"type":"Bot"}}, {"id":13,"submitted_at":"2026-01-03T00:00:00Z","state":"CHANGES_REQUESTED","user":{"id":2,"type":"User"}} ]`,
-		"/repos/acme/api/issues/7/timeline": `[ {"id":21,"event":"ready_for_review","created_at":"2026-01-02T00:00:00Z","actor":{"id":1}} ]`,
+		"/repos/acme/api/issues/7/timeline": `[ {"sha":"abc","event":"committed","created_at":"2026-01-02T00:00:00Z"}, {"event":"cross-referenced","created_at":"2026-01-02T00:00:00Z"}, {"id":21,"event":"ready_for_review","created_at":"2026-01-02T00:00:00Z","actor":{"id":1}} ]`,
 		"/repos/acme/api/issues/8/timeline": `[ {"id":22,"event":"reopened","created_at":"2026-01-04T00:00:00Z","actor":{"id":2}} ]`,
 	}
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {

@@ -270,14 +270,20 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 			ID int64 `json:"id"`
 		} `json:"actor"`
 	}
-	if json.Unmarshal(raw, &entry) != nil || entry.ID == 0 {
+	if json.Unmarshal(raw, &entry) != nil {
 		return fmt.Errorf("evento inválido")
-	}
-	if entry.CreatedAt == "" || !timestampInWindow(plan.WindowStart, plan.WindowEnd, entry.CreatedAt) {
-		return nil
 	}
 	if entry.Event != "ready_for_review" && entry.Event != "reopened" {
 		return nil
+	}
+	if entry.CreatedAt == "" {
+		return fmt.Errorf("evento sem data")
+	}
+	if !timestampInWindow(plan.WindowStart, plan.WindowEnd, entry.CreatedAt) {
+		return nil
+	}
+	if entry.ID == 0 {
+		return fmt.Errorf("evento sem ID")
 	}
 	locator := fmt.Sprintf("%s:timeline:%d", r.Name, entry.ID)
 	e, err := c.evidence("github", locator, entry.CreatedAt, raw)
