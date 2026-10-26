@@ -542,6 +542,7 @@ func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
 	ss.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "linear-secret", Persistence: "session"})
 	queries := []string{}
 	sinceValues := []string{}
+	untilValues := []string{}
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		var request struct {
 			Query     string            `json:"query"`
@@ -552,6 +553,10 @@ func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
 		}
 		queries = append(queries, request.Query)
 		sinceValues = append(sinceValues, request.Variables["since"])
+		untilValues = append(untilValues, request.Variables["until"])
+		if strings.Contains(request.Query, "TeamIssuesGap") {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":{"issues":{"nodes":[{"id":"issue-old","identifier":"T-OLD","title":"Old issue","createdAt":"2025-12-10T00:00:00Z","updatedAt":"2025-12-20T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`))}, nil
+		}
 		updated := "2026-01-03T00:00:00Z"
 		if len(queries) > 1 {
 			updated = "2026-01-11T00:00:00Z"
@@ -580,11 +585,15 @@ func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
 	third.ID = "linear-cursor-3"
 	third.WindowStart = "2025-12-01T00:00:00Z"
 	third.WindowEnd = "2026-01-13T00:00:00Z"
-	if err := c.collectTeam(context.Background(), third, r, &query.Dataset{}, &run); err != nil {
+	thirdData := &query.Dataset{}
+	if err := c.collectTeam(context.Background(), third, r, thirdData, &run); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 3 || strings.Contains(queries[0], "TeamIssuesDelta") || !strings.Contains(queries[1], "TeamIssuesDelta") || strings.Contains(queries[2], "TeamIssuesDelta") || sinceValues[0] != "" || sinceValues[1] != "2026-01-08T00:00:00Z" || sinceValues[2] != "" {
-		t.Fatalf("seletores Linear inválidos: since=%v queries=%v", sinceValues, queries)
+	if len(queries) != 4 || strings.Contains(queries[0], "TeamIssuesDelta") || !strings.Contains(queries[1], "TeamIssuesDelta") || !strings.Contains(queries[2], "TeamIssuesGap") || !strings.Contains(queries[3], "TeamIssuesDelta") || sinceValues[0] != "" || sinceValues[1] != "2026-01-08T00:00:00Z" || sinceValues[2] != "2025-12-01T00:00:00Z" || untilValues[2] != "2026-01-01T00:00:00Z" || sinceValues[3] != "2026-01-10T00:00:00Z" {
+		t.Fatalf("seletores Linear inválidos: since=%v until=%v queries=%v", sinceValues, untilValues, queries)
+	}
+	if len(thirdData.Issues) != 2 || thirdData.Issues[0].ID != "linear-issue-old" || thirdData.Issues[1].ID != "linear-issue-1" {
+		t.Fatalf("gap e delta não chegaram ao dataset: %+v", thirdData.Issues)
 	}
 }
 

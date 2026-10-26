@@ -525,94 +525,106 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	}
 	const fullQuery = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	const deltaQuery = `query TeamIssuesDelta($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
-	gql := fullQuery
-	since := ""
-	if cursor.value.Watermark != "" && cursor.coversWindowStart(plan.WindowStart) {
-		since = cursor.deltaStart(plan)
-		gql = deltaQuery
-	}
-	journalID := storage.Hash([]byte(plan.ID + ":" + r.ID + ":linear:issues"))
-	journal := linearJournal{PlanID: plan.ID, ResourceID: r.ID, Items: []json.RawMessage{}}
-	if err := c.store.Get("journals", journalID, &journal); err == nil {
-		if journal.PlanID != plan.ID || journal.ResourceID != r.ID {
-			return fault("ERR_AUDIT_FAILED", "journal Linear incompatível")
-		}
-	} else if !os.IsNotExist(err) {
-		return fault("ERR_AUDIT_FAILED", "journal Linear corrompido")
-	}
+	const gapQuery = `query TeamIssuesGap($team: ID!, $after: String, $since: DateTimeOrDuration!, $until: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since, lt: $until}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	status, reason := "complete", ""
-	for !journal.Complete && journal.Pages < 20 {
-		vars := map[string]string{"team": r.ID}
-		if since != "" {
-			vars["since"] = since
+	items := []json.RawMessage{}
+	spans := cursor.linearIssueSpans(plan)
+	for _, span := range spans {
+		gql := fullQuery
+		if span.End != "" {
+			gql = gapQuery
+		} else if span.Start != "" {
+			gql = deltaQuery
 		}
-		if journal.Cursor != "" {
-			vars["after"] = journal.Cursor
+		journalKey := plan.ID + ":" + r.ID + ":linear:issues"
+		if len(spans) > 1 {
+			journalKey += ":" + span.Start + ":" + span.End
 		}
-		data, err := c.collector.LinearQuery(ctx, gql, vars)
-		run.Requests++
-		if !c.saveRun(run) {
-			return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+		journalID := storage.Hash([]byte(journalKey))
+		journal := linearJournal{PlanID: plan.ID, ResourceID: r.ID, Items: []json.RawMessage{}}
+		if err := c.store.Get("journals", journalID, &journal); err == nil {
+			if journal.PlanID != plan.ID || journal.ResourceID != r.ID {
+				return fault("ERR_AUDIT_FAILED", "journal Linear incompatível")
 			}
-			var coded *contract.ErrorResponse
-			if errors.As(err, &coded) && coded.Code == "ERR_RATE_LIMITED" {
+		} else if !os.IsNotExist(err) {
+			return fault("ERR_AUDIT_FAILED", "journal Linear corrompido")
+		}
+		spanStatus, spanReason := "complete", ""
+		for !journal.Complete && journal.Pages < 20 {
+			vars := map[string]string{"team": r.ID}
+			if span.Start != "" {
+				vars["since"] = span.Start
+			}
+			if span.End != "" {
+				vars["until"] = span.End
+			}
+			if journal.Cursor != "" {
+				vars["after"] = journal.Cursor
+			}
+			data, err := c.collector.LinearQuery(ctx, gql, vars)
+			run.Requests++
+			if !c.saveRun(run) {
+				return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
+			}
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				var coded *contract.ErrorResponse
+				if errors.As(err, &coded) && coded.Code == "ERR_RATE_LIMITED" {
+					return err
+				}
+				spanStatus, spanReason = "partial", "consulta Linear falhou"
+				break
+			}
+			var result struct {
+				Issues struct {
+					Nodes    []json.RawMessage `json:"nodes"`
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+				} `json:"issues"`
+			}
+			if json.Unmarshal(data, &result) != nil || result.Issues.Nodes == nil {
+				spanStatus, spanReason = "partial", "resposta Linear inválida"
+				break
+			}
+			next := result.Issues.PageInfo.EndCursor
+			if result.Issues.PageInfo.HasNextPage && (next == "" || next == journal.Cursor) {
+				spanStatus, spanReason = "partial", "paginação Linear sem cursor válido"
+				break
+			}
+			journal.Items = append(journal.Items, result.Issues.Nodes...)
+			journal.Pages++
+			journal.Complete = !result.Issues.PageInfo.HasNextPage
+			journal.Cursor = next
+			if err := c.store.Put("journals", journalID, journal); err != nil {
+				return fault("ERR_AUDIT_FAILED", "falha ao persistir página Linear")
+			}
+			if err := c.saveSourceCheckpoint(&cursor, plan.ID, next); err != nil {
 				return err
 			}
-			status = "partial"
-			reason = "consulta Linear falhou"
-			break
+			run.Bytes += int64(len(data))
+			if !c.saveRun(run) {
+				return fault("ERR_AUDIT_FAILED", "falha ao auditar página Linear")
+			}
+			if run.Bytes > plan.Input.Limits.MaxTransferBytes {
+				return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência atingido")
+			}
 		}
-		var result struct {
-			Issues struct {
-				Nodes    []json.RawMessage `json:"nodes"`
-				PageInfo struct {
-					HasNextPage bool   `json:"hasNextPage"`
-					EndCursor   string `json:"endCursor"`
-				} `json:"pageInfo"`
-			} `json:"issues"`
+		if !journal.Complete && spanStatus == "complete" {
+			spanStatus, spanReason = "partial", "paginação Linear incompleta"
+		} else if journal.Pages > 1 && spanStatus == "complete" {
+			spanStatus, spanReason = "partial", "lista Linear paginada sem snapshot estável"
 		}
-		if json.Unmarshal(data, &result) != nil || result.Issues.Nodes == nil {
-			status = "partial"
-			reason = "resposta Linear inválida"
-			break
+		if spanStatus != "complete" && status == "complete" {
+			status, reason = spanStatus, spanReason
 		}
-		next := result.Issues.PageInfo.EndCursor
-		if result.Issues.PageInfo.HasNextPage && (next == "" || next == journal.Cursor) {
-			status = "partial"
-			reason = "paginação Linear sem cursor válido"
-			break
-		}
-		journal.Items = append(journal.Items, result.Issues.Nodes...)
-		journal.Pages++
-		journal.Complete = !result.Issues.PageInfo.HasNextPage
-		journal.Cursor = next
-		if err := c.store.Put("journals", journalID, journal); err != nil {
-			return fault("ERR_AUDIT_FAILED", "falha ao persistir página Linear")
-		}
-		if err := c.saveSourceCheckpoint(&cursor, plan.ID, next); err != nil {
-			return err
-		}
-		run.Bytes += int64(len(data))
-		if !c.saveRun(run) {
-			return fault("ERR_AUDIT_FAILED", "falha ao auditar página Linear")
-		}
-		if run.Bytes > plan.Input.Limits.MaxTransferBytes {
-			return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência atingido")
-		}
-	}
-	if !journal.Complete && status == "complete" {
-		status = "partial"
-		reason = "paginação Linear incompleta"
-	} else if journal.Pages > 1 && status == "complete" {
-		status = "partial"
-		reason = "lista Linear paginada sem snapshot estável"
+		items = append(items, journal.Items...)
 	}
 	projectIDs := make(map[string]bool)
-	for _, raw := range journal.Items {
+	for _, raw := range items {
 		var node struct {
 			ID, Identifier, Title, CreatedAt, UpdatedAt, CompletedAt, StartedAt string
 			Estimate                                                            *float64
@@ -676,7 +688,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			return fault("ERR_AUDIT_FAILED", "falha ao auditar item")
 		}
 	}
-	d.Coverage = append(d.Coverage, c.coverage(r, "issues", status, int64(len(journal.Items)), reason))
+	d.Coverage = append(d.Coverage, c.coverage(r, "issues", status, int64(len(items)), reason))
 	if err := c.finishSourceCursor(&cursor, plan, status); err != nil {
 		return err
 	}
