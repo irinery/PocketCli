@@ -400,7 +400,7 @@ func TestGitHubJournalResumesFromCommittedPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := contract.Plan{ID: "plan-journal", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+	plan := contract.Plan{ID: "plan-journal", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
 	resource := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	run := contract.Run{ID: "run-journal"}
 	first := &query.Dataset{}
@@ -410,12 +410,20 @@ func TestGitHubJournalResumesFromCommittedPage(t *testing.T) {
 	if pageOne != 1 || pageTwo != 1 || len(first.PullRequests) != 1 || first.Coverage[0].Status != "unauthorized" {
 		t.Fatalf("first pass pages=%d,%d prs=%d coverage=%+v", pageOne, pageTwo, len(first.PullRequests), first.Coverage)
 	}
+	cursor, err := c.githubCursor(context.Background(), plan, resource, "pull_requests")
+	if err != nil || cursor.value.Watermark != "" || !strings.Contains(cursor.value.Checkpoint, "page=2") {
+		t.Fatalf("cursor avançou após falha na segunda página: %+v %v", cursor.value, err)
+	}
 	second := &query.Dataset{}
 	if err := c.collectRepository(context.Background(), plan, resource, contract.Snapshot{}, second, &run); err != nil {
 		t.Fatal(err)
 	}
 	if pageOne != 1 || pageTwo != 2 || len(second.PullRequests) != 2 || second.Coverage[0].Status != "partial" {
 		t.Fatalf("resume pages=%d,%d prs=%d coverage=%+v", pageOne, pageTwo, len(second.PullRequests), second.Coverage)
+	}
+	cursor, err = c.githubCursor(context.Background(), plan, resource, "pull_requests")
+	if err != nil || cursor.value.Watermark != "" {
+		t.Fatalf("lista paginada avançou watermark sem snapshot estável: %+v %v", cursor.value, err)
 	}
 }
 
@@ -483,8 +491,60 @@ func TestLinearJournalResumesFromCommittedCursor(t *testing.T) {
 	if err := c.collectTeam(context.Background(), plan, resource, second, &run); err != nil {
 		t.Fatal(err)
 	}
-	if firstCalls != 1 || secondCalls != 2 || len(second.Issues) != 2 || second.Coverage[0].Status != "complete" {
+	if firstCalls != 1 || secondCalls != 2 || len(second.Issues) != 2 || second.Coverage[0].Status != "partial" {
 		t.Fatalf("resume calls=%d,%d issues=%d coverage=%+v", firstCalls, secondCalls, len(second.Issues), second.Coverage)
+	}
+}
+
+func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
+	store, _ := storage.Open(t.TempDir())
+	ss := secrets.NewSessionStore()
+	ss.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "linear-secret", Persistence: "session"})
+	queries := []string{}
+	sinceValues := []string{}
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		var request struct {
+			Query     string            `json:"query"`
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		queries = append(queries, request.Query)
+		sinceValues = append(sinceValues, request.Variables["since"])
+		updated := "2026-01-03T00:00:00Z"
+		if len(queries) > 1 {
+			updated = "2026-01-11T00:00:00Z"
+		}
+		body := fmt.Sprintf(`{"data":{"issues":{"nodes":[{"id":"issue-1","identifier":"T-1","title":"Issue","createdAt":"2026-01-01T00:00:00Z","updatedAt":%q}],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`, updated)
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := contract.Resource{Source: "linear", ID: "team-1", Name: "T"}
+	run := contract.Run{ID: "linear-cursor-run"}
+	first := contract.Plan{ID: "linear-cursor-1", InvestigationID: "linear-cursor-investigation", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+	if err := c.collectTeam(context.Background(), first, r, &query.Dataset{}, &run); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ID = "linear-cursor-2"
+	second.WindowStart = "2026-01-05T00:00:00Z"
+	second.WindowEnd = "2026-01-12T00:00:00Z"
+	if err := c.collectTeam(context.Background(), second, r, &query.Dataset{}, &run); err != nil {
+		t.Fatal(err)
+	}
+	third := second
+	third.ID = "linear-cursor-3"
+	third.WindowStart = "2025-12-01T00:00:00Z"
+	third.WindowEnd = "2026-01-13T00:00:00Z"
+	if err := c.collectTeam(context.Background(), third, r, &query.Dataset{}, &run); err != nil {
+		t.Fatal(err)
+	}
+	if len(queries) != 3 || strings.Contains(queries[0], "TeamIssuesDelta") || !strings.Contains(queries[1], "TeamIssuesDelta") || strings.Contains(queries[2], "TeamIssuesDelta") || sinceValues[0] != "" || sinceValues[1] != "2026-01-08T00:00:00Z" || sinceValues[2] != "" {
+		t.Fatalf("seletores Linear inválidos: since=%v queries=%v", sinceValues, queries)
 	}
 }
 
