@@ -28,6 +28,19 @@ func TestRealGitHistorySmoke(t *testing.T) {
 	if err != nil || observation.NewOID == "" || !m.treesComplete(ctx, observation.NewOID) {
 		t.Fatalf("fetch Git filtrado falhou: relationship=%s bytes=%d err=%v", observation.Relationship, observation.LocalBytes, err)
 	}
+	heads, completeHeads, branchBytes, err := m.ListHeads(ctx, remote, []byte(secret), 10000, 1<<20)
+	if err != nil || !completeHeads || len(heads) == 0 || branchBytes <= 0 {
+		t.Fatalf("listagem de branches falhou: heads=%d complete=%v bytes=%d err=%v", len(heads), completeHeads, branchBytes, err)
+	}
+	foundDefault := false
+	for _, head := range heads {
+		if head.Name == observation.Ref && head.OID == observation.NewOID {
+			foundDefault = true
+		}
+	}
+	if !foundDefault {
+		t.Fatal("head padrão ausente da listagem de branches")
+	}
 	commits := 0
 	_, err = m.WalkCommits(ctx, observation.NewOID, func(commit Commit) (bool, error) {
 		commits++
@@ -49,5 +62,5 @@ func TestRealGitHistorySmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("árvore Git local falhou: %v", err)
 	}
-	t.Logf("fetch, diff e árvore locais concluídos: %d commits e %d entradas de árvore amostrados, %d bytes locais adicionais", commits, treeEntries, observation.LocalBytes)
+	t.Logf("fetch, diff e árvore locais concluídos: %d commits, %d entradas de árvore, %d branches, %d bytes locais adicionais e %d bytes na listagem", commits, treeEntries, len(heads), observation.LocalBytes, branchBytes)
 }
