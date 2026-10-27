@@ -1516,6 +1516,71 @@ func TestComposeDependenciesLinkOnlyVerifiedServices(t *testing.T) {
 	}
 }
 
+func TestBase64GitBlobEchoCannotEnterManifestStorage(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := secrets.NewSessionStore()
+	if _, err := ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	treeOID := strings.Repeat("a", 40)
+	content := []byte("module example.com/acme/api\n// test-secret\n")
+	encoded := base64.StdEncoding.EncodeToString(content)
+	object := append([]byte(fmt.Sprintf("blob %d\x00", len(content))), content...)
+	sum := sha1.Sum(object)
+	blobOID := hex.EncodeToString(sum[:])
+	calls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var body string
+		switch r.URL.Path {
+		case "/repos/acme/api/git/trees/" + treeOID:
+			body = fmt.Sprintf(`{"sha":%q,"truncated":false,"tree":[{"path":"go.mod","mode":"100644","type":"blob","sha":%q,"size":%d}]}`, treeOID, blobOID, len(content))
+		case "/repos/acme/api/git/blobs/" + blobOID:
+			body = fmt.Sprintf(`{"sha":%q,"encoding":"base64","content":%q,"size":%d}`, blobOID, encoded, len(content))
+		default:
+			t.Fatalf("request inesperada: %s", r.URL)
+		}
+		res := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+		res.Header.Set("ETag", `"blob-version"`)
+		return res, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "secret-blob-plan", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20, MaxLocalBytes: 1 << 20}}}
+	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
+	run := contract.Run{ID: "secret-blob-run"}
+	d := query.Dataset{}
+	if err := c.collectManifestPaths(context.Background(), plan, r, treeOID, "identity", "2026-01-10T00:00:00Z", &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(d.Components) != 1 || len(d.Events) != 0 || len(d.Coverage) != 2 || d.Coverage[1].Status != "partial" {
+		t.Fatalf("blob com credencial não ficou parcial: components=%+v events=%+v coverage=%+v calls=%d", d.Components, d.Events, d.Coverage, calls)
+	}
+	if err := filepath.WalkDir(store.Root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(raw), "test-secret") || strings.Contains(string(raw), encoded) {
+			t.Errorf("blob com credencial persistido em %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPRFilesLinkExactObservedPathWithoutAssumingComponent(t *testing.T) {
 	store, _ := storage.Open(t.TempDir())
 	ss := secrets.NewSessionStore()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -370,14 +371,27 @@ func credentialEchoed(body []byte, headers http.Header, secret []byte) bool {
 	if bytes.Contains(body, secret) {
 		return true
 	}
-	if !bytes.ContainsRune(body, '\\') {
+	if !bytes.ContainsRune(body, '\\') && !bytes.Contains(body, []byte("base64")) {
 		return false
 	}
 	var value any
 	if json.Unmarshal(body, &value) != nil {
 		return false
 	}
-	return jsonContainsSecret(value, string(secret))
+	if jsonContainsSecret(value, string(secret)) {
+		return true
+	}
+	if envelope, ok := value.(map[string]any); ok && envelope["encoding"] == "base64" {
+		if content, ok := envelope["content"].(string); ok {
+			decoded, err := base64.StdEncoding.DecodeString(content)
+			if err == nil {
+				echoed := bytes.Contains(decoded, secret)
+				clear(decoded)
+				return echoed
+			}
+		}
+	}
+	return false
 }
 
 func jsonContainsSecret(value any, secret string) bool {
