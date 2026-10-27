@@ -235,6 +235,54 @@ func rateLimitDelay(source string, header http.Header) time.Duration {
 	return delay
 }
 
+// quotaReserveDelay uses the provider's reported quota, not a locally guessed
+// request count. GitHub resets are epoch seconds; Linear resets are millis.
+func quotaReserveDelay(source string, header http.Header, percent int) (time.Duration, bool) {
+	if percent <= 0 || percent > 100 {
+		return 0, false
+	}
+	type quotaHeaders struct {
+		limit, remaining, reset string
+	}
+	var buckets []quotaHeaders
+	milliseconds := false
+	switch source {
+	case "github":
+		buckets = []quotaHeaders{{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"}}
+	case "linear":
+		milliseconds = true
+		buckets = []quotaHeaders{
+			{"X-RateLimit-Requests-Limit", "X-RateLimit-Requests-Remaining", "X-RateLimit-Requests-Reset"},
+			{"X-RateLimit-Endpoint-Requests-Limit", "X-RateLimit-Endpoint-Requests-Remaining", "X-RateLimit-Endpoint-Requests-Reset"},
+			{"X-RateLimit-Complexity-Limit", "X-RateLimit-Complexity-Remaining", "X-RateLimit-Complexity-Reset"},
+		}
+	default:
+		return 0, false
+	}
+	var longest time.Duration
+	for _, bucket := range buckets {
+		limit, limitErr := strconv.ParseInt(strings.TrimSpace(header.Get(bucket.limit)), 10, 64)
+		remaining, remainingErr := strconv.ParseInt(strings.TrimSpace(header.Get(bucket.remaining)), 10, 64)
+		if limitErr != nil || remainingErr != nil || limit <= 0 || remaining < 0 || remaining > limit {
+			continue
+		}
+		threshold := limit/100*int64(percent) + (limit%100*int64(percent)+99)/100
+		if remaining > threshold {
+			continue
+		}
+		delay, valid := resetDelay(header.Get(bucket.reset), milliseconds)
+		if !valid {
+			delay = time.Minute
+		} else if delay <= 0 {
+			continue
+		}
+		if delay > longest {
+			longest = delay
+		}
+	}
+	return longest, longest > 0
+}
+
 func retryBackoff(attempt int) time.Duration {
 	return time.Duration(1<<attempt)*time.Second + time.Duration(rand.Int63n(int64(250*time.Millisecond)))
 }

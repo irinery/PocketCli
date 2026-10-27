@@ -30,6 +30,7 @@ type Client struct {
 	cacheSize         int64
 	cacheStore        CacheStore
 	resolvePrincipals bool
+	reservePercent    int
 }
 
 const githubAPIVersion = "2026-03-10"
@@ -54,7 +55,19 @@ func NewClient(h *http.Client, secrets contract.SecretProvider) *Client {
 		return &contract.ErrorResponse{Code: "ERR_UNSUPPORTED_SOURCE", Message: "redirecionamento externo bloqueado"}
 	}
 	h = &copy
-	return &Client{HTTP: h, Secrets: secrets, GitHubURL: "https://api.github.com", LinearURL: "https://api.linear.app/graphql", spacing: make(map[string]time.Duration), next: make(map[string]time.Time), cache: make(map[string]etagEntry)}
+	return &Client{HTTP: h, Secrets: secrets, GitHubURL: "https://api.github.com", LinearURL: "https://api.linear.app/graphql", spacing: make(map[string]time.Duration), next: make(map[string]time.Time), cache: make(map[string]etagEntry), reservePercent: 20}
+}
+
+// SetQuotaReservePercent controls the fraction of an advertised API quota kept
+// unused for other clients. Zero disables the reserve; the default is 20.
+func (c *Client) SetQuotaReservePercent(percent int) error {
+	if percent < 0 || percent > 100 {
+		return &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: "reserva de quota fora do intervalo 0..100"}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reservePercent = percent
+	return nil
 }
 
 func (c *Client) SetRPH(source string, requests int) {
@@ -237,6 +250,13 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			}
 			if err := c.finishPacing(ctx, source, secret, started); err != nil {
 				return err
+			}
+			if (status >= 200 && status < 300 || status == http.StatusNotModified) && c.reservePercent > 0 {
+				if delay, reserve := quotaReserveDelay(source, headers, c.reservePercent); reserve {
+					if err := c.saveRateHold(ctx, source, secret, delay); err != nil {
+						return err
+					}
+				}
 			}
 			if err != nil {
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "resposta externa inválida"}

@@ -46,11 +46,15 @@ func newInvestigationCore(secretStore *secrets.SessionStore) (*core.Core, error)
 }
 
 func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*investigationServices, error) {
+	reserve, err := investigationQuotaReservePercent()
+	if err != nil {
+		return nil, err
+	}
 	store, err := storage.Open("")
 	if err != nil {
 		return nil, err
 	}
-	c, err := core.NewCore(core.CoreConfig{Store: store, Secrets: secretStore, ResolvePrincipals: true})
+	c, err := core.NewCore(core.CoreConfig{Store: store, Secrets: secretStore, ResolvePrincipals: true, QuotaReservePercent: reserve})
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +77,18 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 		c.SetFinalizer(cached)
 	}
 	return &investigationServices{core: c, secrets: secretStore, annotations: notes, queries: queryHistory, editorial: edit, report: cached, reportError: reportErr}, nil
+}
+
+func investigationQuotaReservePercent() (*int, error) {
+	value, configured := os.LookupEnv("POCKETCLI_INVESTIGATE_QUOTA_RESERVE_PERCENT")
+	if !configured {
+		return nil, nil
+	}
+	percent, err := strconv.Atoi(value)
+	if err != nil || percent < 0 || percent > 100 {
+		return nil, fmt.Errorf("POCKETCLI_INVESTIGATE_QUOTA_RESERVE_PERCENT deve ser um inteiro de 0 a 100")
+	}
+	return &percent, nil
 }
 
 func serveInvestigation(cmd *cobra.Command, args []string) error {
