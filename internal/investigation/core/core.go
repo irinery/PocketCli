@@ -38,6 +38,7 @@ type Core struct {
 	finalizer contract.Finalizer
 	gitMirror gitMirrorFactory
 	mu        sync.Mutex
+	stopping  bool
 	runs      map[string]context.CancelFunc
 	locks     map[string]func()
 }

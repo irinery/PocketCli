@@ -148,14 +148,30 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 	serveErr := serveInvestigationHTTP(ctx, server, listener, 5*time.Second)
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer closeCancel()
+	runsDone := make(chan error, 1)
+	go func() { runsDone <- services.core.StopActiveRuns(closeCtx) }()
 	closeErr := jobs.Close(closeCtx)
+	var runsErr error
+	select {
+	case runsErr = <-runsDone:
+	case <-closeCtx.Done():
+		runsErr = closeCtx.Err()
+	}
+	var failures []error
 	if serveErr != nil {
-		return serveErr
+		failures = append(failures, serveErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("ERR_TIMEOUT: renderização de PDF não encerrou após o servidor: %w", closeErr)
+		failures = append(failures, fmt.Errorf("ERR_TIMEOUT: renderização de PDF não encerrou após o servidor: %w", closeErr))
 	}
-	return nil
+	if runsErr != nil {
+		code := "ERR_AUDIT_FAILED"
+		if errors.Is(runsErr, context.DeadlineExceeded) || errors.Is(runsErr, context.Canceled) {
+			code = "ERR_TIMEOUT"
+		}
+		failures = append(failures, fmt.Errorf("%s: worker de investigação não encerrou após o servidor: %w", code, runsErr))
+	}
+	return errors.Join(failures...)
 }
 
 func serveInvestigationHTTP(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration) error {

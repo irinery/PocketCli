@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -16,6 +17,63 @@ import (
 type waitingFinalizer struct {
 	entered chan struct{}
 	exited  chan struct{}
+}
+
+func TestStopActiveRunsCancelsAutomaticPDFBeforeExit(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalizer := &waitingFinalizer{entered: make(chan struct{}), exited: make(chan struct{})}
+	c.SetFinalizer(finalizer)
+	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "shutdown-pdf", Modules: contract.Modules{RuntimeImport: true}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}}
+	first, err := c.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ImportRuntime(context.Background(), first.InvestigationID, []byte(`{"schema_version":"pocketcli.runtime.v1","observed_at":"2026-01-08T00:00:00Z","environment":"production","components":[{"name":"api","enabled":true}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	input.InvestigationID = first.InvestigationID
+	plan, err := c.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "stop-active-pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finalizer.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PDF automático não iniciou")
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.StopActiveRuns(shutdown); err != nil {
+		t.Fatalf("worker não encerrou: %v", err)
+	}
+	select {
+	case <-finalizer.exited:
+	default:
+		t.Fatal("Finalizer ainda estava ativo após o shutdown")
+	}
+	got, err := c.GetRun(context.Background(), run.ID)
+	if err != nil || got.State != "report_failed" || got.SnapshotID == "" {
+		t.Fatalf("snapshot ou estado perdido no shutdown: %+v %v", got, err)
+	}
+	if _, err := c.GetSnapshot(context.Background(), got.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "late-run"})
+	var coded *contract.ErrorResponse
+	if !errors.As(err, &coded) || coded.Code != "ERR_UNAVAILABLE" {
+		t.Fatalf("novo run entrou durante shutdown: %v", err)
+	}
 }
 
 func (f *waitingFinalizer) Finalize(ctx context.Context, _ contract.FinalizeRequest) (contract.ReportArtifact, error) {

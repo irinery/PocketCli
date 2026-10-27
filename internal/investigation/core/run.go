@@ -22,6 +22,12 @@ import (
 type runKey struct{ RunID, PlanID, Hash string }
 
 func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.Run, error) {
+	c.mu.Lock()
+	stopping := c.stopping
+	c.mu.Unlock()
+	if stopping {
+		return contract.Run{}, fault("ERR_UNAVAILABLE", "servidor local encerrando")
+	}
 	var plan contract.Plan
 	if err := c.store.Get("plans", req.PlanID, &plan); err != nil {
 		return contract.Run{}, fault("ERR_NOT_FOUND", "plano não encontrado")
@@ -106,6 +112,17 @@ func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Duration(plan.Input.Limits.MaxSessionMS)*time.Millisecond)
 	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		cancel()
+		run.State = "paused"
+		if !c.saveRun(&run) {
+			release()
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao auditar run interrompido")
+		}
+		release()
+		return run, fault("ERR_UNAVAILABLE", "servidor local encerrando")
+	}
 	c.runs[id] = cancel
 	c.locks[id] = release
 	c.mu.Unlock()
@@ -418,7 +435,49 @@ func (c *Core) WaitRunStopped(ctx context.Context, id string) error {
 	}
 }
 
+// StopActiveRuns prevents new workers, checkpoints active runs and waits for
+// their collectors or PDF renderers to exit before the CLI process stops.
+func (c *Core) StopActiveRuns(ctx context.Context) error {
+	c.mu.Lock()
+	c.stopping = true
+	ids := make([]string, 0, len(c.runs))
+	cancels := make(map[string]context.CancelFunc, len(c.runs))
+	for id, cancel := range c.runs {
+		ids = append(ids, id)
+		cancels[id] = cancel
+	}
+	c.mu.Unlock()
+	sort.Strings(ids)
+	for _, id := range ids {
+		if cancel := cancels[id]; cancel != nil {
+			cancel()
+		}
+	}
+	var failures []error
+	for _, id := range ids {
+		_, err := c.PauseRun(context.Background(), id)
+		if err != nil {
+			var coded *contract.ErrorResponse
+			if !errors.As(err, &coded) || coded.Code != "ERR_VALIDATION" {
+				failures = append(failures, fmt.Errorf("pausa do run %s: %w", id, err))
+			}
+		}
+	}
+	for _, id := range ids {
+		if err := c.WaitRunStopped(ctx, id); err != nil {
+			failures = append(failures, fmt.Errorf("encerramento do run %s: %w", id, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 func (c *Core) ResumeRun(ctx context.Context, id string) (contract.Run, error) {
+	c.mu.Lock()
+	stopping := c.stopping
+	c.mu.Unlock()
+	if stopping {
+		return contract.Run{}, fault("ERR_UNAVAILABLE", "servidor local encerrando")
+	}
 	r, err := c.GetRun(ctx, id)
 	if err != nil {
 		return r, err
@@ -456,6 +515,17 @@ func (c *Core) ResumeRun(ctx context.Context, id string) (contract.Run, error) {
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Duration(p.Input.Limits.MaxSessionMS)*time.Millisecond)
 	c.mu.Lock()
+	if c.stopping {
+		c.mu.Unlock()
+		cancel()
+		r.State = "paused"
+		if !c.saveRun(&r) {
+			release()
+			return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao auditar run interrompido")
+		}
+		release()
+		return r, fault("ERR_UNAVAILABLE", "servidor local encerrando")
+	}
 	c.runs[id] = cancel
 	c.locks[id] = release
 	c.mu.Unlock()
