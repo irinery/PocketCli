@@ -206,9 +206,20 @@ const realAppJSTemplate = `(() => {
       if (linear.checked) required.push('Linear: Read, sem Write/Admin/Create');
       permissions.textContent = required.join(' | ') + (required.length ? '. ' : '') + 'Informe apenas recursos autorizados.';
     };
-    github.onchange = linear.onchange = updatePermissions;
+    const updateSources = () => {
+      repositories.disabled = githubKey.disabled = !github.checked;
+      teams.disabled = linearKey.disabled = !linear.checked;
+      if (!github.checked) {
+        repositories.value = githubKey.value = '';
+        ['github_issues', 'code_history', 'ci', 'deployments'].forEach(key => { moduleChecks[key].checked = false; });
+      }
+      if (!linear.checked) teams.value = linearKey.value = '';
+      ['github_issues', 'code_history', 'ci', 'deployments'].forEach(key => { moduleChecks[key].disabled = !github.checked; });
+      updatePermissions();
+    };
+    github.onchange = linear.onchange = updateSources;
     Object.values(moduleChecks).forEach(check => { check.onchange = updatePermissions; });
-    updatePermissions();
+    updateSources();
     const yaml = node('input'); yaml.type = 'file'; yaml.accept = '.yaml,.yml,text/yaml';
     const feedback = node('section');
     let imported = null, plan = null;
@@ -231,7 +242,7 @@ const realAppJSTemplate = `(() => {
         updatePeriod();
         timezone.value = imported.period.timezone || timezone.value;
         Object.keys(moduleChecks).forEach(key => { moduleChecks[key].checked = !!imported.modules[key]; });
-        updatePermissions();
+        updateSources();
         feedback.append(node('p', 'muted', 'YAML importado. Revise os campos antes de preparar o plano.'));
       } catch (error) { fail(feedback, error); }
     });

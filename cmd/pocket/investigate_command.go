@@ -217,7 +217,7 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	store := secrets.NewSessionStore()
-	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "investigation", GitHubEnabled: !f.noGitHub, LinearEnabled: !f.noLinear, Scope: &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}, Modules: contract.Modules{GitHubIssues: true, CodeHistory: true}, Period: contract.Period{Timezone: "America/Sao_Paulo"}}
+	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "investigation", GitHubEnabled: !f.noGitHub, LinearEnabled: !f.noLinear, Scope: &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}, Modules: contract.Modules{GitHubIssues: !f.noGitHub, CodeHistory: !f.noGitHub}, Period: contract.Period{Timezone: "America/Sao_Paulo"}}
 	c, err := newInvestigationCore(store)
 	if err != nil {
 		return err
