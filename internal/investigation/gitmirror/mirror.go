@@ -154,6 +154,27 @@ func (m *Mirror) Observe(ctx context.Context, remote string, secret []byte, prio
 	if _, err := m.command(ctx, "", nil, "check-ref-format", ref); err != nil {
 		return out, ErrUnavailable
 	}
+	return m.observeRef(ctx, remote, secret, ref, oid, prior, maxAdditionalBytes)
+}
+
+// ObserveHead fetches an already inventoried branch at its exact OID. If the
+// remote ref moved after ListHeads, the round remains partial instead of
+// silently replacing the inventoried revision.
+func (m *Mirror) ObserveHead(ctx context.Context, remote string, secret []byte, head HeadRef, prior RefState, maxAdditionalBytes int64) (Observation, error) {
+	if !m.allowedRemote(remote) || !ValidHeadRef(head.Name) || !oidPattern.MatchString(head.OID) {
+		return Observation{}, ErrUnavailable
+	}
+	if maxAdditionalBytes <= 0 {
+		return Observation{}, ErrBudget
+	}
+	if err := m.init(ctx); err != nil {
+		return Observation{}, err
+	}
+	return m.observeRef(ctx, remote, secret, head.Name, head.OID, prior, maxAdditionalBytes)
+}
+
+func (m *Mirror) observeRef(ctx context.Context, remote string, secret []byte, ref, oid string, prior RefState, maxAdditionalBytes int64) (Observation, error) {
+	var out Observation
 	out.Ref, out.OldOID, out.NewOID = ref, prior.OID, oid
 	if prior.OID != "" && !oidPattern.MatchString(prior.OID) {
 		return out, ErrCorrupt

@@ -56,3 +56,84 @@ func TestParseHeadRefsRejectsInvalidRecordsWithoutProvingDeletion(t *testing.T) 
 		t.Fatalf("registro inválido deve deixar cobertura parcial: %+v %v", refs, complete)
 	}
 }
+
+func TestObserveHeadTracksAdvanceDivergenceAndMovedRef(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	remote := filepath.Join(root, "remote.git")
+	runGit(t, root, "init", "-q", "-b", "main", work)
+	runGit(t, work, "config", "user.name", "Fixture")
+	runGit(t, work, "config", "user.email", "fixture@example.invalid")
+	if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte("module example.invalid/app\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-qm", "root")
+	rootOID := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, root, "init", "-q", "--bare", remote)
+	runGit(t, remote, "config", "uploadpack.allowFilter", "true")
+	runGit(t, work, "remote", "add", "origin", remote)
+	runGit(t, work, "push", "-q", "origin", "main")
+	runGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	runGit(t, work, "checkout", "-qb", "feature")
+	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("one"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", "feature.txt")
+	runGit(t, work, "commit", "-qm", "feature")
+	firstOID := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "-q", "origin", "feature")
+	m, err := New(filepath.Join(root, "mirror.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.allowLocal = true
+	remoteURL := "file://" + remote
+	if _, err := m.Observe(context.Background(), remoteURL, nil, RefState{}, 16<<20); err != nil {
+		t.Fatal(err)
+	}
+	ref := "refs/heads/feature"
+	first, err := m.ObserveHead(context.Background(), remoteURL, nil, HeadRef{Name: ref, OID: firstOID}, RefState{}, 16<<20)
+	if err != nil || first.Relationship != "initial" || !first.GraphComplete || !oidPattern.MatchString(first.TreeOID) {
+		t.Fatalf("branch inicial: %+v %v", first, err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("two"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "commit", "-qam", "advance")
+	secondOID := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "-q", "origin", "feature")
+	second, err := m.ObserveHead(context.Background(), remoteURL, nil, HeadRef{Name: ref, OID: secondOID}, RefState{Ref: ref, OID: firstOID}, 16<<20)
+	if err != nil || second.Relationship != "advanced" || second.OldOID != firstOID {
+		t.Fatalf("avanço da branch: %+v %v", second, err)
+	}
+	runGit(t, work, "reset", "--hard", rootOID)
+	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("rewritten"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "add", "feature.txt")
+	runGit(t, work, "commit", "-qm", "rewrite")
+	thirdOID := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "-q", "--force", "origin", "feature")
+	third, err := m.ObserveHead(context.Background(), remoteURL, nil, HeadRef{Name: ref, OID: thirdOID}, RefState{Ref: ref, OID: secondOID}, 16<<20)
+	if err != nil || third.Relationship != "ref_diverged" {
+		t.Fatalf("divergência da branch: %+v %v", third, err)
+	}
+	if _, err := m.command(context.Background(), "", nil, "cat-file", "-e", secondOID+"^{commit}"); err != nil {
+		t.Fatal("commit anterior foi perdido")
+	}
+	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("moved once"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "commit", "-qam", "move once")
+	listedOID := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "-q", "origin", "feature")
+	if err := os.WriteFile(filepath.Join(work, "feature.txt"), []byte("moved twice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, work, "commit", "-qam", "move twice")
+	runGit(t, work, "push", "-q", "origin", "feature")
+	if _, err := m.ObserveHead(context.Background(), remoteURL, nil, HeadRef{Name: ref, OID: listedOID}, RefState{Ref: ref, OID: thirdOID}, 16<<20); !errors.Is(err, ErrMoved) {
+		t.Fatalf("ref mudou depois da listagem: %v", err)
+	}
+}

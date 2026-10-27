@@ -44,6 +44,10 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 		return fault("ERR_AUDIT_FAILED", "identidade Git indisponível")
 	}
 	key := storage.Hash([]byte(plan.InvestigationID + ":" + r.ID + ":" + auth.GitHub))
+	heads, refsComplete, err := c.observedGitHeads(plan, r, auth)
+	if err != nil {
+		return fault("ERR_AUDIT_FAILED", "heads Git observadas indisponíveis")
+	}
 	observer, err := c.gitMirror(filepath.Join(c.store.Root, "git", key))
 	if errors.Is(err, gitmirror.ErrUnavailable) {
 		d.Coverage = append(d.Coverage, c.coverage(resource, "git_commit_files", "unsupported", 0, "git não está disponível neste Agent"))
@@ -68,28 +72,36 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 	newCandidates := make([]string, 0)
 	retryCandidates := make([]string, 0)
 	current := make(map[string]bool)
+	commitHead := make(map[string]gitmirror.HeadRef)
 	markerStatus := make(map[string]string)
-	graphComplete, err := observer.WalkCommits(ctx, journal.Observation.NewOID, func(commit gitmirror.Commit) (bool, error) {
-		event, selected := commitEvents[commit.OID]
-		if !selected {
-			return true, nil
-		}
-		current[commit.OID] = true
-		if marker, ok := done[commit.OID]; ok && marker.EntityID == event.ID {
-			markerStatus[commit.OID] = marker.OldValue
-			if marker.OldValue != "complete" {
-				retryCandidates = append(retryCandidates, commit.OID)
+	graphComplete := refsComplete
+	for _, head := range heads {
+		walkComplete, walkErr := observer.WalkCommits(ctx, head.OID, func(commit gitmirror.Commit) (bool, error) {
+			event, selected := commitEvents[commit.OID]
+			if !selected || current[commit.OID] {
+				return true, nil
 			}
-		} else {
-			newCandidates = append(newCandidates, commit.OID)
+			current[commit.OID] = true
+			commitHead[commit.OID] = head
+			if marker, ok := done[commit.OID]; ok && marker.EntityID == event.ID {
+				markerStatus[commit.OID] = marker.OldValue
+				if marker.OldValue != "complete" {
+					retryCandidates = append(retryCandidates, commit.OID)
+				}
+			} else {
+				newCandidates = append(newCandidates, commit.OID)
+			}
+			return true, nil
+		})
+		if walkErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
 		}
-		return true, nil
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if !walkComplete {
+			graphComplete = false
 		}
-		return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
 	}
 	sort.Strings(newCandidates)
 	sort.Strings(retryCandidates)
@@ -98,45 +110,62 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 		selected = selected[:commitFilesPerRound]
 	}
 	processed := len(markerStatus)
+	unavailableHeads := make(map[string]bool)
 	if len(selected) > 0 {
 		if c.collector.Secrets == nil {
 			return fault("ERR_CREDENTIAL_REQUIRED", "credencial GitHub ausente")
 		}
-		usage, err := gitmirror.StorageBytes(c.store.Root)
-		if err != nil {
-			return fault("ERR_AUDIT_FAILED", "uso local indisponível")
-		}
-		budget := plan.Input.Limits.MaxTransferBytes - run.Bytes
-		if remaining := plan.Input.Limits.MaxLocalBytes - usage; remaining < budget {
-			budget = remaining
-		}
 		remote := "https://github.com/" + r.Name + ".git"
-		var used int64
-		err = c.collector.Secrets.WithSecret(ctx, "github", func(secret []byte) error {
-			var ensureErr error
-			used, ensureErr = observer.EnsureTrees(ctx, remote, secret, journal.Observation.Ref, journal.Observation.NewOID, budget)
-			return ensureErr
-		})
-		run.Bytes += used
-		if !c.saveRun(run) {
-			return fault("ERR_AUDIT_FAILED", "falha ao auditar transferência Git")
+		neededHeads := make(map[string]gitmirror.HeadRef)
+		for _, oid := range selected {
+			head := commitHead[oid]
+			neededHeads[head.Name] = head
 		}
-		if errors.Is(err, gitmirror.ErrBudget) || run.Bytes > plan.Input.Limits.MaxTransferBytes {
-			return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência Git atingido")
+		orderedHeads := make([]string, 0, len(neededHeads))
+		for name := range neededHeads {
+			orderedHeads = append(orderedHeads, name)
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if errors.Is(err, gitmirror.ErrMoved) || errors.Is(err, gitmirror.ErrUnavailable) {
-			d.Coverage = append(d.Coverage, c.coverage(resource, "git_commit_files", "partial", int64(processed), "árvores Git indisponíveis ou ref mudou durante o fetch"))
-			return nil
-		}
-		if err != nil {
-			return fault("ERR_AUDIT_FAILED", "árvores Git corrompidas ou credencial indisponível")
+		sort.Strings(orderedHeads)
+		for _, name := range orderedHeads {
+			head := neededHeads[name]
+			usage, err := gitmirror.StorageBytes(c.store.Root)
+			if err != nil {
+				return fault("ERR_AUDIT_FAILED", "uso local indisponível")
+			}
+			budget := plan.Input.Limits.MaxTransferBytes - run.Bytes
+			if remaining := plan.Input.Limits.MaxLocalBytes - usage; remaining < budget {
+				budget = remaining
+			}
+			var used int64
+			err = c.collector.Secrets.WithSecret(ctx, "github", func(secret []byte) error {
+				var ensureErr error
+				used, ensureErr = observer.EnsureTrees(ctx, remote, secret, head.Name, head.OID, budget)
+				return ensureErr
+			})
+			run.Bytes += used
+			if !c.saveRun(run) {
+				return fault("ERR_AUDIT_FAILED", "falha ao auditar transferência Git")
+			}
+			if errors.Is(err, gitmirror.ErrBudget) || run.Bytes > plan.Input.Limits.MaxTransferBytes {
+				return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência Git atingido")
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, gitmirror.ErrMoved) || errors.Is(err, gitmirror.ErrUnavailable) {
+				unavailableHeads[name] = true
+				continue
+			}
+			if err != nil {
+				return fault("ERR_AUDIT_FAILED", "árvores Git corrompidas ou credencial indisponível")
+			}
 		}
 	}
 	manifestCache := make(map[string]localManifests)
 	for _, oid := range selected {
+		if unavailableHeads[commitHead[oid].Name] {
+			continue
+		}
 		complete, err := c.projectCommitFiles(ctx, observer, r, commitEvents[oid], d, run, manifestCache)
 		if err != nil {
 			return err
@@ -157,7 +186,7 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 			break
 		}
 	}
-	if !graphComplete || !journal.Observation.GraphComplete || partialOrPending || gitCommitCoveragePartial(d, r.ID) {
+	if !graphComplete || partialOrPending || gitCommitCoveragePartial(d, r.ID) {
 		status, reason = "partial", "fila de commits pendente, grafo incompleto ou arquivo sem mapeamento temporal inequívoco"
 	}
 	d.Coverage = append(d.Coverage, c.coverage(resource, "git_commit_files", status, int64(processed), reason))

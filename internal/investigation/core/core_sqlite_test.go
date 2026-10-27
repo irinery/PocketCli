@@ -44,11 +44,14 @@ type fakeGitObserver struct {
 	priors          []gitmirror.RefState
 	result          gitmirror.Observation
 	commits         []gitmirror.Commit
+	commitsByHead   map[string][]gitmirror.Commit
 	changes         map[string][]gitmirror.ChangedFile
 	trees           map[string][]gitmirror.TreeEntry
 	heads           []gitmirror.HeadRef
 	headsIncomplete bool
 	headListCalls   int
+	branchFetches   int
+	branchErrors    map[string]error
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
@@ -57,8 +60,30 @@ func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior g
 	return f.result, nil
 }
 
-func (f *fakeGitObserver) WalkCommits(_ context.Context, _ string, visit func(gitmirror.Commit) (bool, error)) (bool, error) {
-	for _, commit := range f.commits {
+func (f *fakeGitObserver) ObserveHead(_ context.Context, _ string, _ []byte, head gitmirror.HeadRef, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
+	f.branchFetches++
+	if err := f.branchErrors[head.Name]; err != nil {
+		return gitmirror.Observation{}, err
+	}
+	f.priors = append(f.priors, prior)
+	result := f.result
+	result.Ref, result.OldOID, result.NewOID = head.Name, prior.OID, head.OID
+	if prior.OID == "" {
+		result.Relationship = "initial"
+	} else if prior.OID == head.OID {
+		result.Relationship = "unchanged"
+	} else {
+		result.Relationship = "advanced"
+	}
+	return result, nil
+}
+
+func (f *fakeGitObserver) WalkCommits(_ context.Context, head string, visit func(gitmirror.Commit) (bool, error)) (bool, error) {
+	commits := f.commits
+	if f.commitsByHead != nil {
+		commits = f.commitsByHead[head]
+	}
+	for _, commit := range commits {
 		proceed, err := visit(commit)
 		if err != nil || !proceed {
 			return false, err

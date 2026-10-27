@@ -112,6 +112,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				if err := c.collectGitBranches(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
+				if err := c.collectGitBranchGraphs(ctx, plan, r, &d, run); err != nil {
+					return d, err
+				}
 				if err := c.collectGitCommits(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}

@@ -55,6 +55,9 @@ func TestLocalCommitFilesMapToManifestAtThatTree(t *testing.T) {
 			if err := store.Put("gitobservations", journalID, gitRunObservation{Observation: observer.result, ObservedAt: "2026-01-20T00:00:00Z"}); err != nil {
 				t.Fatal(err)
 			}
+			if err := store.Put("gitbranchobservations", storage.Hash([]byte(plan.ID+":"+r.ID+":git_branches")), gitBranchObservation{Complete: true, ObservedAt: "2026-01-20T00:00:00Z"}); err != nil {
+				t.Fatal(err)
+			}
 			if err := store.Put("planauth", plan.ID, planAuth{GitHub: "identity"}); err != nil {
 				t.Fatal(err)
 			}
