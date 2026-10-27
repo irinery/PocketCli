@@ -67,6 +67,73 @@ func TestLongRetryAfterSurvivesNewClientAndScopesToCredential(t *testing.T) {
 	}
 }
 
+func TestReportedQuotaReservePausesNextClientBeforeNetwork(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	transport := transportFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		res := response(200, `[]`)
+		res.Header.Set("X-RateLimit-Limit", "100")
+		res.Header.Set("X-RateLimit-Remaining", "20")
+		res.Header.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(45*time.Second).Unix(), 10))
+		return res, nil
+	})
+	first := secretClient(t, transport)
+	first.SetCacheStore(store)
+	data, _, _, _, err := first.GetGitHubWithBytes(context.Background(), "https://api.github.com/user/repos")
+	if err != nil || string(data) != "[]" || requests != 1 {
+		t.Fatalf("resposta que atingiu reserva não foi entregue: data=%s requests=%d err=%v", data, requests, err)
+	}
+	second := secretClient(t, transport)
+	second.SetCacheStore(store)
+	_, _, _, _, err = second.GetGitHubWithBytes(context.Background(), "https://api.github.com/user/repos")
+	var limited *contract.ErrorResponse
+	if !errors.As(err, &limited) || limited.Code != "ERR_RATE_LIMITED" || requests != 1 {
+		t.Fatalf("reserva não impediu próxima request: requests=%d err=%v", requests, err)
+	}
+	var hold rateHold
+	if err := store.Get(rateHoldKind, rateHoldKey("github", []byte("topsecret")), &hold); err != nil || time.Until(hold.Until) < 35*time.Second {
+		t.Fatalf("reserva não persistida: hold=%+v err=%v", hold, err)
+	}
+}
+
+func TestQuotaReserveUsesProviderResetUnitsAndConfigurableThreshold(t *testing.T) {
+	now := time.Now()
+	github := make(http.Header)
+	github.Set("X-RateLimit-Limit", "100")
+	github.Set("X-RateLimit-Remaining", "21")
+	github.Set("X-RateLimit-Reset", strconv.FormatInt(now.Add(40*time.Second).Unix(), 10))
+	if _, reserve := quotaReserveDelay("github", github, 20); reserve {
+		t.Fatal("GitHub acima da reserva foi pausado")
+	}
+	github.Set("X-RateLimit-Remaining", "20")
+	if delay, reserve := quotaReserveDelay("github", github, 20); !reserve || delay < 35*time.Second || delay > 41*time.Second {
+		t.Fatalf("reserva GitHub: delay=%s reserve=%v", delay, reserve)
+	}
+	if _, reserve := quotaReserveDelay("github", github, 10); reserve {
+		t.Fatal("limiar configurado em 10%% foi ignorado")
+	}
+	linear := make(http.Header)
+	linear.Set("X-RateLimit-Requests-Limit", "100")
+	linear.Set("X-RateLimit-Requests-Remaining", "20")
+	linear.Set("X-RateLimit-Requests-Reset", strconv.FormatInt(now.Add(15*time.Second).UnixMilli(), 10))
+	linear.Set("X-RateLimit-Endpoint-Requests-Limit", "10")
+	linear.Set("X-RateLimit-Endpoint-Requests-Remaining", "2")
+	linear.Set("X-RateLimit-Endpoint-Requests-Reset", strconv.FormatInt(now.Add(45*time.Second).UnixMilli(), 10))
+	linear.Set("X-RateLimit-Complexity-Limit", "1000")
+	linear.Set("X-RateLimit-Complexity-Remaining", "200")
+	linear.Set("X-RateLimit-Complexity-Reset", strconv.FormatInt(now.Add(30*time.Second).UnixMilli(), 10))
+	if delay, reserve := quotaReserveDelay("linear", linear, 20); !reserve || delay < 40*time.Second || delay > 46*time.Second {
+		t.Fatalf("reserva Linear não usou reset mais longo em milissegundos: delay=%s reserve=%v", delay, reserve)
+	}
+	if _, reserve := quotaReserveDelay("linear", linear, 0); reserve {
+		t.Fatal("reserva desabilitada ainda pausou requests")
+	}
+}
+
 func TestRetryAfterBeyondSessionPausesBeforeSecondRequest(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

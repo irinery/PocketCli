@@ -20,13 +20,14 @@ import (
 )
 
 type CoreConfig struct {
-	Clock             func() time.Time
-	HTTPClient        *http.Client
-	Secrets           contract.SecretProvider
-	Store             *storage.Store
-	Root              string
-	Finalizer         contract.Finalizer
-	ResolvePrincipals bool
+	Clock               func() time.Time
+	HTTPClient          *http.Client
+	Secrets             contract.SecretProvider
+	Store               *storage.Store
+	Root                string
+	Finalizer           contract.Finalizer
+	ResolvePrincipals   bool
+	QuotaReservePercent *int
 }
 
 type Core struct {
@@ -55,6 +56,11 @@ func NewCore(cfg CoreConfig) (*Core, error) {
 		return nil, fault("ERR_AUDIT_FAILED", "não foi possível criar armazenamento SQL")
 	}
 	collector := collect.NewClient(cfg.HTTPClient, cfg.Secrets)
+	if cfg.QuotaReservePercent != nil {
+		if err := collector.SetQuotaReservePercent(*cfg.QuotaReservePercent); err != nil {
+			return nil, err
+		}
+	}
 	collector.SetCacheStore(s)
 	if cfg.ResolvePrincipals {
 		collector.EnablePrincipalResolution()
