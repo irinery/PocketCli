@@ -153,15 +153,23 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 			}
 		}
 	}
-	status := "partial"
-	reason := "menções textuais verificadas; relações formais issue-PR ainda não coletadas"
+	status := "complete"
+	reason := ""
 	hasPRCollection := false
+	hasFormalCollection := false
 	for _, cov := range d.Coverage {
 		if cov.Collection == "pull_requests" && cov.Source == "github" {
 			hasPRCollection = true
 			if cov.Status != "complete" {
 				status = "partial"
 				reason = "PRs ou issues parcialmente coletados"
+			}
+		}
+		if cov.Collection == "formal_links" && cov.Source == "github" {
+			hasFormalCollection = true
+			if cov.Status != "complete" {
+				status = "partial"
+				reason = "relações formais issue-PR parcialmente coletadas"
 			}
 		}
 		if cov.Collection == "issues" && cov.Status != "complete" && cov.Status != "not_selected" {
@@ -172,6 +180,10 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 			status = "partial"
 			reason = "comentários parcialmente coletados"
 		}
+	}
+	if !hasFormalCollection && hasPRCollection {
+		status = "partial"
+		reason = "relações formais issue-PR não coletadas"
 	}
 	if !hasPRCollection {
 		status = "unsupported"

@@ -110,6 +110,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			if err := c.collectRepository(ctx, plan, r, previous, &d, run); err != nil {
 				return d, err
 			}
+			if err := c.collectGitHubFormalLinks(ctx, plan, r, &d, run); err != nil {
+				return d, err
+			}
 			if plan.Input.Modules.CI {
 				if err := c.collectActions(ctx, plan, r, &d, run); err != nil {
 					return d, err
