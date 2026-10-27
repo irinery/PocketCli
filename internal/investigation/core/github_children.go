@@ -247,18 +247,33 @@ func (c *Core) projectReview(plan contract.Plan, r contract.Resource, target git
 		return err
 	}
 	upsertEvidence(d, e)
-	actor := fmt.Sprintf("github-%d", review.User.ID)
-	p := &d.PullRequests[target.Index]
-	eventType := "reviewed"
-	if review.User.Type == "User" && review.User.ID > 0 && actor != p.AuthorID && !strings.EqualFold(review.State, "PENDING") && review.State != "" {
-		eventType = "human_reviewed"
+	actor, actorKind := "", ""
+	if review.User.ID > 0 {
+		actor = fmt.Sprintf("github-%d", review.User.ID)
+		actorKind = githubAccountKind(review.User.Type)
 	}
-	upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: eventType, EventAt: review.SubmittedAt, ObservedAt: e.ObservedAt, ActorID: actor, NewValue: review.State, EvidenceID: e.ID})
+	p := &d.PullRequests[target.Index]
+	eventType := githubReviewEventType(actor, actorKind, p.AuthorID, review.State)
+	upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: eventType, EventAt: review.SubmittedAt, ObservedAt: e.ObservedAt, ActorID: actor, ActorKind: actorKind, NewValue: review.State, EvidenceID: e.ID})
 	run.Items++
 	if !c.saveRun(run) {
 		return fault("ERR_AUDIT_FAILED", "falha ao auditar revisão")
 	}
 	return nil
+}
+
+func githubReviewEventType(actor, actorKind, author, state string) string {
+	if actor == "" || actor == author || strings.EqualFold(state, "PENDING") || state == "" {
+		return "reviewed"
+	}
+	switch actorKind {
+	case "user":
+		return "human_reviewed"
+	case "bot":
+		return "bot_reviewed"
+	default:
+		return "reviewed_unknown"
+	}
 }
 
 func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target githubChildTarget, raw json.RawMessage, d *query.Dataset, run *contract.Run) error {
@@ -268,7 +283,8 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 		CreatedAt   string `json:"created_at"`
 		StateReason string `json:"state_reason"`
 		Actor       struct {
-			ID int64 `json:"id"`
+			ID   int64  `json:"id"`
+			Type string `json:"type"`
 		} `json:"actor"`
 	}
 	if json.Unmarshal(raw, &entry) != nil {
@@ -293,10 +309,12 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 	}
 	upsertEvidence(d, e)
 	actor := ""
+	actorKind := ""
 	if entry.Actor.ID > 0 {
 		actor = fmt.Sprintf("github-%d", entry.Actor.ID)
+		actorKind = githubAccountKind(entry.Actor.Type)
 	}
-	event := query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, EvidenceID: e.ID}
+	event := query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, ActorKind: actorKind, EvidenceID: e.ID}
 	if entry.Event == "closed" {
 		event.Type, event.OldValue, event.NewValue = "state_changed", "open", "closed_unclassified"
 		if entry.StateReason == "completed" {
