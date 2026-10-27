@@ -76,9 +76,9 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 	}
 	if os.IsNotExist(err) {
 		endpoint := c.collector.GitHubURL + "/repos/" + r.Name + "/git/trees/" + url.PathEscape(treeOID) + "?recursive=1"
-		body, _, _, fetchErr := c.collector.GetGitHub(ctx, endpoint)
+		body, _, _, wireBytes, fetchErr := c.collector.GetGitHubWithBytes(ctx, endpoint)
 		run.Requests++
-		run.Bytes += int64(len(body))
+		run.Bytes += wireBytes
 		if !c.saveRun(run) {
 			return fault("ERR_AUDIT_FAILED", "falha ao auditar árvore Git")
 		}

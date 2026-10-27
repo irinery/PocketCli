@@ -232,9 +232,9 @@ func (c *Core) cachedGitHubObject(ctx context.Context, plan contract.Plan, r con
 	if !os.IsNotExist(err) {
 		return nil, fault("ERR_AUDIT_FAILED", "objeto Git em cache corrompido")
 	}
-	body, _, _, fetchErr := c.collector.GetGitHub(ctx, c.collector.GitHubURL+"/repos/"+r.Name+suffix)
+	body, _, _, wireBytes, fetchErr := c.collector.GetGitHubWithBytes(ctx, c.collector.GitHubURL+"/repos/"+r.Name+suffix)
 	run.Requests++
-	run.Bytes += int64(len(body))
+	run.Bytes += wireBytes
 	if !c.saveRun(run) {
 		return nil, fault("ERR_AUDIT_FAILED", "falha ao auditar objeto Git")
 	}
