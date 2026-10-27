@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,66 @@ func TestGitHubFormalLinksDoNotPublishLinkFromIncompleteTimeline(t *testing.T) {
 	}
 	if len(d.Links) != 0 || len(d.Coverage) != 1 || d.Coverage[0].Status != "partial" {
 		t.Fatalf("incomplete timeline promoted a link: links=%+v coverage=%+v", d.Links, d.Coverage)
+	}
+}
+
+func TestGitHubFormalLinksBatchFirstPagesAndResumeWithoutRequests(t *testing.T) {
+	calls, batches := 0, 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var request struct {
+			Query     string                     `json:"query"`
+			Variables map[string]json.RawMessage `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		connection := map[string]any{"timelineItems": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": false}}}
+		repository := map[string]any{}
+		if strings.Contains(request.Query, "PocketCliFormalLinksBatch") {
+			batches++
+			for i := 0; i < githubFormalBatchSize; i++ {
+				if len(request.Variables["n"+strconv.Itoa(i)]) == 0 {
+					t.Fatalf("missing batch number %d", i)
+				}
+				repository["i"+strconv.Itoa(i)] = connection
+			}
+		} else {
+			repository["issue"] = connection
+		}
+		body, err := json.Marshal(map[string]any{"data": map[string]any{"repository": repository}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(body)))}, nil
+	})
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := secrets.NewSessionStore()
+	ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "batch-plan", WindowEnd: "2026-01-10T00:00:00Z", Input: contract.PlanInput{Modules: contract.Modules{GitHubIssues: true}, Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+	d := query.Dataset{}
+	for number := 1; number <= 6; number++ {
+		d.Issues = append(d.Issues, query.Issue{ID: "issue-" + strconv.Itoa(number), Source: "github", Identifier: "acme/api#" + strconv.Itoa(number)})
+	}
+	r := contract.Resource{Source: "github", ID: "repo-1", Name: "acme/api"}
+	run := contract.Run{ID: "batch-run"}
+	if err := c.collectGitHubFormalLinks(context.Background(), plan, r, &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || batches != 1 || run.Requests != 2 || len(d.Coverage) != 1 || d.Coverage[0].Status != "complete" {
+		t.Fatalf("first pass calls=%d batches=%d requests=%d coverage=%+v", calls, batches, run.Requests, d.Coverage)
+	}
+	if err := c.collectGitHubFormalLinks(context.Background(), plan, r, &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || run.Requests != 2 {
+		t.Fatalf("resume repeated GraphQL pages: calls=%d requests=%d", calls, run.Requests)
 	}
 }

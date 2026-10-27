@@ -15,9 +15,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const githubFormalLinkQuery = `query PocketCliFormalLinks($owner:String!,$repo:String!,$number:Int!,$after:String) {
-  repository(owner:$owner,name:$repo) {
-    issue(number:$number) {
+const githubFormalTimelineSelection = `
       timelineItems(first:100,after:$after,itemTypes:[CONNECTED_EVENT,DISCONNECTED_EVENT]) {
         nodes {
           __typename
@@ -25,8 +23,11 @@ const githubFormalLinkQuery = `query PocketCliFormalLinks($owner:String!,$repo:S
           ... on DisconnectedEvent { id createdAt source { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } subject { __typename ... on Issue { number repository { nameWithOwner } } ... on PullRequest { number repository { nameWithOwner } } } }
         }
         pageInfo { hasNextPage endCursor }
-      }
-    }
+      }`
+
+const githubFormalLinkQuery = `query PocketCliFormalLinks($owner:String!,$repo:String!,$number:Int!,$after:String) {
+  repository(owner:$owner,name:$repo) {
+    issue(number:$number) {` + githubFormalTimelineSelection + `}
   }
 }`
 
@@ -45,6 +46,9 @@ type githubFormalEvent struct {
 	Source    githubFormalEndpoint `json:"source"`
 	Subject   githubFormalEndpoint `json:"subject"`
 }
+
+const githubFormalTargetLimit = 200
+const githubFormalBatchSize = 5
 
 func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan, r contract.Resource, d *query.Dataset, run *contract.Run) error {
 	if !plan.Input.Modules.GitHubIssues {
@@ -69,8 +73,8 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 	sort.Slice(targets, func(i, j int) bool { return targets[i].EntityID < targets[j].EntityID })
 	status, reason := "complete", ""
 	cursorID := ""
-	if len(targets) > githubChildTargetLimit {
-		status, reason = "partial", fmt.Sprintf("fila de vínculos formais: %d issues pendentes", len(targets)-githubChildTargetLimit)
+	if len(targets) > githubFormalTargetLimit {
+		status, reason = "partial", fmt.Sprintf("fila de vínculos formais: %d issues pendentes", len(targets)-githubFormalTargetLimit)
 		scopeID := plan.InvestigationID
 		if scopeID == "" {
 			scopeID = plan.ID
@@ -90,7 +94,7 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 		}
 		ordered := append([]githubChildTarget{}, targets[start:]...)
 		targets = append(ordered, targets[:start]...)
-		targets = targets[:githubChildTargetLimit]
+		targets = targets[:githubFormalTargetLimit]
 	}
 	prs := make(map[string]query.PullRequest, len(d.PullRequests))
 	for _, pr := range d.PullRequests {
@@ -98,9 +102,27 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 	}
 	var observed int64
 	lastComplete := ""
+	prefetchErrors := make(map[int]error)
+	for start := 0; start < len(targets); start += githubFormalBatchSize {
+		end := start + githubFormalBatchSize
+		if end > len(targets) {
+			end = len(targets)
+		}
+		groupErrors, err := c.prefetchGitHubFormalPages(ctx, plan, r, targets[start:end], parts[0], parts[1], run)
+		if err != nil {
+			return err
+		}
+		for number, groupErr := range groupErrors {
+			prefetchErrors[number] = groupErr
+		}
+	}
 	for _, target := range targets {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if prefetchErrors[target.Number] != nil {
+			status, reason = "partial", "eventos formais indisponíveis ou inválidos"
+			continue
 		}
 		items, complete, err := c.githubFormalPages(ctx, plan, r, target.Number, parts[0], parts[1], run)
 		if err != nil {
