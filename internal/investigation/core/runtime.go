@@ -222,12 +222,13 @@ func (c *Core) collectRuntime(ctx context.Context, r contract.Resource, d *query
 		}
 		upsertEvidence(d, e)
 		componentID := "runtime-" + storage.Hash([]byte(snap.Environment + ":" + item.Name))[:24]
+		hasArtifactIdentity := item.RevisionSHA != "" || item.Digest != ""
 		matched := false
 		if item.Repository != "" {
 			for i := range d.Components {
 				if d.Components[i].Kind != "file_change" && d.Components[i].Repository == item.Repository && d.Components[i].Path == item.Path {
 					componentID = d.Components[i].ID
-					if *item.Enabled {
+					if *item.Enabled && hasArtifactIdentity {
 						d.Components[i].DeploymentStatus = "observed"
 					}
 					matched = true
@@ -237,7 +238,7 @@ func (c *Core) collectRuntime(ctx context.Context, r contract.Resource, d *query
 		}
 		if !matched {
 			deploymentStatus := "unknown"
-			if *item.Enabled {
+			if *item.Enabled && hasArtifactIdentity {
 				deploymentStatus = "observed"
 			}
 			d.Components = append(d.Components, contract.ComponentRecord{ID: componentID, Name: item.Name, Repository: item.Repository, Path: item.Path, Kind: "runtime_service", ImplementationStatus: "unknown", DeploymentStatus: deploymentStatus, Coverage: "partial"})
@@ -247,7 +248,7 @@ func (c *Core) collectRuntime(ctx context.Context, r contract.Resource, d *query
 			state = "disabled"
 		}
 		upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(locator + ":" + e.ID))[:24], EntityID: componentID, Type: state, EventAt: snap.ObservedAt, ObservedAt: e.ObservedAt, NewValue: snap.Environment, EvidenceID: e.ID})
-		if *item.Enabled && (item.RevisionSHA != "" || item.Digest != "") {
+		if *item.Enabled && hasArtifactIdentity {
 			d.Deliveries = append(d.Deliveries, contract.DeliveryRecord{ID: "art-" + storage.Hash([]byte(locator + ":" + e.ID))[:24], ComponentID: componentID, Digest: item.Digest, RevisionSHA: item.RevisionSHA, Environment: snap.Environment, ObservedAt: snap.ObservedAt, ProvenanceStatus: "declared", EvidenceID: e.ID})
 		}
 		run.Items++
