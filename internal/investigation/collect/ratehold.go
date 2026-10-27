@@ -36,7 +36,11 @@ func (c *Client) lockPrincipal(ctx context.Context, source string, secret []byte
 	if c.cacheStore == nil {
 		return func() {}, nil
 	}
-	id := "http-" + rateHoldKey(source, secret)
+	key, err := c.principalRateKey(source, secret)
+	if err != nil {
+		return nil, err
+	}
+	id := "http-" + key
 	for {
 		release, err := c.cacheStore.Lock(id)
 		if err == nil {
@@ -55,9 +59,12 @@ func (c *Client) waitRateHold(ctx context.Context, source string, secret []byte)
 	if c.cacheStore == nil {
 		return nil
 	}
-	key := rateHoldKey(source, secret)
+	key, err := c.principalRateKey(source, secret)
+	if err != nil {
+		return err
+	}
 	var hold rateHold
-	err := c.cacheStore.Get(rateHoldKind, key, &hold)
+	err = c.cacheStore.Get(rateHoldKind, key, &hold)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -77,14 +84,17 @@ func (c *Client) waitRateHold(ctx context.Context, source string, secret []byte)
 	return waitUntil(ctx, hold.Until)
 }
 
-func (c *Client) saveRateHold(source string, secret []byte, delay time.Duration) error {
+func (c *Client) saveRateHold(ctx context.Context, source string, secret []byte, delay time.Duration) error {
 	if c.cacheStore == nil || delay <= 0 {
 		return nil
 	}
-	key := rateHoldKey(source, secret)
+	key, err := c.principalRateKey(source, secret)
+	if err != nil {
+		return err
+	}
 	until := time.Now().UTC().Add(delay)
 	var previous rateHold
-	err := c.cacheStore.Get(rateHoldKind, key, &previous)
+	err = c.cacheStore.Get(rateHoldKind, key, &previous)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "espera da fonte corrompida"}
 	}
@@ -99,7 +109,18 @@ func (c *Client) saveRateHold(source string, secret []byte, delay time.Duration)
 	if err := c.cacheStore.Put(rateHoldKind, key, rateHold{Key: key, Source: source, Until: until}); err != nil {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao auditar espera da fonte"}
 	}
+	if err := c.saveProviderRateHold(ctx, source, time.Until(until)); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (c *Client) finishPacing(ctx context.Context, source string, secret []byte, started time.Time) error {
+	remaining := time.Until(started.Add(c.spacing[source]))
+	if remaining <= 0 {
+		return nil
+	}
+	return c.saveRateHold(ctx, source, secret, remaining)
 }
 
 func githubRateLimited(status int, header http.Header, body []byte) bool {

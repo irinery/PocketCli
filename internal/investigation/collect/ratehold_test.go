@@ -243,14 +243,18 @@ func TestProviderHoldNeverShortensExistingPacing(t *testing.T) {
 	client := secretClient(t, func(*http.Request) (*http.Response, error) { return response(200, `[]`), nil })
 	client.SetCacheStore(store)
 	secret := []byte("topsecret")
-	if err := client.saveRateHold("github", secret, 10*time.Second); err != nil {
+	if err := client.saveRateHold(context.Background(), "github", secret, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.saveRateHold("github", secret, time.Second); err != nil {
+	var first rateHold
+	if err := store.Get(rateHoldKind, rateHoldKey("github", secret), &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.saveRateHold(context.Background(), "github", secret, time.Second); err != nil {
 		t.Fatal(err)
 	}
 	var hold rateHold
-	if err := store.Get(rateHoldKind, rateHoldKey("github", secret), &hold); err != nil || time.Until(hold.Until) < 9*time.Second {
+	if err := store.Get(rateHoldKind, rateHoldKey("github", secret), &hold); err != nil || hold.Until.Before(first.Until) {
 		t.Fatalf("hold encurtado: %+v err=%v", hold, err)
 	}
 }

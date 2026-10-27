@@ -19,19 +19,22 @@ import (
 )
 
 type Client struct {
-	HTTP       *http.Client
-	Secrets    contract.SecretProvider
-	GitHubURL  string
-	LinearURL  string
-	mu         sync.Mutex
-	spacing    map[string]time.Duration
-	next       map[string]time.Time
-	cache      map[string]etagEntry
-	cacheSize  int64
-	cacheStore CacheStore
+	HTTP              *http.Client
+	Secrets           contract.SecretProvider
+	GitHubURL         string
+	LinearURL         string
+	mu                sync.Mutex
+	spacing           map[string]time.Duration
+	next              map[string]time.Time
+	cache             map[string]etagEntry
+	cacheSize         int64
+	cacheStore        CacheStore
+	resolvePrincipals bool
 }
 
 const githubAPIVersion = "2026-03-10"
+
+func GitHubAPIVersion() string { return githubAPIVersion }
 
 type etagEntry struct {
 	ETag   string
@@ -86,6 +89,15 @@ func (c *Client) GetGitHubWithBytes(ctx context.Context, endpoint string) ([]byt
 }
 
 func (c *Client) request(ctx context.Context, source, method, endpoint string, body io.Reader) ([]byte, http.Header, int, int64, error) {
+	if c.Secrets == nil {
+		return nil, nil, 0, 0, &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: "credencial ausente"}
+	}
+	lookup, _ := ctx.Value(principalLookupKey{}).(bool)
+	if c.resolvePrincipals && !lookup {
+		if err := c.ensurePrincipal(ctx, source); err != nil {
+			return nil, nil, 0, 0, err
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock() // one in-flight external request per client
 	if c.Secrets == nil {
@@ -105,6 +117,18 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 	var wireBytes int64
 	var sourceRateLimited bool
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
+		if c.resolvePrincipals && !lookup {
+			if _, found, err := c.bindingFor(source, secret); err != nil {
+				return err
+			} else if !found {
+				return &contract.ErrorResponse{Code: "ERR_PLAN_CHANGED", Message: "credencial alterada durante a resolução da conta; prepare outro plano"}
+			}
+			releaseProvider, err := c.lockProvider(ctx, source, true)
+			if err != nil {
+				return err
+			}
+			defer releaseProvider()
+		}
 		release, err := c.lockPrincipal(ctx, source, secret)
 		if err != nil {
 			return err
@@ -150,7 +174,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				return err
 			}
 			c.next[source] = time.Now().Add(c.spacing[source])
-			if err := c.saveRateHold(source, secret, c.spacing[source]); err != nil {
+			if err := c.saveRateHold(ctx, source, secret, c.spacing[source]); err != nil {
 				return err
 			}
 			started := time.Now().UTC()
@@ -158,6 +182,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if err != nil {
 				if auditErr := c.recordRequest(ctx, source, method, endpoint, started, 0, 0, nil, false, ""); auditErr != nil {
 					return auditErr
+				}
+				if err := c.finishPacing(ctx, source, secret, started); err != nil {
+					return err
 				}
 				if attempt < 3 {
 					if e := waitUntil(ctx, time.Now().Add(retryBackoff(attempt))); e != nil {
@@ -179,6 +206,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			}
 			if auditErr := c.recordRequest(ctx, source, method, endpoint, started, status, int64(len(response)), auditBody, cacheHit, headers.Get("X-Github-Api-Version-Selected")); auditErr != nil {
 				return auditErr
+			}
+			if err := c.finishPacing(ctx, source, secret, started); err != nil {
+				return err
 			}
 			if err != nil {
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "resposta externa inválida"}
@@ -220,7 +250,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			}
 			if (source == "github" && status == http.StatusForbidden && githubRateLimited(status, headers, response)) || (source == "linear" && (status == http.StatusBadRequest || status == http.StatusOK) && linearRateLimited(response)) {
 				sourceRateLimited = true
-				if err := c.saveRateHold(source, secret, rateLimitDelay(source, headers)); err != nil {
+				if err := c.saveRateHold(ctx, source, secret, rateLimitDelay(source, headers)); err != nil {
 					return err
 				}
 				return nil
@@ -233,7 +263,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 					delay = value
 				}
 				if status == http.StatusTooManyRequests || headers.Get("Retry-After") != "" {
-					if err := c.saveRateHold(source, secret, delay); err != nil {
+					if err := c.saveRateHold(ctx, source, secret, delay); err != nil {
 						return err
 					}
 				}

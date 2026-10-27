@@ -21,3 +21,34 @@ func TestExclusiveLock(t *testing.T) {
 	}
 	release()
 }
+
+func TestSharedLockBlocksWriterAndAllowsReaders(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.LockShared("provider-github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.LockShared("provider-github")
+	if err != nil {
+		first()
+		t.Fatal(err)
+	}
+	if release, err := s.Lock("provider-github"); err == nil {
+		release()
+		t.Fatal("writer admitted while readers are active")
+	}
+	first()
+	second()
+	writer, err := s.Lock("provider-github")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release, err := s.LockShared("provider-github"); err == nil {
+		release()
+		t.Fatal("reader admitted while writer is active")
+	}
+	writer()
+}

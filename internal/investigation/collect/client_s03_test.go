@@ -196,3 +196,47 @@ func TestPacingIsSharedAcrossClientRestarts(t *testing.T) {
 		t.Fatalf("pacing perdido entre clientes: %v", attempts)
 	}
 }
+
+type slowFirstRateHoldStore struct {
+	*storage.Store
+	mu    sync.Mutex
+	wrote bool
+}
+
+func (s *slowFirstRateHoldStore) Put(kind, id string, value any) error {
+	if kind == rateHoldKind {
+		s.mu.Lock()
+		first := !s.wrote
+		s.wrote = true
+		s.mu.Unlock()
+		if first {
+			time.Sleep(80 * time.Millisecond)
+		}
+	}
+	return s.Store.Put(kind, id, value)
+}
+
+func TestPacingUsesActualRequestStartAfterSlowStorage(t *testing.T) {
+	base, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &slowFirstRateHoldStore{Store: base}
+	var attempts []time.Time
+	transport := transportFunc(func(*http.Request) (*http.Response, error) {
+		attempts = append(attempts, time.Now())
+		return response(200, `[]`), nil
+	})
+	const endpoint = "https://api.github.com/user/repos"
+	for i := 0; i < 2; i++ {
+		client := secretClient(t, transport)
+		client.SetCacheStore(store)
+		client.SetRPH("github", 36000) // 100 ms between request starts.
+		if _, _, _, _, err := client.GetGitHubWithBytes(context.Background(), endpoint); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(attempts) != 2 || attempts[1].Sub(attempts[0]) < 90*time.Millisecond {
+		t.Fatalf("slow storage shortened pacing: %v", attempts)
+	}
+}

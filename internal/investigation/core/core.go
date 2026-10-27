@@ -20,12 +20,13 @@ import (
 )
 
 type CoreConfig struct {
-	Clock      func() time.Time
-	HTTPClient *http.Client
-	Secrets    contract.SecretProvider
-	Store      *storage.Store
-	Root       string
-	Finalizer  contract.Finalizer
+	Clock             func() time.Time
+	HTTPClient        *http.Client
+	Secrets           contract.SecretProvider
+	Store             *storage.Store
+	Root              string
+	Finalizer         contract.Finalizer
+	ResolvePrincipals bool
 }
 
 type Core struct {
@@ -55,6 +56,9 @@ func NewCore(cfg CoreConfig) (*Core, error) {
 	}
 	collector := collect.NewClient(cfg.HTTPClient, cfg.Secrets)
 	collector.SetCacheStore(s)
+	if cfg.ResolvePrincipals {
+		collector.EnablePrincipalResolution()
+	}
 	c := &Core{setup: NewSetup(cfg.Clock), collector: collector, store: s, query: q, finalizer: cfg.Finalizer, gitMirror: newGitMirror, runs: make(map[string]context.CancelFunc), locks: make(map[string]func())}
 	if err := c.recoverInterrupted(); err != nil {
 		return nil, fault("ERR_AUDIT_FAILED", "falha ao recuperar runs interrompidos")
@@ -187,6 +191,34 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	if err != nil {
 		return out, err
 	}
+	verifiedGitHubVersion := ""
+	if input.GitHubEnabled {
+		lookupNeeded, err := c.collector.PrincipalLookupNeeded(ctx, "github")
+		if err != nil {
+			return out, err
+		}
+		versionNeeded, err := c.collector.GitHubVersionLookupNeeded(ctx)
+		if err != nil {
+			return out, err
+		}
+		minimum := len(input.Scope.Repositories)
+		if minimum == 0 {
+			minimum = 1 // Primeira página de repositórios autorizados.
+		}
+		if lookupNeeded {
+			minimum++
+		}
+		if versionNeeded {
+			minimum++
+		}
+		if minimum > discoveryLimit {
+			return out, fault("ERR_RESOURCE_EXHAUSTED", "identidade, versão GitHub e repositórios excedem orçamento de descoberta; aprove mais chamadas")
+		}
+		verifiedGitHubVersion, err = c.collector.VerifyGitHubVersion(ctx)
+		if err != nil {
+			return out, err
+		}
+	}
 	resources := make([]contract.Resource, 0)
 	if input.GitHubEnabled {
 		if len(input.Scope.Repositories) > 0 {
@@ -313,6 +345,24 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}{canonicalInput, auth, resources, period.WindowStart, period.WindowEnd})
 	id := planID
 	warnings := []string{}
+	if verifiedGitHubVersion != "" {
+		warnings = append(warnings, "GitHub REST API "+verifiedGitHubVersion+" confirmada pelo servidor")
+	}
+	for _, source := range []struct {
+		name    string
+		enabled bool
+	}{{"github", input.GitHubEnabled}, {"linear", input.LinearEnabled}} {
+		if !source.enabled {
+			continue
+		}
+		principalID, err := c.collector.PrincipalID(ctx, source.name)
+		if err != nil {
+			return out, err
+		}
+		if principalID != "" {
+			warnings = append(warnings, fmt.Sprintf("conta %s verificada: ID %s", source.name, principalID))
+		}
+	}
 	if discoveryLimit > collect.DefaultDiscoveryBudget {
 		warnings = append(warnings, fmt.Sprintf("orçamento de descoberta aprovado: até %d chamadas por fonte", discoveryLimit))
 	}

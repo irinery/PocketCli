@@ -1,5 +1,7 @@
 # PocketCli Investigation — preview local
 
+Para o passo a passo da interface ao vivo e da coleta em repositórios GitHub, veja o [guia de uso](usage.md).
+
 O preview não usa Node, CDN, GitHub ou Linear; não chama Claude automaticamente. O servidor e o mock usam somente a biblioteca padrão do Go e sempre exibem a marca `DEMO`.
 
 ## Executar

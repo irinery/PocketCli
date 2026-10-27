@@ -50,7 +50,7 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 	if err != nil {
 		return nil, err
 	}
-	c, err := core.NewCore(core.CoreConfig{Store: store, Secrets: secretStore})
+	c, err := core.NewCore(core.CoreConfig{Store: store, Secrets: secretStore, ResolvePrincipals: true})
 	if err != nil {
 		return nil, err
 	}

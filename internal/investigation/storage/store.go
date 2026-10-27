@@ -130,6 +130,14 @@ func (s *Store) List(kind string) ([]string, error) {
 }
 
 func (s *Store) Lock(id string) (func(), error) {
+	return s.lock(id, syscall.LOCK_EX)
+}
+
+func (s *Store) LockShared(id string) (func(), error) {
+	return s.lock(id, syscall.LOCK_SH)
+}
+
+func (s *Store) lock(id string, mode int) (func(), error) {
 	path, err := s.Path("locks", id)
 	if err != nil {
 		return nil, err
@@ -141,7 +149,7 @@ func (s *Store) Lock(id string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(f.Fd()), mode|syscall.LOCK_NB); err != nil {
 		f.Close()
 		return nil, err
 	}

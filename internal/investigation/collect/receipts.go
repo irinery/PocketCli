@@ -88,7 +88,7 @@ func logicalEndpoint(source, endpoint string) string {
 		"timeline": true, "files": true, "commits": true, "git": true,
 		"trees": true, "blobs": true, "actions": true, "runs": true,
 		"check-runs": true, "deployments": true, "statuses": true,
-		"branches": true, "events": true, "languages": true,
+		"branches": true, "events": true, "languages": true, "versions": true,
 	}
 	for i, part := range parts {
 		if !static[part] || (i > 0 && (parts[i-1] == "repos" || parts[i-1] == "orgs" || parts[i-1] == "teams")) {
