@@ -14,6 +14,7 @@ import (
 
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/query"
+	"pocketcli/internal/investigation/rules"
 	"pocketcli/internal/investigation/secrets"
 	"pocketcli/internal/investigation/storage"
 )
@@ -92,6 +93,53 @@ func TestGitHubFormalLinksDoNotPublishLinkFromIncompleteTimeline(t *testing.T) {
 	}
 	if len(d.Links) != 0 || len(d.Coverage) != 1 || d.Coverage[0].Status != "partial" {
 		t.Fatalf("incomplete timeline promoted a link: links=%+v coverage=%+v", d.Links, d.Coverage)
+	}
+}
+
+func TestGitHubFormalLinkOutsideSelectedPRScopeCannotProveAbsence(t *testing.T) {
+	connected := `{"__typename":"ConnectedEvent","id":"conn-external","createdAt":"2026-01-02T00:00:00Z","source":{"__typename":"Issue","number":8,"repository":{"nameWithOwner":"acme/api"}},"subject":{"__typename":"PullRequest","number":99,"repository":{"nameWithOwner":"acme/other"}}}`
+	disconnected := `{"__typename":"DisconnectedEvent","id":"disc-external","createdAt":"2026-01-03T00:00:00Z","source":{"__typename":"Issue","number":8,"repository":{"nameWithOwner":"acme/api"}},"subject":{"__typename":"PullRequest","number":99,"repository":{"nameWithOwner":"acme/other"}}}`
+	beforeAnchorWithOffset := strings.Replace(connected, "2026-01-02T00:00:00Z", "2026-01-10T01:00:00+02:00", 1)
+	for _, tc := range []struct {
+		name, events, expected string
+	}{{"connected", connected, "partial"}, {"disconnected", connected + "," + disconnected, "complete"}, {"offset_before_anchor", beforeAnchorWithOffset, "partial"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := transportFunc(func(*http.Request) (*http.Response, error) {
+				body := `{"data":{"repository":{"issue":{"timelineItems":{"nodes":[` + tc.events + `],"pageInfo":{"hasNextPage":false}}}}}}`
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			store, err := storage.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Put("objects", "issue-evidence", json.RawMessage(`{"body":""}`)); err != nil {
+				t.Fatal(err)
+			}
+			ss := secrets.NewSessionStore()
+			if _, err := ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+				t.Fatal(err)
+			}
+			c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := contract.Plan{ID: "external-" + tc.name, WindowEnd: "2026-01-10T00:00:00Z", Input: contract.PlanInput{Modules: contract.Modules{GitHubIssues: true}, Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+			r := contract.Resource{Source: "github", ID: "repo-1", Name: "acme/api"}
+			d := query.Dataset{Snapshot: contract.Snapshot{Resources: []contract.Resource{r}}, Issues: []query.Issue{{ID: "issue-8", Source: "github", Identifier: "acme/api#8", EvidenceID: "issue-evidence"}}, Coverage: []contract.Coverage{{Source: "github", ResourceID: r.ID, Collection: "issues", Status: "complete"}, {Source: "github", ResourceID: r.ID, Collection: "pull_requests", Status: "complete"}}}
+			if err := c.collectGitHubFormalLinks(context.Background(), plan, r, &d, &contract.Run{ID: "run-" + tc.name}); err != nil {
+				t.Fatal(err)
+			}
+			if len(d.Links) != 0 || d.Coverage[len(d.Coverage)-1].Status != tc.expected {
+				t.Fatalf("vínculo externo alterou cobertura indevidamente: links=%+v coverage=%+v", d.Links, d.Coverage)
+			}
+			foundMissing := false
+			for _, finding := range rules.Evaluate(d).Findings {
+				foundMissing = foundMissing || finding.RuleID == "R-LINK-001"
+			}
+			if foundMissing != (tc.expected == "complete") {
+				t.Fatalf("achado de ausência incompatível com vínculo externo: found=%v coverage=%+v", foundMissing, d.Coverage)
+			}
+		})
 	}
 }
 

@@ -148,12 +148,13 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 				invalid = true
 				continue
 			}
-			if _, parseErr := time.Parse(time.RFC3339, event.CreatedAt); parseErr != nil {
+			eventTime, parseErr := time.Parse(time.RFC3339, event.CreatedAt)
+			if parseErr != nil {
 				status, reason = "partial", "horário de evento formal inválido"
 				invalid = true
 				continue
 			}
-			if plan.WindowEnd != "" && event.CreatedAt >= plan.WindowEnd {
+			if !timestampInWindow("", plan.WindowEnd, event.CreatedAt) {
 				continue
 			}
 			issueEndpoint, prEndpoint := event.Source, event.Subject
@@ -172,27 +173,30 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 				}
 				continue
 			}
-			pr, ok := prs[strings.ToLower(fmt.Sprintf("%s#%d", prEndpoint.Repository.NameWithOwner, prEndpoint.Number))]
-			if !ok {
-				continue
-			}
-			old, exists := latest[pr.ID]
-			if !exists || event.CreatedAt > old.CreatedAt {
-				latest[pr.ID] = event
-				ambiguous[pr.ID] = false
-			} else if event.CreatedAt == old.CreatedAt && event.Type != old.Type {
-				ambiguous[pr.ID] = true
+			prKey := strings.ToLower(fmt.Sprintf("%s#%d", prEndpoint.Repository.NameWithOwner, prEndpoint.Number))
+			old, exists := latest[prKey]
+			oldTime, _ := time.Parse(time.RFC3339, old.CreatedAt)
+			if !exists || eventTime.After(oldTime) {
+				latest[prKey] = event
+				ambiguous[prKey] = false
+			} else if eventTime.Equal(oldTime) && event.Type != old.Type {
+				ambiguous[prKey] = true
 			}
 		}
 		if invalid {
 			continue
 		}
-		for prID, event := range latest {
-			if ambiguous[prID] {
+		for prKey, event := range latest {
+			if ambiguous[prKey] {
 				status, reason = "partial", "ordem de conexão e desconexão ambígua"
 				continue
 			}
 			if event.Type != "ConnectedEvent" {
+				continue
+			}
+			pr, ok := prs[prKey]
+			if !ok {
+				status, reason = "partial", "issue possui vínculo formal com PR fora do escopo coletado"
 				continue
 			}
 			raw, _ := json.Marshal(event)
@@ -201,8 +205,8 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 				return err
 			}
 			upsertEvidence(d, evidence)
-			linkID := "link-" + storage.Hash([]byte(target.EntityID + ":references_pr:" + prID))[:24]
-			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: target.EntityID, Relation: "references_pr", TargetID: prID, Status: "direct", EvidenceID: evidence.ID, ValidFrom: event.CreatedAt})
+			linkID := "link-" + storage.Hash([]byte(target.EntityID + ":references_pr:" + pr.ID))[:24]
+			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: target.EntityID, Relation: "references_pr", TargetID: pr.ID, Status: "direct", EvidenceID: evidence.ID, ValidFrom: event.CreatedAt})
 			run.Items++
 			if !c.saveRun(run) {
 				return fault("ERR_AUDIT_FAILED", "falha ao auditar vínculo formal")
