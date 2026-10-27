@@ -407,28 +407,49 @@ const realAppJSTemplate = `(() => {
       select.append(option);
     });
     const editor = node('textarea');
-    editor.value = 'SELECT id, window_start, window_end FROM v_snapshot';
+    const manualSQL = 'SELECT id, window_start, window_end FROM v_snapshot';
+    editor.value = manualSQL;
     const parameters = node('textarea');
     parameters.style.minHeight = '75px';
     parameters.value = '[]';
     const guidance = node('p', 'callout');
     guidance.hidden = true;
+    const target = node('input');
+    target.placeholder = 'ID da issue, PR ou componente';
+    const targetField = field('Alvo da timeline', target);
+    targetField.hidden = true;
+    targetField.style.display = 'none';
     select.onchange = () => {
       const query = queries[Number(select.value) - 1];
       if (query) {
         editor.value = query.sql;
         parameters.value = JSON.stringify(query.parameters || [], null, 2);
+      } else {
+        editor.value = manualSQL;
+        parameters.value = '[]';
       }
       guidance.textContent = query && query.description || '';
       guidance.hidden = !guidance.textContent;
+      target.value = '';
+      targetField.hidden = !query || query.id !== 'Q08';
+      targetField.style.display = targetField.hidden ? 'none' : '';
     };
     const result = node('section');
     const run = button('Executar consulta', async () => {
       run.disabled = true;
       result.replaceChildren(node('p', 'loading', 'Consultando…'));
       try {
+        const bound = JSON.parse(parameters.value);
+        const selected = queries[Number(select.value) - 1];
+        if (selected && selected.id === 'Q08') {
+          const id = target.value.trim();
+          if (!id) throw new Error('Informe o ID do alvo para consultar a timeline.');
+          const subject = bound.find(item => item.name === 'subject_id');
+          if (!subject) throw new Error('Parâmetro subject_id ausente.');
+          subject.value = {kind: 'text', value: id};
+        }
         const rows = await write('/snapshots/' + segment(snapshot.id) + '/query', {
-          snapshot_id: snapshot.id, sql: editor.value, parameters: JSON.parse(parameters.value), max_rows: 200, timeout_ms: 5000
+          snapshot_id: snapshot.id, sql: editor.value, parameters: bound, max_rows: 200, timeout_ms: 5000
         });
         result.replaceChildren(node('p', 'muted', rows.returned_rows + ' linhas · ' + rows.elapsed_ms + ' ms' + (rows.truncated ? ' · truncado' : '')));
         result.append(table((rows.columns || []).map(c => c.name), (rows.rows || []).map(row => row.map(c => c.kind === 'null' ? null : c.value))));
@@ -436,7 +457,7 @@ const realAppJSTemplate = `(() => {
       } catch (error) { result.replaceChildren(); fail(result, error); }
       finally { run.disabled = false; }
     }, 'primary');
-    box.append(field('Consultas sugeridas', select), guidance, field('SQL', editor), field('Parâmetros JSON', parameters), run);
+    box.append(field('Consultas sugeridas', select), guidance, targetField, field('SQL', editor), field('Parâmetros JSON', parameters), run);
     main.append(box, result);
   }
   async function comments() {
