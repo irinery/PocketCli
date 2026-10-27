@@ -124,14 +124,19 @@ func (s *Store) append(value any) error {
 	}
 	return f.Close()
 }
-func (s *Store) Record(req contract.QueryRequest, res contract.QueryResult, runErr error) error {
+func (s *Store) Record(req contract.QueryRequest, res contract.QueryResult, runErr error) (Execution, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, e := newID()
 	if e != nil {
-		return e
+		return Execution{}, e
 	}
-	x := Execution{ID: id, QueryID: res.QueryID, SnapshotID: req.SnapshotID, SQL: req.SQL, Parameters: append([]contract.Parameter{}, req.Parameters...), QueryHash: res.QueryHash, Status: "complete", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Truncated: res.Truncated}
+	queryID := res.QueryID
+	if queryID == "" {
+		queryID = id
+	}
+	res.QueryID = queryID
+	x := Execution{ID: id, QueryID: queryID, SnapshotID: req.SnapshotID, SQL: req.SQL, Parameters: append([]contract.Parameter{}, req.Parameters...), QueryHash: res.QueryHash, Status: "complete", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Truncated: res.Truncated}
 	if runErr != nil {
 		x.Status = "error"
 		x.Error = runErr.Error()
@@ -140,10 +145,10 @@ func (s *Store) Record(req contract.QueryRequest, res contract.QueryResult, runE
 		x.Result = &res
 	}
 	if e = s.append(map[string]any{"kind": "execution", "execution": x}); e != nil {
-		return e
+		return Execution{}, e
 	}
 	s.executions = append(s.executions, x)
-	return nil
+	return x, nil
 }
 func (s *Store) History(snapshot, cursor string, limit int) HistoryPage {
 	s.mu.Lock()
@@ -177,16 +182,19 @@ func (s *Store) History(snapshot, cursor string, limit int) HistoryPage {
 	}
 	return p
 }
-func (s *Store) Create(in CreateInput, investigation string) (SavedQuery, error) {
+func (s *Store) Create(in CreateInput, investigation, snapshot string) (SavedQuery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	name := in.Name
 	if len([]rune(name)) < 1 || len([]rune(name)) > 120 {
 		return SavedQuery{}, errors.New("ERR_VALIDATION: nome da query deve ter de 1 a 120 caracteres")
 	}
+	if in.QueryID == "" || snapshot == "" {
+		return SavedQuery{}, errors.New("ERR_VALIDATION: execução e snapshot são obrigatórios")
+	}
 	var x *Execution
 	for i := len(s.executions) - 1; i >= 0; i-- {
-		if s.executions[i].QueryID == in.QueryID && s.executions[i].Status == "complete" {
+		if s.executions[i].QueryID == in.QueryID && s.executions[i].SnapshotID == snapshot && s.executions[i].Status == "complete" {
 			x = &s.executions[i]
 			break
 		}
@@ -204,6 +212,12 @@ func (s *Store) Create(in CreateInput, investigation string) (SavedQuery, error)
 	}
 	s.saved[id] = q
 	return q, nil
+}
+func (s *Store) GetSaved(id string) (SavedQuery, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	q, ok := s.saved[id]
+	return q, ok
 }
 func (s *Store) Patch(id string, in PatchInput) (SavedQuery, error) {
 	s.mu.Lock()
