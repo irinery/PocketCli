@@ -311,7 +311,11 @@ func (c *Core) RunStats(ctx context.Context, id string) (collect.RunStats, error
 	if os.IsNotExist(err) {
 		return collect.RunStats{RunID: id}, nil
 	}
-	if err != nil || stats.RunID != id || stats.ReuseCounter < 0 {
+	if err != nil || stats.RunID != id || stats.ReuseCounter < 0 || stats.GitObjectBytesAdded < 0 ||
+		stats.GitRefBytesAdded < 0 || stats.GitBranchBytesAdded < 0 || stats.GitTreeBytesAdded < 0 ||
+		stats.GitRefBytesAdded > stats.GitObjectBytesAdded ||
+		stats.GitBranchBytesAdded > stats.GitObjectBytesAdded-stats.GitRefBytesAdded ||
+		stats.GitTreeBytesAdded != stats.GitObjectBytesAdded-stats.GitRefBytesAdded-stats.GitBranchBytesAdded {
 		return collect.RunStats{}, fault("ERR_AUDIT_FAILED", "estatística de cache indisponível")
 	}
 	return stats, nil

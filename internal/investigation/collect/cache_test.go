@@ -75,6 +75,38 @@ func TestGitHub304ReusesPersistedRepresentationWithoutTransferBytes(t *testing.T
 	}
 }
 
+func TestGitObjectByteAuditPreservesReuseAndFailsClosed(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordReuse(store, "run-git"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordGitObjectBytes(store, "run-git", GitRefObjects, 512); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordGitObjectBytes(store, "run-git", GitBranchObjects, 128); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordGitObjectBytes(store, "run-git", GitTreeObjects, 64); err != nil {
+		t.Fatal(err)
+	}
+	var stats RunStats
+	if err := store.Get(runStatsKind, "run-git", &stats); err != nil || stats.ReuseCounter != 1 || stats.GitObjectBytesAdded != 704 || stats.GitRefBytesAdded != 512 || stats.GitBranchBytesAdded != 128 || stats.GitTreeBytesAdded != 64 {
+		t.Fatalf("contadores não preservados: %+v err=%v", stats, err)
+	}
+	if err := RecordGitObjectBytes(failingCacheStore{}, "run-git", GitRefObjects, 1); err == nil {
+		t.Fatal("falha de persistência não interrompeu auditoria Git")
+	}
+	if err := RecordGitObjectBytes(store, "run-git", GitRefObjects, -1); err == nil {
+		t.Fatal("contagem Git negativa aceita")
+	}
+	if err := RecordGitObjectBytes(store, "run-git", "unknown", 1); err == nil {
+		t.Fatal("origem Git inválida aceita")
+	}
+}
+
 func TestPersistedCacheIsScopedToCredentialAndRejectsCorruption(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

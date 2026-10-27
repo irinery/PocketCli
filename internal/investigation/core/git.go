@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
@@ -100,6 +101,9 @@ func (c *Core) collectGitRef(ctx context.Context, plan contract.Plan, r contract
 		run.Bytes += observation.LocalBytes
 		if !c.saveRun(run) {
 			return fault("ERR_AUDIT_FAILED", "falha ao auditar transferência Git")
+		}
+		if err := collect.RecordGitObjectBytes(c.store, run.ID, collect.GitRefObjects, observation.LocalBytes); err != nil {
+			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()

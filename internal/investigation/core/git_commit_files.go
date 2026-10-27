@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
@@ -145,6 +146,9 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 			run.Bytes += used
 			if !c.saveRun(run) {
 				return fault("ERR_AUDIT_FAILED", "falha ao auditar transferência Git")
+			}
+			if err := collect.RecordGitObjectBytes(c.store, run.ID, collect.GitTreeObjects, used); err != nil {
+				return err
 			}
 			if errors.Is(err, gitmirror.ErrBudget) || run.Bytes > plan.Input.Limits.MaxTransferBytes {
 				return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência Git atingido")

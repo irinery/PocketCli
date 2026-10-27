@@ -34,7 +34,7 @@ func TestBranchGraphQueueAndJournalReplay(t *testing.T) {
 	for i := 1; i <= branchGraphsPerRound+1; i++ {
 		refs = append(refs, gitmirror.HeadRef{Name: fmt.Sprintf("refs/heads/feature-%d", i), OID: fmt.Sprintf("%040x", i)})
 	}
-	observer := &fakeGitObserver{result: gitmirror.Observation{Ref: "refs/heads/main", NewOID: mainOID, TreeOID: strings.Repeat("b", 40), GraphComplete: true}, heads: refs}
+	observer := &fakeGitObserver{result: gitmirror.Observation{Ref: "refs/heads/main", NewOID: mainOID, TreeOID: strings.Repeat("b", 40), GraphComplete: true, LocalBytes: 100}, heads: refs}
 	c.gitMirror = func(string) (gitObserver, error) { return observer, nil }
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	plan := contract.Plan{ID: "branch-graphs-one", InvestigationID: "branch-graphs-inv", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 16 << 20, MaxLocalBytes: 16 << 20}}}
@@ -57,6 +57,10 @@ func TestBranchGraphQueueAndJournalReplay(t *testing.T) {
 	if observer.branchFetches != branchGraphsPerRound || first.Coverage[len(first.Coverage)-1].Status != "partial" {
 		t.Fatalf("fila inicial: fetches=%d coverage=%+v", observer.branchFetches, first.Coverage)
 	}
+	firstStats, err := c.RunStats(context.Background(), firstRun.ID)
+	if err != nil || firstStats.GitBranchBytesAdded != 100*branchGraphsPerRound || firstStats.GitRefBytesAdded != 0 {
+		t.Fatalf("bytes de branches da primeira rodada: %+v err=%v", firstStats, err)
+	}
 	firstHeads, firstComplete, err := c.observedGitHeads(plan, r, planAuth{GitHub: "identity"})
 	if err != nil || firstComplete || len(firstHeads) != branchGraphsPerRound+1 {
 		t.Fatalf("branch ainda pendente entrou no grafo: heads=%+v complete=%v err=%v", firstHeads, firstComplete, err)
@@ -78,6 +82,10 @@ func TestBranchGraphQueueAndJournalReplay(t *testing.T) {
 	}
 	if observer.branchFetches != branchGraphsPerRound+1 || second.Coverage[len(second.Coverage)-1].Status != "complete" {
 		t.Fatalf("fila não avançou no refresh: fetches=%d coverage=%+v", observer.branchFetches, second.Coverage)
+	}
+	secondStats, err := c.RunStats(context.Background(), "branch-graphs-run-two")
+	if err != nil || secondStats.GitBranchBytesAdded != 100 || secondStats.GitRefBytesAdded != 0 {
+		t.Fatalf("bytes de branch nova no refresh: %+v err=%v", secondStats, err)
 	}
 	secondHeads, secondComplete, err := c.observedGitHeads(plan, r, planAuth{GitHub: "identity"})
 	if err != nil || !secondComplete || len(secondHeads) != branchGraphsPerRound+2 {
