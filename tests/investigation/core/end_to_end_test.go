@@ -157,6 +157,21 @@ func TestOfflineRuntimeToPDF(t *testing.T) {
 	if queryResult.Code != http.StatusOK || json.Unmarshal(queryResult.Body.Bytes(), &webQuery) != nil || len(webQuery.Rows) != 1 || webQuery.Rows[0][0].Value != "2" {
 		t.Fatalf("SQL via servidor offline: %d %s", queryResult.Code, queryResult.Body.String())
 	}
+	defaultQueryBody, err := json.Marshal(contract.QueryRequest{
+		SnapshotID: run.SnapshotID,
+		SQL:        "SELECT id, window_start, window_end FROM v_snapshot",
+		MaxRows:    200,
+		TimeoutMS:  5000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultQueryResult := call(http.MethodPost, "/api/v1/snapshots/"+run.SnapshotID+"/query", defaultQueryBody)
+	var defaultWebQuery contract.QueryResult
+	if defaultQueryResult.Code != http.StatusOK || json.Unmarshal(defaultQueryResult.Body.Bytes(), &defaultWebQuery) != nil ||
+		len(defaultWebQuery.Rows) != 1 || defaultWebQuery.Rows[0][0].Value != run.SnapshotID {
+		t.Fatalf("consulta padrão da UI via servidor offline: %d %s", defaultQueryResult.Code, defaultQueryResult.Body.String())
+	}
 	pdf := call(http.MethodGet, "/api/v1/reports/"+artifacts[0].ID+"/download", nil)
 	if pdf.Code != http.StatusOK || !bytes.HasPrefix(pdf.Body.Bytes(), []byte("%PDF-")) {
 		t.Fatalf("PDF via servidor offline: %d %s", pdf.Code, pdf.Header().Get("Content-Type"))
