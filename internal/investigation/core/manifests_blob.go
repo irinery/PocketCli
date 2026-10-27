@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
@@ -28,6 +29,7 @@ func (c *Core) collectManifestBlob(ctx context.Context, plan contract.Plan, r co
 	cacheID := storage.Hash([]byte(authID + ":" + r.ID + ":" + entry.SHA))
 	var blob cachedGitBlob
 	err := c.store.Get("gitblobs", cacheID, &blob)
+	wasCached := err == nil
 	if err != nil && !os.IsNotExist(err) {
 		return facts, evidence, fault("ERR_AUDIT_FAILED", "cache de blob Git corrompido")
 	}
@@ -79,6 +81,11 @@ func (c *Core) collectManifestBlob(ctx context.Context, plan contract.Plan, r co
 	facts, err = parseManifest(kind, blob.Content)
 	if err != nil {
 		return facts, evidence, err
+	}
+	if wasCached {
+		if err := collect.RecordReuse(c.store, run.ID); err != nil {
+			return facts, evidence, err
+		}
 	}
 	contentHash := sha256.Sum256(blob.Content)
 	summary, err := json.Marshal(struct {

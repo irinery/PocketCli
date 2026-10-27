@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
@@ -71,6 +72,7 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 	cacheID := storage.Hash([]byte(authID + ":" + r.ID + ":" + treeOID))
 	var raw json.RawMessage
 	err := c.store.Get("gittrees", cacheID, &raw)
+	wasCached := err == nil
 	if err != nil && !os.IsNotExist(err) {
 		return fault("ERR_AUDIT_FAILED", "cache de árvore Git corrompido")
 	}
@@ -113,6 +115,11 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 	if json.Unmarshal(raw, &tree) != nil || tree.SHA != treeOID {
 		d.Coverage = append(d.Coverage, c.coverage(resource, "manifests", "partial", 0, "resposta de árvore Git inválida"))
 		return nil
+	}
+	if wasCached {
+		if err := collect.RecordReuse(c.store, run.ID); err != nil {
+			return err
+		}
 	}
 	observed := int64(0)
 	parsed := int64(0)

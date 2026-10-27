@@ -250,6 +250,99 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 	}
 }
 
+func TestUnchangedRefreshReusesObjectsAcrossCoreRestart(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var objectDownloads atomic.Int32
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer test-secret" {
+			return nil, fmt.Errorf("credencial ausente")
+		}
+		if r.Header.Get("If-None-Match") == `"stable"` {
+			return &http.Response{StatusCode: http.StatusNotModified, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+		}
+		body := "[]"
+		switch r.URL.Path {
+		case "/repos/acme/api":
+			body = `{"id":42,"full_name":"acme/api"}`
+		case "/repos/acme/api/pulls":
+			body = `[{"id":100,"number":7,"title":"PR estável","state":"open","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-03T00:00:00Z","head":{"sha":"abc"}}]`
+			objectDownloads.Add(1)
+		}
+		res := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+		res.Header.Set("ETag", `"stable"`)
+		return res, nil
+	})
+	now := func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }
+	newCore := func() *Core {
+		c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: transport}, Clock: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "refresh sem mudança", GitHubEnabled: true,
+		Scope:  &contract.Scope{Mode: "selected", Repositories: []string{"acme/api"}},
+		Period: contract.Period{Preset: "30d", Timezone: "UTC"}, Modules: contract.Modules{GitHubIssues: true},
+		Limits: contract.Limits{GitHubRPH: 3600000}}
+	firstCore := newCore()
+	firstPlan, err := firstCore.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRun, err := firstCore.StartRun(context.Background(), contract.RunRequest{PlanID: firstPlan.ID, ConfirmedPlanHash: firstPlan.Hash, IdempotencyKey: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRun = waitRun(t, firstCore, firstRun.ID)
+	if firstRun.SnapshotID == "" || firstRun.State != "report_failed" || objectDownloads.Load() != 1 {
+		t.Fatalf("primeira rodada: %+v downloads=%d", firstRun, objectDownloads.Load())
+	}
+	firstStats, err := firstCore.RunStats(context.Background(), firstRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeObjects, err := store.List("objects")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondCore := newCore() // Simulates a separate pocket invocation.
+	input.InvestigationID = firstPlan.InvestigationID
+	secondPlan, err := secondCore.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRun, err := secondCore.StartRun(context.Background(), contract.RunRequest{PlanID: secondPlan.ID, ConfirmedPlanHash: secondPlan.Hash, IdempotencyKey: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRun = waitRun(t, secondCore, secondRun.ID)
+	secondStats, err := secondCore.RunStats(context.Background(), secondRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterObjects, err := store.List("objects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRun.SnapshotID == "" || secondStats.ReuseCounter <= firstStats.ReuseCounter || objectDownloads.Load() != 1 || len(afterObjects) != len(beforeObjects) {
+		t.Fatalf("refresh sem reuso: run=%+v stats=%+v->%+v downloads=%d objects=%d->%d", secondRun, firstStats, secondStats, objectDownloads.Load(), len(beforeObjects), len(afterObjects))
+	}
+	if _, err := secondCore.GetSnapshot(context.Background(), firstRun.SnapshotID); err != nil {
+		t.Fatalf("snapshot anterior indisponível: %v", err)
+	}
+}
+
 func TestRunKeyWithoutRunRecoversSameID(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
@@ -1203,12 +1296,22 @@ func TestManifestBlobIsVerifiedParsedAndCached(t *testing.T) {
 	if calls != 2 || run.Requests != 2 || len(d.Components) != 1 || d.Components[0].Name != "example.com/acme/api" || len(d.Events) != 1 || len(d.Evidence) != 2 || d.Coverage[0].Status != "complete" || d.Coverage[1].Status != "complete" {
 		t.Fatalf("manifest=%+v run=%+v calls=%d", d, run, calls)
 	}
+	firstBytes := run.Bytes
+	var stats struct {
+		ReuseCounter int64 `json:"reuse_counter"`
+	}
+	if err := store.Get("runstats", run.ID, &stats); !os.IsNotExist(err) {
+		t.Fatalf("primeira coleta já contou cache: %+v err=%v", stats, err)
+	}
 	retry := query.Dataset{}
 	if err := c.collectManifestPaths(context.Background(), plan, r, treeOID, "identity", "2026-01-10T00:00:00Z", &retry, &run); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || len(retry.Components) != 1 || retry.Events[0].EvidenceID != d.Events[0].EvidenceID {
-		t.Fatalf("cache de blob inválido: retry=%+v calls=%d", retry, calls)
+	if calls != 2 || run.Requests != 2 || run.Bytes != firstBytes || len(retry.Components) != 1 || retry.Events[0].EvidenceID != d.Events[0].EvidenceID {
+		t.Fatalf("cache de blob inválido: retry=%+v run=%+v calls=%d", retry, run, calls)
+	}
+	if err := store.Get("runstats", run.ID, &stats); err != nil || stats.ReuseCounter != 2 {
+		t.Fatalf("reuso de árvore e blob: %+v err=%v", stats, err)
 	}
 }
 

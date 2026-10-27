@@ -41,6 +41,17 @@ func newInvestigateCommand() *cobra.Command {
 		}
 		return nil
 	}})
+	cmd.AddCommand(&cobra.Command{Use: "stats RUN_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := newInvestigationCore(secrets.NewSessionStore())
+		if err != nil {
+			return err
+		}
+		stats, err := c.RunStats(context.Background(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeJSON(cmd.OutOrStdout(), stats)
+	}})
 	cmd.AddCommand(&cobra.Command{Use: "start PLAN_ID --confirm HASH", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f, err := parseInvestigationFlags(args[1:])
 		if err != nil {
@@ -425,7 +436,7 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput) erro
 		githubHint += "; Contents read para leitura Git"
 	}
 	if input.Modules.CI {
-		githubHint += "; Actions read; Checks read"
+		githubHint += "; Actions read"
 	}
 	if input.Modules.Deployments {
 		githubHint += "; Deployments read"

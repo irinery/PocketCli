@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/query"
 	"pocketcli/internal/investigation/storage"
@@ -112,6 +113,7 @@ func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.
 }
 
 func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan) {
+	ctx = collect.WithRunID(ctx, run.ID)
 	// A CLI start/resume loads the prepared plan in a fresh process. Restore
 	// its pacing before any collector request, including on resumed runs.
 	c.collector.SetRPH("github", plan.Input.Limits.GitHubRPH)
@@ -297,6 +299,21 @@ func (c *Core) GetRun(_ context.Context, id string) (contract.Run, error) {
 		return r, fault("ERR_NOT_FOUND", "run não encontrado")
 	}
 	return r, nil
+}
+
+func (c *Core) RunStats(ctx context.Context, id string) (collect.RunStats, error) {
+	if _, err := c.GetRun(ctx, id); err != nil {
+		return collect.RunStats{}, err
+	}
+	stats := collect.RunStats{RunID: id}
+	err := c.store.Get("runstats", id, &stats)
+	if os.IsNotExist(err) {
+		return collect.RunStats{RunID: id}, nil
+	}
+	if err != nil || stats.RunID != id || stats.ReuseCounter < 0 {
+		return collect.RunStats{}, fault("ERR_AUDIT_FAILED", "estatística de cache indisponível")
+	}
+	return stats, nil
 }
 
 // CompleteReport reconciles a successful local PDF retry with a run whose

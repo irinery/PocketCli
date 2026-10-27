@@ -48,12 +48,13 @@ func TestGitHub304ReusesPersistedRepresentationWithoutTransferBytes(t *testing.T
 	}
 	second := secretClient(t, transport) // Fresh client, as on a new CLI invocation.
 	second.SetCacheStore(store)
-	data, headers, status, transferred, err := second.GetGitHubWithBytes(context.Background(), endpoint)
+	runCtx := WithRunID(context.Background(), "run-refresh")
+	data, headers, status, transferred, err := second.GetGitHubWithBytes(runCtx, endpoint)
 	if err != nil || status != 200 || string(data) != body || transferred != 0 || calls != 2 || headers.Get("Link") == "" {
 		t.Fatalf("304 persistido: status=%d bytes=%d calls=%d headers=%v data=%s err=%v", status, transferred, calls, headers, data, err)
 	}
 	var committedBytes int64 = -1
-	_, err = second.GitHubWalk(context.Background(), "/repos/acme/api/pulls", 1, "", func(_ []json.RawMessage, _ string, n int64) error {
+	_, err = second.GitHubWalk(runCtx, "/repos/acme/api/pulls", 1, "", func(_ []json.RawMessage, _ string, n int64) error {
 		committedBytes = n
 		return nil
 	})
@@ -61,6 +62,16 @@ func TestGitHub304ReusesPersistedRepresentationWithoutTransferBytes(t *testing.T
 		// The cached Link advertises a second page; maxPages=1 must report
 		// incomplete, while the committed first page transfers zero bytes.
 		t.Fatalf("walk 304: committed=%d err=%v", committedBytes, err)
+	}
+	var stats RunStats
+	if err := store.Get(runStatsKind, "run-refresh", &stats); err != nil || stats.ReuseCounter != 2 {
+		t.Fatalf("contador de 304: %+v err=%v", stats, err)
+	}
+	if err := RecordReuse(store, "run-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Get(runStatsKind, "run-refresh", &stats); err != nil || stats.ReuseCounter != 3 {
+		t.Fatalf("contador persistido após objeto Git: %+v err=%v", stats, err)
 	}
 }
 
