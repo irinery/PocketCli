@@ -78,7 +78,8 @@ func TestRealAssetQuotesIDsWithoutRecursiveReplacement(t *testing.T) {
 
 func TestRealSQLConsoleUsesSupportedQueryDefaults(t *testing.T) {
 	js := realAppJS("investigation-demo", "snap-demo-001")
-	if !strings.Contains(js, "editor.value = 'SELECT id, window_start, window_end FROM v_snapshot'") ||
+	if !strings.Contains(js, "const manualSQL = 'SELECT id, window_start, window_end FROM v_snapshot'") ||
+		!strings.Contains(js, "editor.value = manualSQL") ||
 		!strings.Contains(js, "max_rows: 200, timeout_ms: 5000") ||
 		strings.Contains(js, "sqlite_master") {
 		t.Fatal("SQL console default is outside the read-only query contract")

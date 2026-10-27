@@ -89,6 +89,15 @@ func TestReadOnlyAndFixture(t *testing.T) {
 		if suggestion.ID == "Q03" && result.Rows[0][3].Value != "48" {
 			t.Fatalf("Q03 hours=%s", result.Rows[0][3].Value)
 		}
+		if suggestion.ID == "Q08" {
+			suggestion.Parameters[0].Value.Value = "iss-1"
+			timeline, err := q.Execute(context.Background(), "snap-demo-001", contract.QueryRequest{
+				SnapshotID: "snap-demo-001", SQL: suggestion.SQL, Parameters: suggestion.Parameters,
+			})
+			if err != nil || timeline.ReturnedRows != 5 {
+				t.Fatalf("Q08 with selected subject: rows=%d err=%v", timeline.ReturnedRows, err)
+			}
+		}
 	}
 	db, err = sql.Open("sqlite3", path)
 	if err != nil {
