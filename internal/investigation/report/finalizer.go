@@ -28,9 +28,9 @@ import (
 
 const reportTemplate = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><style>
 @page{size:A4 portrait;margin:16mm}body{font:10.5pt/1.45 Arial,sans-serif;color:#17212f}h1{font-size:24pt}h2{font-size:16pt;border-bottom:1px solid #ccd4df;padding-bottom:4pt;margin-top:22pt}h3{font-size:12pt;margin-bottom:3pt}.muted{color:#586477}.demo{border:1px solid #b87910;background:#fff5e2;padding:8pt}.metadata{display:grid;grid-template-columns:1fr 1fr;gap:5pt}article{border:1px solid #dce2e9;border-radius:5pt;padding:9pt;margin:8pt 0;break-inside:avoid}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:8pt/1.35 monospace}table{border-collapse:collapse;width:100%;font-size:8pt}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #dce2e9;padding:5pt;overflow-wrap:anywhere}thead{display:table-header-group}a{color:#263e65}.page-break{break-before:page}.finding{break-inside:auto}.id{font:8pt monospace;color:#586477}.foot{font-size:8pt;color:#697486;margin-top:8pt}
-</style></head><body><h1>Relatório da investigação</h1><p class="demo">{{if .Demo}}DEMO · dados fictícios para apresentação; não representam uma investigação real.{{else}}Relatório determinístico da investigação.{{end}}</p><div class="metadata"><div><b>Investigação:</b> {{.Snapshot.InvestigationID}}</div><div><b>Snapshot:</b> {{.Snapshot.ID}}</div><div><b>Janela:</b> {{.Snapshot.WindowStart}} — {{.Snapshot.WindowEnd}}</div><div><b>Status:</b> {{.Snapshot.Status}}</div><div><b>Gerado em:</b> {{.GeneratedAt}}</div><div><b>Dataset hash:</b> {{.Snapshot.DatasetHash}}</div><div><b>Regras:</b> {{.Snapshot.RulesetVersion}}</div><div><b>Mapeamento:</b> {{.Snapshot.MappingVersion}}</div></div>
-<h2>1. Resumo determinístico</h2><p>Este relatório contém todos os registros canônicos recebidos do leitor do snapshot. Estados desconhecidos e cobertura parcial permanecem explicitados; a camada editorial não altera esses dados.</p><p><b>Achados:</b> {{.FindingCount}} · <b>Registros:</b> {{.RecordCount}} · <b>Cobertura:</b> {{if .Snapshot.Coverage}}{{len .Snapshot.Coverage}} coleções{{else}}não informada{{end}}</p>
-<h2>2. Cobertura</h2>{{if .Snapshot.Coverage}}<table><thead><tr><th>Fonte</th><th>Recurso</th><th>Coleção</th><th>Estado</th><th>Observado / esperado</th><th>Motivo</th></tr></thead><tbody>{{range .Snapshot.Coverage}}<tr><td>{{.Source}}</td><td>{{.ResourceID}}</td><td>{{.Collection}}</td><td>{{.Status}}</td><td>{{.Observed}} / {{intPtr .Expected}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody></table>{{else}}<p>Não determinada pelo contrato recebido.</p>{{end}}
+</style></head><body><h1>Relatório da investigação</h1><p class="demo">{{if .Demo}}DEMO · dados fictícios para apresentação; não representam uma investigação real.{{else}}Relatório determinístico da investigação.{{end}}</p><div class="metadata"><div><b>Investigação:</b> {{.Snapshot.InvestigationID}}</div><div><b>Snapshot:</b> {{.Snapshot.ID}}</div><div><b>Janela:</b> {{.Snapshot.WindowStart}} — {{.Snapshot.WindowEnd}}</div><div><b>Status:</b> {{.Snapshot.Status}}</div><div><b>Cobertura:</b> {{.CoverageStatus}}</div><div><b>Gerado em:</b> {{.GeneratedAt}}</div><div><b>Dataset hash:</b> {{.Snapshot.DatasetHash}}</div><div><b>Regras:</b> {{.Snapshot.RulesetVersion}}</div><div><b>Mapeamento:</b> {{.Snapshot.MappingVersion}}</div></div>
+<h2>1. Resumo determinístico</h2><p>Este relatório contém todos os registros canônicos recebidos do leitor do snapshot. Estados desconhecidos e cobertura parcial permanecem explicitados; a camada editorial não altera esses dados.</p><p><b>Achados:</b> {{.FindingCount}} · <b>Registros:</b> {{.RecordCount}} · <b>Cobertura:</b> {{.CoverageStatus}} ({{if .Snapshot.Coverage}}{{len .Snapshot.Coverage}} coleções{{else}}sem coleções informadas{{end}})</p>
+<h2>2. Cobertura — {{.CoverageStatus}}</h2>{{if .Snapshot.Coverage}}<table><thead><tr><th>Fonte</th><th>Recurso</th><th>Coleção</th><th>Estado</th><th>Observado / esperado</th><th>Motivo</th></tr></thead><tbody>{{range .Snapshot.Coverage}}<tr><td>{{.Source}}</td><td>{{.ResourceID}}</td><td>{{.Collection}}</td><td>{{.Status}}</td><td>{{.Observed}} / {{intPtr .Expected}}</td><td>{{.Reason}}</td></tr>{{end}}</tbody></table>{{else}}<p>Não determinada pelo contrato recebido.</p>{{end}}
 <h2>3. Registros da análise</h2>{{range .Records}}<article class="{{if eq .Kind "finding"}}finding{{end}}"><div class="id">{{.Kind}} · {{recordID .}}</div>{{if .Finding}}<h3>{{.Finding.Title}}</h3><p><b>{{.Finding.Severity}}</b> · regra {{.Finding.RuleID}} {{.Finding.RuleVersion}} · sujeito {{.Finding.SubjectID}}</p><p>{{.Finding.DeterministicText}}</p><p><b>Evidências:</b> {{range $i,$v := .Finding.EvidenceIDs}}{{if $i}}, {{end}}{{$v}}{{end}}</p><p><b>Status da evidência:</b> {{.Finding.EvidenceStatus}}. <b>Limitações:</b> {{range $i,$v := .Finding.Limitations}}{{if $i}}; {{end}}{{$v}}{{end}}</p>{{end}}{{if .Component}}<p><b>Componente:</b> {{.Component.Name}} · {{.Component.Repository}}/{{.Component.Path}} · implementação {{.Component.ImplementationStatus}} · entrega {{.Component.DeploymentStatus}} · cobertura {{.Component.Coverage}}</p>{{end}}{{if .Metric}}<p><b>Métrica:</b> {{.Metric.Name}} = {{.Metric.Value.Value}} {{.Metric.Unit}} · amostra {{.Metric.SampleSize}} / {{intPtr .Metric.EligibleSize}}</p><p>{{.Metric.Definition}}. {{range .Metric.Limitations}}{{.}} {{end}}</p>{{end}}{{if .Coverage}}<p><b>Cobertura:</b> {{.Coverage.Source}} / {{.Coverage.ResourceID}} / {{.Coverage.Collection}}: {{.Coverage.Status}} ({{.Coverage.Observed}} / {{if .Coverage.Expected}}{{.Coverage.Expected}}{{else}}desconhecido{{end}}). {{.Coverage.Reason}}</p>{{end}}{{if .Evidence}}<p><b>Evidência {{.Evidence.ID}}</b> · {{.Evidence.Source}} · {{.Evidence.Locator}} · observada {{.Evidence.ObservedAt}}</p><p>{{.Evidence.Preview}}</p><p>SHA-256 {{.Evidence.SHA256}}</p>{{end}}{{if .Link}}<p><b>Vínculo:</b> {{.Link.SourceID}} — {{.Link.Relation}} → {{.Link.TargetID}} · {{.Link.Status}} · evidência {{.Link.EvidenceID}}</p>{{end}}{{if .Stage}}<p><b>Etapa:</b> {{.Stage.Stage}} · sujeito {{.Stage.SubjectID}} · início {{.Stage.StartedAt}} · fim {{.Stage.EndedAt}} · duração válida {{.Stage.DurationValid}}</p>{{end}}{{if .Estimate}}<p><b>Estimativa:</b> issue {{.Estimate.IssueID}} · {{floatPtr .Estimate.Before}} → {{floatPtr .Estimate.After}} · {{.Estimate.Timing}} · {{.Estimate.EventAt}}</p>{{end}}{{if .Rework}}<p><b>Retrabalho:</b> {{.Rework.Kind}} · {{.Rework.EvidenceStatus}} · causa {{.Rework.CauseStatus}} · {{.Rework.EventAt}}</p>{{end}}{{if .Delivery}}<p><b>Artefato de entrega:</b> {{.Delivery.ComponentID}} · ambiente {{.Delivery.Environment}} · proveniência {{.Delivery.ProvenanceStatus}} · {{.Delivery.ObservedAt}}</p>{{end}}</article>{{end}}
 <h2>10. Comentários do operador</h2>{{if .Annotations}}{{range .Annotations}}<article><div class="id">{{.TargetType}} · {{.TargetID}} · revisão {{.Revision}} · {{.Status}}</div><p>{{.Body}}</p><p class="muted">{{.OperatorLabel}} · {{.UpdatedAt}}</p></article>{{end}}{{else}}<p>Nenhum comentário registrado na revisão congelada {{.AnnotationRevision}}.</p>{{end}}
 {{if .Editorial}}<h2>11. Redação assistida aceita</h2><p>Camada editorial revisada por operador; não substitui os achados determinísticos acima.</p>{{range .Editorial}}<article><div class="id">{{.ModelID}} · payload {{.PayloadHash}} · aceito em {{.ReviewedAt}}</div>{{range .Sections}}<h3>{{.FindingID}}</h3><p>{{.ImprovedText}}</p><p>Evidências: {{range $i,$v := .EvidenceIDs}}{{if $i}}, {{end}}{{$v}}{{end}}</p>{{end}}</article>{{end}}{{end}}
@@ -39,6 +39,7 @@ const reportTemplate = `<!doctype html><html lang="pt-BR"><head><meta charset="u
 
 type model struct {
 	Snapshot           contract.Snapshot
+	CoverageStatus     string
 	Records            []contract.ReportRecord
 	GeneratedAt        string
 	FindingCount       int
@@ -52,6 +53,19 @@ type model struct {
 	Executions         []queries.Execution
 	SavedQueries       []queries.SavedQuery
 }
+
+func coverageLabel(items []contract.Coverage) string {
+	if len(items) == 0 {
+		return "não determinada"
+	}
+	for _, item := range items {
+		if item.Status != "complete" && item.Status != "not_selected" {
+			return "parcial"
+		}
+	}
+	return "completa"
+}
+
 type AnnotationReader interface {
 	At(snapshot string, cutoff int64) ([]annotations.Annotation, int64)
 }
@@ -234,7 +248,7 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 		executions = f.queries.AllHistory(in.SnapshotID)
 		savedQueries = f.queries.List(in.SnapshotID)
 	}
-	doc := model{Snapshot: snapshot, Records: records, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FindingCount: findingCount, RecordCount: len(records), Revision: revision, RendererVersion: f.rendererVersion, Demo: f.demo, Annotations: annotationRows, AnnotationRevision: annotationRevision, Editorial: editorialRows, Executions: executions, SavedQueries: savedQueries}
+	doc := model{Snapshot: snapshot, CoverageStatus: coverageLabel(snapshot.Coverage), Records: records, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FindingCount: findingCount, RecordCount: len(records), Revision: revision, RendererVersion: f.rendererVersion, Demo: f.demo, Annotations: annotationRows, AnnotationRevision: annotationRevision, Editorial: editorialRows, Executions: executions, SavedQueries: savedQueries}
 	tmpl, err := template.New("report").Funcs(template.FuncMap{"recordID": recordID, "intPtr": formatIntPtr, "floatPtr": formatFloatPtr}).Parse(reportTemplate)
 	if err != nil {
 		return contract.ReportArtifact{}, err
