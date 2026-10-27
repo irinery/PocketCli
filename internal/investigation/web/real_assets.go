@@ -179,6 +179,8 @@ const realAppJSTemplate = `(() => {
     const from = node('input'), to = node('input'), timezone = node('input');
     from.type = to.type = 'date';
     timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+	const discoveryBudget = node('input');
+	discoveryBudget.type = 'number'; discoveryBudget.min = '1'; discoveryBudget.step = '1'; discoveryBudget.value = '20';
     const moduleBox = node('div', 'controls'), moduleChecks = {};
     [['github_issues', 'Issues e PRs'], ['code_history', 'Histórico Git'], ['ci', 'CI'], ['deployments', 'Deployments'], ['runtime_import', 'Runtime importado']].forEach(([value, label]) => {
       const choice = node('label'), check = node('input');
@@ -229,7 +231,9 @@ const realAppJSTemplate = `(() => {
           limits: imported && imported.limits || {}
         };
         if (scope.value === 'all_authorized') { input.scope.repositories = []; input.scope.teams = []; }
-        plan = await write('/plans', input);
+        const budget = Number(discoveryBudget.value);
+        if (!Number.isSafeInteger(budget) || budget < 1) throw new Error('Orçamento de descoberta deve ser um inteiro positivo.');
+        plan = await write('/plans' + (budget === 20 ? '' : '?discovery_budget=' + budget), input);
         feedback.replaceChildren(node('h3', '', 'Plano resolvido'));
         feedback.append(node('p', '', 'Hash de confirmação: ' + plan.hash));
         feedback.append(node('p', '', 'Janela: ' + (plan.window_start || 'Todo o histórico') + ' — ' + plan.window_end));
@@ -281,6 +285,7 @@ const realAppJSTemplate = `(() => {
       field('Fontes', sources), node('p', 'muted', 'GitHub: Metadata e Pull requests read; Contents read para histórico Git. Linear: Read. Informe apenas recursos autorizados.'),
       field('Token GitHub', githubKey), field('Chave Linear', linearKey), field('Período', period),
       field('Data inicial', from), field('Data final', to), field('Timezone', timezone), field('Módulos', moduleBox),
+	  field('Chamadas de descoberta por fonte', discoveryBudget), node('p', 'muted', '20 por padrão. Aumentar este número aprova mais chamadas externas apenas na descoberta; revise o plano antes da coleta.'),
       field('YAML opcional', yaml), importButton, prepare, feedback);
     main.append(form);
   }
