@@ -68,10 +68,15 @@ func (c *Core) ImportRuntime(ctx context.Context, investigationID string, raw []
 	if _, err := time.Parse(time.RFC3339, snap.ObservedAt); err != nil {
 		return "", fault("ERR_VALIDATION", "observed_at inválido")
 	}
+	seenComponents := make(map[string]bool, len(snap.Components))
 	for _, item := range snap.Components {
 		if !runtimeName.MatchString(item.Name) || item.Enabled == nil || len(item.Path) > 1024 || strings.ContainsAny(item.Path, "\x00\r\n") {
 			return "", fault("ERR_VALIDATION", "componente operacional inválido")
 		}
+		if seenComponents[item.Name] {
+			return "", fault("ERR_VALIDATION", "componente operacional duplicado no ambiente")
+		}
+		seenComponents[item.Name] = true
 		if (item.Repository == "") != (item.Path == "") {
 			return "", fault("ERR_VALIDATION", "repository e path devem aparecer juntos")
 		}

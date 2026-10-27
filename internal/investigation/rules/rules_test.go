@@ -56,6 +56,38 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	}
 }
 
+func TestDisableFindingUsesLatestUnambiguousObservationInWindow(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Coverage: []contract.Coverage{{Source: "runtime", ResourceID: "import-1", Collection: "import", Status: "complete"}},
+		Events: []query.Event{
+			{ID: "a-old", EntityID: "a", Type: "disabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "production", EvidenceID: "ev-a-old"},
+			{ID: "a-new", EntityID: "a", Type: "enabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-a-new"},
+			{ID: "b-old", EntityID: "b", Type: "enabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "production", EvidenceID: "ev-b-old"},
+			{ID: "b-new", EntityID: "b", Type: "disabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-b-new"},
+			{ID: "c-one", EntityID: "c", Type: "disabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production", EvidenceID: "ev-c-one"},
+			{ID: "c-two", EntityID: "c", Type: "enabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production", EvidenceID: "ev-c-two"},
+			{ID: "d-future", EntityID: "d", Type: "disabled", EventAt: "2026-02-02T00:00:00Z", NewValue: "production", EvidenceID: "ev-d"},
+			{ID: "e-no-proof", EntityID: "e", Type: "disabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production"},
+			{ID: "f-staging", EntityID: "f", Type: "disabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "staging", EvidenceID: "ev-f-staging"},
+			{ID: "f-production", EntityID: "f", Type: "enabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-f-production"},
+		},
+	}
+	want := map[string]string{"b": "ev-b-new", "f": "ev-f-staging"}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID != "R-DISABLE-001" {
+			continue
+		}
+		if want[finding.SubjectID] == "" || len(finding.EvidenceIDs) != 1 || finding.EvidenceIDs[0] != want[finding.SubjectID] {
+			t.Fatalf("desativação sem estado atual comprovado: %+v", finding)
+		}
+		delete(want, finding.SubjectID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("desativações atuais não publicadas: %+v", want)
+	}
+}
+
 func TestMentionDoesNotBecomeConfirmedPRLinkForMissingLinkRule(t *testing.T) {
 	d := query.Dataset{
 		Issues:   []query.Issue{{ID: "issue-1", EvidenceID: "ev-issue", State: "open"}},
