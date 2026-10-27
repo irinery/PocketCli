@@ -51,6 +51,54 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	}
 }
 
+func TestBlockFindingRequiresBothActiveStatesAndDirectEvidence(t *testing.T) {
+	base := query.Dataset{
+		Issues: []query.Issue{
+			{ID: "dependent", State: "unstarted", Outcome: "active", EvidenceID: "ev-dependent"},
+			{ID: "blocker", State: "started", Outcome: "active", EvidenceID: "ev-blocker"},
+		},
+		Links: []contract.LinkRecord{{ID: "link-block", SourceID: "dependent", Relation: "blocked_by", TargetID: "blocker", Status: "direct", EvidenceID: "ev-link"}},
+	}
+	blockFindings := func(d query.Dataset) []contract.Finding {
+		t.Helper()
+		var found []contract.Finding
+		for _, finding := range Evaluate(d).Findings {
+			if finding.RuleID == "R-BLOCK-001" {
+				found = append(found, finding)
+			}
+		}
+		return found
+	}
+	findings := blockFindings(base)
+	if len(findings) != 1 || !reflect.DeepEqual(findings[0].EvidenceIDs, []string{"ev-blocker", "ev-dependent", "ev-link"}) {
+		t.Fatalf("known active dependency lacks direct evidence: %+v", findings)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*query.Dataset)
+	}{
+		{"blocker unknown", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "", "unclassified" }},
+		{"dependent unknown", func(d *query.Dataset) { d.Issues[0].State, d.Issues[0].Outcome = "", "unclassified" }},
+		{"blocker finished", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "completed", "completed" }},
+		{"contradictory blocker state", func(d *query.Dataset) { d.Issues[1].State = "closed" }},
+		{"dependent finished", func(d *query.Dataset) { d.Issues[0].State, d.Issues[0].Outcome = "completed", "completed" }},
+		{"blocker cancelled", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "canceled", "cancelled" }},
+		{"missing state evidence", func(d *query.Dataset) { d.Issues[1].EvidenceID = "" }},
+		{"missing relation evidence", func(d *query.Dataset) { d.Links[0].EvidenceID = "" }},
+		{"inferred relation", func(d *query.Dataset) { d.Links[0].Status = "inferred" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base
+			d.Issues = append([]query.Issue(nil), base.Issues...)
+			d.Links = append([]contract.LinkRecord(nil), base.Links...)
+			tc.mutate(&d)
+			if got := blockFindings(d); len(got) != 0 {
+				t.Fatalf("unsupported blocker became pending: %+v", got)
+			}
+		})
+	}
+}
+
 func TestDeclaredGitRevertRequiresObservedTargetAndDoesNotClaimPatchEquivalence(t *testing.T) {
 	targetOID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	revertOID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

@@ -17,11 +17,15 @@ import (
 
 const linearHistoryQuery = `query IssueHistory($id: String!, $after: String) { issue(id: $id) { id history(first: 100, after: $after, includeArchived: true) { nodes { id createdAt actor { id } fromState { name type } toState { name type } fromEstimate toEstimate fromProjectId toProjectId } pageInfo { hasNextPage endCursor } } } }`
 const linearCommentsQuery = `query IssueComments($id: String!, $after: String) { issue(id: $id) { id comments(first: 100, after: $after, includeArchived: true) { nodes { id body createdAt updatedAt user { id } } pageInfo { hasNextPage endCursor } } } }`
+const linearRelationsQuery = `query IssueRelations($id: String!, $after: String) { issue(id: $id) { id relations(first: 100, after: $after, includeArchived: false) { nodes { id type createdAt updatedAt issue { id } relatedIssue { id } } pageInfo { hasNextPage endCursor } } } }`
+const linearInverseRelationsQuery = `query IssueInverseRelations($id: String!, $after: String) { issue(id: $id) { id inverseRelations(first: 100, after: $after, includeArchived: false) { nodes { id type createdAt updatedAt issue { id } relatedIssue { id } } pageInfo { hasNextPage endCursor } } } }`
 const linearIssueFieldsQuery = `query IssueFields { __type(name: "Issue") { fields { name } } }`
 
 type linearChildSchema struct {
-	History  bool `json:"history"`
-	Comments bool `json:"comments"`
+	History          bool `json:"history"`
+	Comments         bool `json:"comments"`
+	Relations        bool `json:"relations"`
+	InverseRelations bool `json:"inverse_relations"`
 }
 
 func (c *Core) linearSchema(ctx context.Context, plan contract.Plan, r contract.Resource, run *contract.Run) (linearChildSchema, error) {
@@ -57,6 +61,8 @@ func (c *Core) linearSchema(ctx context.Context, plan contract.Plan, r contract.
 	for _, field := range response.Type.Fields {
 		schema.History = schema.History || field.Name == "history"
 		schema.Comments = schema.Comments || field.Name == "comments"
+		schema.Relations = schema.Relations || field.Name == "relations"
+		schema.InverseRelations = schema.InverseRelations || field.Name == "inverseRelations"
 	}
 	if err := c.store.Put("linearschema", id, schema); err != nil {
 		return schema, fault("ERR_AUDIT_FAILED", "falha ao persistir schema Linear")
@@ -71,7 +77,7 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 		if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
 			return err
 		}
-		for _, collection := range []string{"history", "comments"} {
+		for _, collection := range []string{"history", "comments", "relations", "inverseRelations"} {
 			d.Coverage = append(d.Coverage, c.coverage(r, collection, "partial", 0, "schema Linear não acessível"))
 		}
 		return nil
@@ -86,7 +92,7 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 	for _, collection := range []struct {
 		name, gql string
 		available bool
-	}{{"history", linearHistoryQuery, schema.History}, {"comments", linearCommentsQuery, schema.Comments}} {
+	}{{"history", linearHistoryQuery, schema.History}, {"comments", linearCommentsQuery, schema.Comments}, {"relations", linearRelationsQuery, schema.Relations}, {"inverseRelations", linearInverseRelationsQuery, schema.InverseRelations}} {
 		if !collection.available {
 			d.Coverage = append(d.Coverage, c.coverage(r, collection.name, "unsupported", 0, "campo ausente no schema Linear consultado"))
 			continue
@@ -137,8 +143,18 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 					if err := c.projectLinearHistory(plan, issue, raw, d, run); err != nil {
 						return err
 					}
-				} else if err := c.projectLinearComment(plan, issue, raw, d, run); err != nil {
-					return err
+				} else if collection.name == "comments" {
+					if err := c.projectLinearComment(plan, issue, raw, d, run); err != nil {
+						return err
+					}
+				} else {
+					valid, err := c.projectLinearRelation(plan, issue, collection.name, raw, d, run)
+					if err != nil {
+						return err
+					}
+					if !valid {
+						status, reason = "partial", "relação Linear inválida, divergente ou posterior à janela"
+					}
 				}
 			}
 		}
@@ -318,4 +334,46 @@ func (c *Core) projectLinearComment(plan contract.Plan, issue query.Issue, raw j
 		return fault("ERR_AUDIT_FAILED", "falha ao auditar comentário Linear")
 	}
 	return nil
+}
+
+func (c *Core) projectLinearRelation(plan contract.Plan, issue query.Issue, collection string, raw json.RawMessage, d *query.Dataset, run *contract.Run) (bool, error) {
+	var relation struct {
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		UpdatedAt string `json:"updatedAt"`
+		Issue     struct {
+			ID string `json:"id"`
+		} `json:"issue"`
+		RelatedIssue struct {
+			ID string `json:"id"`
+		} `json:"relatedIssue"`
+	}
+	if json.Unmarshal(raw, &relation) != nil || relation.ID == "" || relation.Type == "" || !timestampInWindow("", plan.WindowEnd, relation.UpdatedAt) || relation.Issue.ID == "" || relation.RelatedIssue.ID == "" {
+		return false, nil
+	}
+	queriedID := strings.TrimPrefix(issue.ID, "linear-")
+	if (collection == "relations" && relation.Issue.ID != queriedID) || (collection == "inverseRelations" && relation.RelatedIssue.ID != queriedID) {
+		return false, nil
+	}
+	if relation.Type != "blocks" {
+		return true, nil
+	}
+	e, err := c.evidence("linear", "relation:"+relation.ID, relation.UpdatedAt, raw)
+	if err != nil {
+		return false, err
+	}
+	upsertEvidence(d, e)
+	upsertLink(d, contract.LinkRecord{
+		ID:         "link-" + storage.Hash([]byte("linear:relation:" + relation.ID))[:24],
+		SourceID:   "linear-" + relation.RelatedIssue.ID,
+		Relation:   "blocked_by",
+		TargetID:   "linear-" + relation.Issue.ID,
+		Status:     "direct",
+		EvidenceID: e.ID,
+	})
+	run.Items++
+	if !c.saveRun(run) {
+		return false, fault("ERR_AUDIT_FAILED", "falha ao auditar relação Linear")
+	}
+	return true, nil
 }
