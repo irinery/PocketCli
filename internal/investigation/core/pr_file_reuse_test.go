@@ -21,6 +21,10 @@ func TestRefreshKeepsOldHeadFileMappings(t *testing.T) {
 			{ID: "future-component", SourceID: "old-file", Relation: "maps_to_component", TargetID: "future-manifest", ValidFrom: "2026-03-01T00:00:00Z", EvidenceID: "ev-future"},
 			{ID: "other-pr-file", SourceID: "pr-2", Relation: "modifies_file", TargetID: "unrelated-file", EvidenceID: "ev-other"},
 		},
+		Events: []query.Event{
+			{ID: "old-rename", EntityID: "old-file", Type: "file_rename_reported", EventAt: "2026-01-04T00:00:00Z", ObservedAt: "2026-01-10T00:00:00Z", OldValue: "services/api/old.go", NewValue: "services/api/handler.go", EvidenceID: "ev-rename"},
+			{ID: "unrelated-rename", EntityID: "unrelated-file", Type: "file_rename_reported", ObservedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-unrelated-rename"},
+		},
 	}
 	current := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-1", HeadSHA: "new-head"}}}
 	referenced := make(map[string]bool)
@@ -31,7 +35,10 @@ func TestRefreshKeepsOldHeadFileMappings(t *testing.T) {
 	if len(current.Components) != 2 || current.Components[0].ID != "old-file" || current.Components[1].ID != "old-manifest" {
 		t.Fatalf("componentes históricos não preservados: %+v", current.Components)
 	}
-	if !referenced["ev-pr-file"] || !referenced["ev-file-component"] || referenced["ev-future"] || referenced["ev-other"] {
+	if len(current.Events) != 1 || current.Events[0].ID != "old-rename" || current.Events[0].EventAt != "" {
+		t.Fatalf("rename observado no head antigo não preservado: %+v", current.Events)
+	}
+	if !referenced["ev-pr-file"] || !referenced["ev-file-component"] || !referenced["ev-rename"] || referenced["ev-future"] || referenced["ev-other"] || referenced["ev-unrelated-rename"] {
 		t.Fatalf("evidências históricas incorretas: %+v", referenced)
 	}
 }
