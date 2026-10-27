@@ -55,6 +55,12 @@ type fakeGitObserver struct {
 	branchErrors      map[string]error
 	revertTargets     map[string]string
 	revertUninspected map[string]bool
+	ancestorResults   map[string]bool
+}
+
+func (f *fakeGitObserver) IsAncestor(_ context.Context, ancestor, descendant string) (bool, bool, error) {
+	result, known := f.ancestorResults[ancestor+":"+descendant]
+	return result, known, nil
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
@@ -214,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.9.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.10.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {

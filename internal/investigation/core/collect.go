@@ -182,6 +182,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 	if err := c.linkDataset(plan, &d); err != nil {
 		return d, err
 	}
+	if err := c.mapDeliveryAncestry(ctx, plan, &d, run); err != nil {
+		return d, err
+	}
 	d = rules.Evaluate(d)
 	canonicalizeDataset(&d)
 	return d, nil
