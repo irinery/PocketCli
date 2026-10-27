@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -20,6 +21,21 @@ var fixingReference = regexp.MustCompile(`(?i)\bfixes\s+#([1-9][0-9]*)\b`)
 var pullReference = regexp.MustCompile(`(?i)\b(?:PR|pull request)\s*#([1-9][0-9]*)\b`)
 var apiIssueURL = regexp.MustCompile(`(?i)^https://api\.github\.com/repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)$`)
 var apiPullURL = regexp.MustCompile(`(?i)^https://api\.github\.com/repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/pulls/([1-9][0-9]*)$`)
+var pullOwner = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+var pullRepo = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+var pullNumber = regexp.MustCompile(`^[1-9][0-9]*$`)
+
+func exactGitHubPullKey(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 4 || parts[2] != "pull" || !pullOwner.MatchString(parts[0]) || !pullRepo.MatchString(parts[1]) || !pullNumber.MatchString(parts[3]) || u.EscapedPath() != u.Path {
+		return "", false
+	}
+	return strings.ToLower(parts[0] + "/" + parts[1] + "#" + parts[3]), true
+}
 
 func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 	issues := make(map[string]query.Issue, len(d.Issues))
@@ -33,6 +49,20 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 	linked := make(map[string]bool)
 	for _, link := range d.Links {
 		linked[link.ID] = true
+	}
+	for _, attachment := range d.Attachments {
+		if attachment.PullKey == "" || attachment.IssueID == "" || attachment.EvidenceID == "" {
+			continue
+		}
+		pr, ok := prs[attachment.PullKey]
+		if !ok || pr.ID == "" {
+			continue
+		}
+		id := "link-" + storage.Hash([]byte(attachment.IssueID + ":references_pr:" + pr.ID + ":" + attachment.EvidenceID))[:24]
+		if !linked[id] {
+			linked[id] = true
+			d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: attachment.IssueID, Relation: "references_pr", TargetID: pr.ID, Status: "direct", EvidenceID: attachment.EvidenceID})
+		}
 	}
 	addMention := func(issue query.Issue, pr query.PullRequest, evidenceID string) {
 		if issue.ID == "" || pr.ID == "" || evidenceID == "" {
@@ -188,7 +218,7 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 	for _, issue := range d.Issues {
 		if issue.Source == "linear" {
 			status = "partial"
-			reason = "vínculos formais entre issues Linear e PRs ainda não são coletados"
+			reason = "anexos Linear podem confirmar vínculos, mas a ausência de vínculos formais não está demonstrada"
 			break
 		}
 	}

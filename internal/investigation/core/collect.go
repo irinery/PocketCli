@@ -727,7 +727,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 		return err
 	}
 	if status != "complete" {
-		for _, name := range []string{"history", "comments", "relations", "inverseRelations"} {
+		for _, name := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
 			d.Coverage = append(d.Coverage, c.coverage(r, name, "partial", 0, "coleta de issues pendente"))
 		}
 	} else if plan.Input.LinearEnabled {
@@ -735,7 +735,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			return err
 		}
 	} else {
-		for _, name := range []string{"history", "comments", "relations", "inverseRelations"} {
+		for _, name := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
 			d.Coverage = append(d.Coverage, c.coverage(r, name, "not_selected", 0, "fonte Linear desabilitada no plano"))
 		}
 	}

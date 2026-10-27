@@ -118,3 +118,78 @@ func TestLinearBlockingRelationPaginatesBothDirectionsAndFeedsRule(t *testing.T)
 		t.Fatalf("relação posterior ao snapshot entrou na análise: valid=%v err=%v links=%+v", valid, err, d.Links)
 	}
 }
+
+func TestLinearAttachmentPaginatesAndConfirmsOnlyCollectedPullRequest(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "test-linear", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		var input struct {
+			Query     string            `json:"query"`
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.Unmarshal(body, &input); err != nil {
+			t.Fatal(err)
+		}
+		response := `{"data":{"__type":{"fields":[{"name":"attachments"}]}}}`
+		if strings.Contains(input.Query, "IssueAttachments") {
+			calls++
+			if input.Variables["id"] != "issue-1" {
+				t.Fatalf("issue inesperada: %+v", input.Variables)
+			}
+			if input.Variables["after"] == "" {
+				response = `{"data":{"issue":{"id":"issue-1","attachments":{"nodes":[{"id":"a-1","url":"https://github.com/acme/api/pull/7","createdAt":"2026-01-02T00:00:00Z","updatedAt":"2026-01-03T00:00:00Z"}],"pageInfo":{"hasNextPage":true,"endCursor":"next"}}}}}`
+			} else if input.Variables["after"] == "next" {
+				response = `{"data":{"issue":{"id":"issue-1","attachments":{"nodes":[{"id":"a-2","url":"https://github.com/acme/api/pull/8","createdAt":"2026-01-02T00:00:00Z","updatedAt":"2026-01-03T00:00:00Z"}],"pageInfo":{"hasNextPage":false}}}}}`
+			} else {
+				t.Fatalf("cursor inesperado: %+v", input.Variables)
+			}
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"issue-evidence", "pr-evidence"} {
+		if err := store.Put("objects", id, json.RawMessage(`{"body":""}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := contract.Plan{ID: "attachment-plan", InvestigationID: "attachment-investigation", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+	d := query.Dataset{Issues: []query.Issue{{ID: "linear-issue-1", Source: "linear", Identifier: "OPS-1", TeamID: "team-1", EvidenceID: "issue-evidence"}}, PullRequests: []query.PullRequest{{ID: "pr-7", Repository: "acme/api", Number: 7, EvidenceID: "pr-evidence"}}}
+	run := &contract.Run{ID: "attachment-run"}
+	if err := c.collectLinearChildren(context.Background(), plan, contract.Resource{Source: "linear", ID: "team-1"}, &d, run); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(d.Attachments) != 2 {
+		t.Fatalf("paginação de anexos falhou: calls=%d attachments=%+v", calls, d.Attachments)
+	}
+	if err := c.linkDataset(plan, &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Links) != 1 || d.Links[0].SourceID != "linear-issue-1" || d.Links[0].TargetID != "pr-7" || d.Links[0].Relation != "references_pr" || d.Links[0].EvidenceID == "" {
+		t.Fatalf("anexo não confirmou somente PR coletado: %+v", d.Links)
+	}
+	foundAttachments := false
+	for _, cov := range d.Coverage {
+		if cov.Collection == "attachments" && (cov.Status != "complete" || cov.Observed != 2) {
+			t.Fatalf("cobertura de anexos incorreta: %+v", cov)
+		}
+		foundAttachments = foundAttachments || cov.Collection == "attachments"
+	}
+	if !foundAttachments {
+		t.Fatal("cobertura de anexos ausente")
+	}
+	late := json.RawMessage(`{"id":"a-3","url":"https://github.com/acme/api/pull/7","createdAt":"2026-01-02T00:00:00Z","updatedAt":"2026-03-01T00:00:00Z"}`)
+	if valid, err := c.projectLinearAttachment(plan, d.Issues[0], late, &d, run); err != nil || valid || len(d.Attachments) != 2 {
+		t.Fatalf("anexo posterior ao snapshot foi promovido: valid=%v err=%v attachments=%+v", valid, err, d.Attachments)
+	}
+}
