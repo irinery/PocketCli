@@ -106,6 +106,53 @@ func TestUnclassifiedGitHubClosureCannotAnchorThirtyDayRework(t *testing.T) {
 	}
 }
 
+func TestExplicitIssueOutcomesSeparateCancelledDuplicatesAndDeliveries(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues: []query.Issue{
+			{ID: "delivered", Source: "linear", State: "completed", Outcome: "completed", TeamID: "team-a", CompletedAt: "2026-01-08T00:00:00Z"},
+			{ID: "cancelled", Source: "linear", State: "canceled", Outcome: "cancelled", TeamID: "team-a", CompletedAt: "2026-01-09T00:00:00Z", EvidenceID: "ev-cancelled"},
+			{ID: "duplicate", Source: "github", State: "closed", Outcome: "duplicate", TeamID: "team-a", CompletedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-duplicate"},
+			{ID: "not-planned", Source: "github", State: "closed", Outcome: "not_planned", TeamID: "team-a", CompletedAt: "2026-01-11T00:00:00Z", EvidenceID: "ev-not-planned"},
+			{ID: "unknown", Source: "github", State: "closed", Outcome: "unknown", TeamID: "team-a", CompletedAt: "2026-01-12T00:00:00Z"},
+		},
+	}
+	out := Evaluate(d)
+	values := make(map[string]contract.Metric)
+	for _, metric := range out.Metrics {
+		values[metric.ID] = metric
+	}
+	want := map[string]string{
+		"metric-completed":                 "1",
+		"metric-issue-outcome-completed":   "1",
+		"metric-issue-outcome-cancelled":   "1",
+		"metric-issue-outcome-duplicate":   "1",
+		"metric-issue-outcome-not-planned": "1",
+		"metric-issue-outcome-unknown":     "1",
+	}
+	for id, value := range want {
+		if values[id].Value.Value != value || values[id].EligibleSize == nil && id != "metric-completed" {
+			t.Fatalf("outcome metric %s=%+v, want %s", id, values[id], value)
+		}
+	}
+	teamCompleted := values[metricID("metric-completed-team", "team-a")]
+	if teamCompleted.Value.Value != "1" {
+		t.Fatalf("cancelled or duplicate issue entered team deliveries: %+v", teamCompleted)
+	}
+	var classifiedFindings int
+	for _, finding := range out.Findings {
+		if finding.RuleID == "R-OUTCOME-001" {
+			classifiedFindings++
+			if finding.EvidenceStatus != "direct" || len(finding.EvidenceIDs) != 1 {
+				t.Fatalf("classification lost source evidence: %+v", finding)
+			}
+		}
+	}
+	if classifiedFindings != 3 {
+		t.Fatalf("non-delivery outcomes missing from report: %+v", out.Findings)
+	}
+}
+
 func TestPeriodMetricsExcludeOldCompletionAndReviewAfterMetadataEdit(t *testing.T) {
 	wait := int64(3600)
 	d := query.Dataset{

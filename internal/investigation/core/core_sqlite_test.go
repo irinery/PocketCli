@@ -214,8 +214,15 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.2.1" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.3.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
+	}
+	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
+		t.Fatalf("published window differs from confirmed plan: snapshot=%+v plan=%+v", snapshot, plan)
+	}
+	windowRow, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT window_start, window_end FROM v_snapshot"})
+	if err != nil || len(windowRow.Rows) != 1 || len(windowRow.Rows[0]) != 2 || windowRow.Rows[0][0].Value != plan.WindowStart || windowRow.Rows[0][1].Value != plan.WindowEnd {
+		t.Fatalf("SQL window differs from confirmed plan: result=%+v err=%v", windowRow, err)
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_pull_requests"})
 	if err != nil {
@@ -944,6 +951,72 @@ func TestLinearJournalResumesFromCommittedCursor(t *testing.T) {
 	}
 	if firstCalls != 1 || secondCalls != 2 || len(second.Issues) != 2 || second.Coverage[0].Status != "partial" {
 		t.Fatalf("resume calls=%d,%d issues=%d coverage=%+v", firstCalls, secondCalls, len(second.Issues), second.Coverage)
+	}
+}
+
+func TestLinearCancelledAndDuplicateIssuesDoNotBecomeDeliveries(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "linear-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		payload := `{"data":{"issues":{"nodes":[{"id":"done","identifier":"T-1","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-10T00:00:00Z","completedAt":"2026-01-08T00:00:00Z","state":{"name":"Done","type":"completed"}},{"id":"cancelled","identifier":"T-2","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-10T00:00:00Z","completedAt":"2026-01-09T00:00:00Z","state":{"name":"Won't Do","type":"canceled"}},{"id":"duplicate","identifier":"T-3","createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-10T00:00:00Z","completedAt":"2026-01-09T00:00:00Z","state":{"name":"Duplicate","type":"canceled"}}],"pageInfo":{"hasNextPage":false}}}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(payload))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "plan-linear-outcomes", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
+	d := query.Dataset{Snapshot: contract.Snapshot{WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd}}
+	if err := c.collectTeam(context.Background(), plan, contract.Resource{Source: "linear", ID: "team-1", Name: "T"}, &d, &contract.Run{ID: "run-linear-outcomes"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Issues) != 3 || d.Issues[0].Outcome != "completed" || d.Issues[0].CompletedAt == "" || d.Issues[1].Outcome != "cancelled" || d.Issues[1].CompletedAt != "" || d.Issues[2].Outcome != "duplicate" || d.Issues[2].CompletedAt != "" {
+		t.Fatalf("Linear outcome projection: %+v", d.Issues)
+	}
+	for _, metric := range rules.Evaluate(d).Metrics {
+		if metric.ID == "metric-completed" {
+			if metric.Value.Value != "1" {
+				t.Fatalf("cancelled or duplicate counted as delivery: %+v", metric)
+			}
+			return
+		}
+	}
+	t.Fatal("completion metric missing")
+}
+
+func TestRetainedIssueReclassifiesFromPrivateEvidence(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secrets.NewSessionStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, source, raw, want string
+	}{
+		{"github-not-planned", "github", `{"state":"closed","state_reason":"not_planned","closed_at":"2026-01-09T00:00:00Z"}`, "not_planned"},
+		{"linear-duplicate", "linear", `{"state":{"name":"Duplicate","type":"canceled"},"completedAt":"2026-01-09T00:00:00Z"}`, "duplicate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence, err := c.evidence(tc.source, tc.name, "2026-01-09T00:00:00Z", json.RawMessage(tc.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			seconds := int64(3600)
+			prior := query.Issue{ID: tc.name, Source: tc.source, EvidenceID: evidence.ID, StartedAt: "2026-01-08T00:00:00Z", CompletedAt: "2026-01-09T00:00:00Z", DurationValid: true, CycleSeconds: &seconds}
+			got, err := c.classifyRetainedIssue(prior)
+			if err != nil || got.Outcome != tc.want || got.CompletedAt != "" || got.DurationValid || got.CycleSeconds != nil {
+				t.Fatalf("old projection retained false delivery: issue=%+v err=%v", got, err)
+			}
+		})
 	}
 }
 

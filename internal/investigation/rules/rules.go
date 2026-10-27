@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.2.1"
+const Version = "1.3.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -59,6 +59,23 @@ func Evaluate(d query.Dataset) query.Dataset {
 		if c.Status != "complete" && c.Status != "not_selected" {
 			d.Findings = append(d.Findings, finding("R-COVER-001", "info", c.Source+":"+c.ResourceID+":"+c.Collection, "Lacuna de cobertura", fmt.Sprintf("A coleção %s de %s está %s: %s", c.Collection, c.ResourceID, c.Status, c.Reason), "unknown", nil, "Nenhuma conclusão negativa sobre a fonte decorre desta lacuna."))
 		}
+	}
+	for _, issue := range d.Issues {
+		if issue.IsContext || issue.EvidenceID == "" {
+			continue
+		}
+		var title, body string
+		switch issue.Outcome {
+		case "cancelled":
+			title, body = "Issue cancelada no estado observado", "A fonte classifica o estado atual desta issue como cancelado."
+		case "duplicate":
+			title, body = "Issue duplicada no estado observado", "A fonte classifica o estado atual desta issue como duplicado."
+		case "not_planned":
+			title, body = "Issue não planejada no estado observado", "O GitHub registra o fechamento atual desta issue como não planejado."
+		default:
+			continue
+		}
+		d.Findings = append(d.Findings, finding("R-OUTCOME-001", "info", issue.ID, title, body, "direct", []string{issue.EvidenceID}, "Classificação da representação atual; não determina quando ou por que essa decisão ocorreu."))
 	}
 	if completeLinks {
 		for _, i := range d.Issues {
@@ -247,11 +264,11 @@ func isOpen(s string) bool {
 func metrics(d query.Dataset) []contract.Metric {
 	completed := int64(0)
 	for _, i := range d.Issues {
-		if !i.IsContext && observedInWindow(i.CompletedAt, d.Snapshot) {
+		if completedIssueInWindow(i, d.Snapshot) {
 			completed++
 		}
 	}
-	out := []contract.Metric{{ID: "metric-completed", Name: "Entregas registradas", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(completed, 10)}, Unit: "items", SampleSize: completed, Definition: "Issues não contextuais com completed_at na janela selecionada", Limitations: []string{"Não é score de produtividade; depende da cobertura."}}}
+	out := []contract.Metric{{ID: "metric-completed", Name: "Entregas registradas", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(completed, 10)}, Unit: "items", SampleSize: completed, Definition: "Issues não contextuais com completed_at na janela e sem classificação contrária à conclusão", Limitations: []string{"Não é score de produtividade; depende da cobertura. Snapshots antigos sem classificação requerem cautela."}}}
 	waits := make([]int64, 0)
 	for _, p := range d.PullRequests {
 		if p.ReviewWaitSeconds != nil && *p.ReviewWaitSeconds >= 0 && p.ReadyAt != "" && observedInWindow(p.FirstHumanReviewAt, d.Snapshot) {
@@ -273,10 +290,15 @@ func metrics(d query.Dataset) []contract.Metric {
 		out = append(out, contract.Metric{ID: "metric-review-median", Name: "Espera mediana por revisão", Value: contract.Cell{Kind: "real", Value: strconv.FormatFloat(median, 'f', -1, 64)}, Unit: "seconds", SampleSize: int64(n), Definition: "Mediana convencional de ready_at até primeira revisão humana", Limitations: limitations}, contract.Metric{ID: "metric-review-p85", Name: "Espera p85 por revisão", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(p85, 10)}, Unit: "seconds", SampleSize: int64(n), Definition: "Nearest rank ceil(0.85*n)", Limitations: limitations})
 	}
 	out = append(out, actorMetrics(d)...)
+	out = append(out, issueOutcomeMetrics(d)...)
 	out = append(out, estimateMetrics(d)...)
 	out = append(out, reworkMetrics(d)...)
 	out = append(out, reworkWindowMetrics(d)...)
 	out = append(out, cycleTimeMetrics(d)...)
 	out = append(out, openAgingMetrics(d)...)
 	return out
+}
+
+func completedIssueInWindow(issue query.Issue, snapshot contract.Snapshot) bool {
+	return !issue.IsContext && (issue.Outcome == "" || issue.Outcome == "completed") && observedInWindow(issue.CompletedAt, snapshot)
 }

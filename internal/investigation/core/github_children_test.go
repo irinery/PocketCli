@@ -97,10 +97,11 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 func TestGitHubClosedAtOnlyMarksCurrentlyClosedIssue(t *testing.T) {
 	responses := map[string]string{
 		"/repos/acme/api/pulls":              `[]`,
-		"/repos/acme/api/issues":             `[{"id":200,"number":8,"title":"Completed issue","state":"closed","state_reason":"completed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"},{"id":201,"number":9,"title":"Not planned issue","state":"closed","state_reason":"not_planned","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"},{"id":202,"number":10,"title":"Unknown reason","state":"closed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"}]`,
+		"/repos/acme/api/issues":             `[{"id":200,"number":8,"title":"Completed issue","state":"closed","state_reason":"completed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"},{"id":201,"number":9,"title":"Not planned issue","state":"closed","state_reason":"not_planned","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"},{"id":202,"number":10,"title":"Unknown reason","state":"closed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"},{"id":203,"number":11,"title":"Duplicate issue","state":"closed","state_reason":"duplicate","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","closed_at":"2026-01-03T00:00:00Z"}]`,
 		"/repos/acme/api/issues/8/timeline":  `[{"id":23,"event":"closed","created_at":"2026-01-03T00:00:00Z","actor":{"id":1}}]`,
 		"/repos/acme/api/issues/9/timeline":  `[{"id":24,"event":"closed","created_at":"2026-01-03T00:00:00Z","actor":{"id":1}}]`,
 		"/repos/acme/api/issues/10/timeline": `[{"id":25,"event":"closed","created_at":"2026-01-03T00:00:00Z","actor":{"id":1}}]`,
+		"/repos/acme/api/issues/11/timeline": `[{"id":26,"event":"closed","created_at":"2026-01-03T00:00:00Z","actor":{"id":1}}]`,
 	}
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		body, ok := responses[r.URL.Path]
@@ -129,7 +130,7 @@ func TestGitHubClosedAtOnlyMarksCurrentlyClosedIssue(t *testing.T) {
 	if err := c.collectRepository(context.Background(), plan, contract.Resource{Source: "github", ID: "42", Name: "acme/api"}, contract.Snapshot{}, &d, &contract.Run{ID: "run-closed"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Issues) != 3 || d.Issues[0].CompletedAt != "2026-01-03T00:00:00Z" || d.Issues[1].CompletedAt != "" || d.Issues[2].CompletedAt != "" {
+	if len(d.Issues) != 4 || d.Issues[0].CompletedAt != "2026-01-03T00:00:00Z" || d.Issues[1].CompletedAt != "" || d.Issues[2].CompletedAt != "" || d.Issues[3].CompletedAt != "" || d.Issues[0].Outcome != "completed" || d.Issues[1].Outcome != "not_planned" || d.Issues[2].Outcome != "unknown" || d.Issues[3].Outcome != "duplicate" {
 		t.Fatalf("closed_at without completed reason was counted as delivery: %+v", d.Issues)
 	}
 	classified, unclassified := 0, 0
@@ -143,7 +144,7 @@ func TestGitHubClosedAtOnlyMarksCurrentlyClosedIssue(t *testing.T) {
 			unclassified++
 		}
 	}
-	if classified != 1 || unclassified != 2 {
+	if classified != 1 || unclassified != 3 {
 		t.Fatalf("close reason projection: %+v", d.Events)
 	}
 	for _, metric := range rules.Evaluate(d).Metrics {
