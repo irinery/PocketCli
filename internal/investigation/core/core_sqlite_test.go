@@ -1333,6 +1333,10 @@ func TestGitRefObservationFeedsSnapshotEvidenceAndNextRound(t *testing.T) {
 	if len(first.Evidence) != 1 || len(first.Events) != 1 || len(first.Coverage) != 3 || first.Coverage[0].Status != "complete" || first.Coverage[1].Status != "partial" || run.Bytes != 300 {
 		t.Fatalf("first=%+v run=%+v", first, run)
 	}
+	firstStats, err := c.RunStats(context.Background(), run.ID)
+	if err != nil || firstStats.GitObjectBytesAdded != 300 || firstStats.GitRefBytesAdded != 300 {
+		t.Fatalf("Git object bytes after first fetch=%+v err=%v", firstStats, err)
+	}
 	observer.result = gitmirror.Observation{Ref: "refs/heads/main", NewOID: strings.Repeat("b", 40), Relationship: "advanced", GraphComplete: true, LocalBytes: 200}
 	retry := query.Dataset{}
 	if err := c.collectGitRef(context.Background(), plan, resource, &retry, &run); err != nil {
@@ -1351,6 +1355,10 @@ func TestGitRefObservationFeedsSnapshotEvidenceAndNextRound(t *testing.T) {
 	}
 	if len(observer.priors) != 2 || observer.priors[1].OID != strings.Repeat("a", 40) || second.Events[0].Type != "ref_advanced_observed" || second.Events[0].EvidenceID == first.Events[0].EvidenceID || run.Bytes != 500 {
 		t.Fatalf("prior=%+v second=%+v run=%+v", observer.priors, second, run)
+	}
+	secondStats, err := c.RunStats(context.Background(), run.ID)
+	if err != nil || secondStats.GitObjectBytesAdded != 500 || secondStats.GitRefBytesAdded != 500 {
+		t.Fatalf("Git object bytes after second fetch=%+v err=%v", secondStats, err)
 	}
 }
 

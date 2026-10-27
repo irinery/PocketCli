@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 
@@ -29,8 +30,28 @@ const (
 )
 
 type RunStats struct {
-	RunID        string `json:"run_id"`
-	ReuseCounter int64  `json:"reuse_counter"`
+	RunID               string `json:"run_id"`
+	ReuseCounter        int64  `json:"reuse_counter"`
+	GitObjectBytesAdded int64  `json:"git_object_bytes_added"`
+	GitRefBytesAdded    int64  `json:"git_ref_bytes_added"`
+	GitBranchBytesAdded int64  `json:"git_branch_bytes_added"`
+	GitTreeBytesAdded   int64  `json:"git_tree_bytes_added"`
+}
+
+type GitObjectSource string
+
+const (
+	GitRefObjects    GitObjectSource = "ref"
+	GitBranchObjects GitObjectSource = "branch"
+	GitTreeObjects   GitObjectSource = "tree"
+)
+
+func validRunStats(stats RunStats, runID string) bool {
+	return stats.RunID == runID && stats.ReuseCounter >= 0 && stats.GitObjectBytesAdded >= 0 &&
+		stats.GitRefBytesAdded >= 0 && stats.GitBranchBytesAdded >= 0 && stats.GitTreeBytesAdded >= 0 &&
+		stats.GitRefBytesAdded <= stats.GitObjectBytesAdded &&
+		stats.GitBranchBytesAdded <= stats.GitObjectBytesAdded-stats.GitRefBytesAdded &&
+		stats.GitTreeBytesAdded == stats.GitObjectBytesAdded-stats.GitRefBytesAdded-stats.GitBranchBytesAdded
 }
 
 type runIDContextKey struct{}
@@ -56,13 +77,54 @@ func RecordReuse(store CacheStore, runID string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística de cache corrompida"}
 	}
-	if err == nil && (stats.RunID != runID || stats.ReuseCounter < 0) {
+	if err == nil && !validRunStats(stats, runID) {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística de cache corrompida"}
 	}
 	stats.RunID = runID
 	stats.ReuseCounter++
 	if err := store.Put(runStatsKind, runID, stats); err != nil {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao auditar reaproveitamento"}
+	}
+	return nil
+}
+
+// RecordGitObjectBytes records the mirror's observed size growth or peak during
+// object fetches. This is a conservative local proxy, not wire-level traffic.
+func RecordGitObjectBytes(store CacheStore, runID string, source GitObjectSource, added int64) error {
+	if added < 0 {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "contagem de objetos Git inválida"}
+	}
+	if source != GitRefObjects && source != GitBranchObjects && source != GitTreeObjects {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "origem de objetos Git inválida"}
+	}
+	if store == nil || runID == "" || added == 0 {
+		return nil
+	}
+	stats := RunStats{RunID: runID}
+	err := store.Get(runStatsKind, runID, &stats)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística Git corrompida"}
+	}
+	if err == nil && !validRunStats(stats, runID) {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística Git corrompida"}
+	}
+	var category *int64
+	switch source {
+	case GitRefObjects:
+		category = &stats.GitRefBytesAdded
+	case GitBranchObjects:
+		category = &stats.GitBranchBytesAdded
+	case GitTreeObjects:
+		category = &stats.GitTreeBytesAdded
+	}
+	if stats.GitObjectBytesAdded > math.MaxInt64-added || *category > math.MaxInt64-added {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "contagem de objetos Git excedida"}
+	}
+	stats.RunID = runID
+	stats.GitObjectBytesAdded += added
+	*category += added
+	if err := store.Put(runStatsKind, runID, stats); err != nil {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao auditar objetos Git"}
 	}
 	return nil
 }

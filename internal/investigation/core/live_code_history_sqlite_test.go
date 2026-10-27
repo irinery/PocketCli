@@ -140,5 +140,8 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if secondStats.ReuseCounter <= firstStats.ReuseCounter {
 		t.Fatalf("refresh não demonstrou reuso: %d -> %d", firstStats.ReuseCounter, secondStats.ReuseCounter)
 	}
-	t.Logf("primeira rodada: requests=%d bytes=%d registros=%d coberturas=%d; refresh: requests=%d bytes=%d reuso=%d->%d", run.Requests, run.Bytes, run.Items, len(d.Coverage), secondRun.Requests, secondRun.Bytes, firstStats.ReuseCounter, secondStats.ReuseCounter)
+	if firstStats.GitRefBytesAdded <= 0 || secondStats.GitRefBytesAdded != 0 {
+		t.Fatalf("ref padrão idêntica baixada outra vez ou contagem ausente: first=%d refresh=%d", firstStats.GitRefBytesAdded, secondStats.GitRefBytesAdded)
+	}
+	t.Logf("primeira rodada: requests=%d bytes=%d registros=%d coberturas=%d git_ref_bytes=%d; refresh: requests=%d bytes=%d reuso=%d->%d git_ref_bytes=%d git_branch_bytes=%d git_tree_bytes=%d", run.Requests, run.Bytes, run.Items, len(d.Coverage), firstStats.GitRefBytesAdded, secondRun.Requests, secondRun.Bytes, firstStats.ReuseCounter, secondStats.ReuseCounter, secondStats.GitRefBytesAdded, secondStats.GitBranchBytesAdded, secondStats.GitTreeBytesAdded)
 }
