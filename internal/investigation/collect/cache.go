@@ -32,9 +32,15 @@ type RunStats struct {
 }
 
 type runIDContextKey struct{}
+type auditIDContextKey struct{}
 
 func WithRunID(ctx context.Context, runID string) context.Context {
-	return context.WithValue(ctx, runIDContextKey{}, runID)
+	return context.WithValue(WithAuditID(ctx, runID), runIDContextKey{}, runID)
+}
+
+// WithAuditID groups HTTP receipts from plan discovery or a collection run.
+func WithAuditID(ctx context.Context, auditID string) context.Context {
+	return context.WithValue(ctx, auditIDContextKey{}, auditID)
 }
 
 // RecordReuse persists each confirmed cache hit before the run proceeds.
