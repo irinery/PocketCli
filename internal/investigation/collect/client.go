@@ -31,6 +31,8 @@ type Client struct {
 	cacheStore CacheStore
 }
 
+const githubAPIVersion = "2026-03-10"
+
 type etagEntry struct {
 	ETag   string
 	Body   []byte
@@ -136,7 +138,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if source == "github" {
 				req.Header.Set("Authorization", "Bearer "+string(secret))
 				req.Header.Set("Accept", "application/vnd.github+json")
-				req.Header.Set("X-GitHub-Api-Version", "2026-03-10")
+				req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 				if cached.ETag != "" && !skipConditional {
 					req.Header.Set("If-None-Match", cached.ETag)
 				}
@@ -154,7 +156,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			started := time.Now().UTC()
 			res, err := c.HTTP.Do(req)
 			if err != nil {
-				if auditErr := c.recordRequest(ctx, source, method, endpoint, started, 0, 0, nil, false); auditErr != nil {
+				if auditErr := c.recordRequest(ctx, source, method, endpoint, started, 0, 0, nil, false, ""); auditErr != nil {
 					return auditErr
 				}
 				if attempt < 3 {
@@ -175,7 +177,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if cacheHit {
 				auditBody = cached.Body
 			}
-			if auditErr := c.recordRequest(ctx, source, method, endpoint, started, status, int64(len(response)), auditBody, cacheHit); auditErr != nil {
+			if auditErr := c.recordRequest(ctx, source, method, endpoint, started, status, int64(len(response)), auditBody, cacheHit, headers.Get("X-Github-Api-Version-Selected")); auditErr != nil {
 				return auditErr
 			}
 			if err != nil {

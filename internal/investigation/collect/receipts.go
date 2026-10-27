@@ -17,20 +17,22 @@ const requestReceiptKind = "requestreceipts"
 // RequestReceipt records one HTTP attempt. It deliberately contains no URL
 // parameters, request or response body, headers, or credential material.
 type RequestReceipt struct {
-	ID          string    `json:"id"`
-	AuditID     string    `json:"audit_id"`
-	Source      string    `json:"source"`
-	Method      string    `json:"method"`
-	Endpoint    string    `json:"endpoint"`
-	StartedAt   time.Time `json:"started_at"`
-	DurationMS  int64     `json:"duration_ms"`
-	Status      int       `json:"status"`
-	RecordCount int       `json:"record_count"`
-	WireBytes   int64     `json:"wire_bytes"`
-	CacheHit    bool      `json:"cache_hit"`
+	ID                  string    `json:"id"`
+	AuditID             string    `json:"audit_id"`
+	Source              string    `json:"source"`
+	Method              string    `json:"method"`
+	Endpoint            string    `json:"endpoint"`
+	StartedAt           time.Time `json:"started_at"`
+	DurationMS          int64     `json:"duration_ms"`
+	Status              int       `json:"status"`
+	RecordCount         int       `json:"record_count"`
+	WireBytes           int64     `json:"wire_bytes"`
+	CacheHit            bool      `json:"cache_hit"`
+	RequestedAPIVersion string    `json:"requested_api_version,omitempty"`
+	SelectedAPIVersion  string    `json:"selected_api_version,omitempty"`
 }
 
-func (c *Client) recordRequest(ctx context.Context, source, method, endpoint string, started time.Time, status int, wireBytes int64, body []byte, cacheHit bool) error {
+func (c *Client) recordRequest(ctx context.Context, source, method, endpoint string, started time.Time, status int, wireBytes int64, body []byte, cacheHit bool, selectedVersion string) error {
 	auditID, _ := ctx.Value(auditIDContextKey{}).(string)
 	if c.cacheStore == nil || auditID == "" {
 		return nil
@@ -53,6 +55,14 @@ func (c *Client) recordRequest(ctx context.Context, source, method, endpoint str
 		Endpoint: logicalEndpoint(source, endpoint), StartedAt: started,
 		DurationMS: duration, Status: status, RecordCount: recordCount,
 		WireBytes: wireBytes, CacheHit: cacheHit,
+	}
+	if source == "github" {
+		receipt.RequestedAPIVersion = githubAPIVersion
+		if len(selectedVersion) == 10 {
+			if parsed, err := time.Parse("2006-01-02", selectedVersion); err == nil && parsed.Format("2006-01-02") == selectedVersion {
+				receipt.SelectedAPIVersion = selectedVersion
+			}
+		}
 	}
 	if err := c.cacheStore.Put(requestReceiptKind, id, receipt); err != nil {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao persistir recibo HTTP"}
