@@ -20,15 +20,16 @@ import (
 )
 
 type Client struct {
-	HTTP      *http.Client
-	Secrets   contract.SecretProvider
-	GitHubURL string
-	LinearURL string
-	mu        sync.Mutex
-	spacing   map[string]time.Duration
-	next      map[string]time.Time
-	cache     map[string]etagEntry
-	cacheSize int64
+	HTTP       *http.Client
+	Secrets    contract.SecretProvider
+	GitHubURL  string
+	LinearURL  string
+	mu         sync.Mutex
+	spacing    map[string]time.Duration
+	next       map[string]time.Time
+	cache      map[string]etagEntry
+	cacheSize  int64
+	cacheStore CacheStore
 }
 
 type etagEntry struct {
@@ -68,31 +69,39 @@ type Page struct {
 }
 
 func (c *Client) GetGitHub(ctx context.Context, endpoint string) ([]byte, http.Header, int, error) {
+	data, headers, status, _, err := c.GetGitHubWithBytes(ctx, endpoint)
+	return data, headers, status, err
+}
+
+// GetGitHubWithBytes separates bytes received over HTTP from a representation
+// restored after 304. Transfer budgets must use the former.
+func (c *Client) GetGitHubWithBytes(ctx context.Context, endpoint string) ([]byte, http.Header, int, int64, error) {
 	base, err := url.Parse(c.GitHubURL)
 	target, e2 := url.Parse(endpoint)
 	if err != nil || e2 != nil || target.Scheme != "https" || target.Host != base.Host {
-		return nil, nil, 0, &contract.ErrorResponse{Code: "ERR_UNSUPPORTED_SOURCE", Message: "endpoint GitHub não autorizado"}
+		return nil, nil, 0, 0, &contract.ErrorResponse{Code: "ERR_UNSUPPORTED_SOURCE", Message: "endpoint GitHub não autorizado"}
 	}
 	return c.request(ctx, "github", "GET", endpoint, nil)
 }
 
-func (c *Client) request(ctx context.Context, source, method, endpoint string, body io.Reader) ([]byte, http.Header, int, error) {
+func (c *Client) request(ctx context.Context, source, method, endpoint string, body io.Reader) ([]byte, http.Header, int, int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock() // one in-flight external request per client
 	if c.Secrets == nil {
-		return nil, nil, 0, &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: "credencial ausente"}
+		return nil, nil, 0, 0, &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: "credencial ausente"}
 	}
 	var payload []byte
 	if body != nil {
 		var e error
 		payload, e = io.ReadAll(io.LimitReader(body, 256*1024+1))
 		if e != nil || len(payload) > 256*1024 {
-			return nil, nil, 0, &contract.ErrorResponse{Code: "ERR_RESOURCE_EXHAUSTED", Message: "request externa excede limite"}
+			return nil, nil, 0, 0, &contract.ErrorResponse{Code: "ERR_RESOURCE_EXHAUSTED", Message: "request externa excede limite"}
 		}
 	}
 	var response []byte
 	var headers http.Header
 	var status int
+	var wireBytes int64
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
 		cacheKey := ""
 		var cached etagEntry
@@ -101,7 +110,11 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			hash.Write([]byte(source + ":" + endpoint + ":"))
 			hash.Write(secret)
 			cacheKey = hex.EncodeToString(hash.Sum(nil))
-			cached = c.cache[cacheKey]
+			var cacheErr error
+			cached, cacheErr = c.loadCache(cacheKey)
+			if cacheErr != nil {
+				return cacheErr
+			}
 		}
 		skipConditional := false
 		for attempt := 0; attempt < 4; attempt++ {
@@ -144,6 +157,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if len(response) > 10*1024*1024 {
 				return &contract.ErrorResponse{Code: "ERR_RESOURCE_EXHAUSTED", Message: "resposta externa excede 10 MiB"}
 			}
+			wireBytes += int64(len(response))
 			if status == http.StatusNotModified {
 				if cached.ETag != "" && !skipConditional {
 					response = append([]byte(nil), cached.Body...)
@@ -166,7 +180,11 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 					c.cacheSize -= int64(len(old.Body))
 				}
 				copyBody := append([]byte(nil), response...)
-				c.cache[cacheKey] = etagEntry{ETag: headers.Get("ETag"), Body: copyBody, Header: headers.Clone()}
+				entry := etagEntry{ETag: headers.Get("ETag"), Body: copyBody, Header: headers.Clone()}
+				if err := c.saveCache(cacheKey, entry); err != nil {
+					return err
+				}
+				c.cache[cacheKey] = entry
 				c.cacheSize += int64(len(copyBody))
 			}
 			if status == 429 || status == 503 || status >= 500 {
@@ -196,24 +214,24 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 		return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "tentativas esgotadas", Retryable: true}
 	})
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, 0, wireBytes, err
 	}
 	if status == 403 && headers.Get("X-RateLimit-Remaining") == "0" {
-		return nil, nil, status, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite GitHub atingido", Retryable: true}
+		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite GitHub atingido", Retryable: true}
 	}
 	if status == 401 || status == 403 {
-		return nil, nil, status, &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: "leitura negada pela fonte"}
+		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: "leitura negada pela fonte"}
 	}
 	if status == 429 {
-		return nil, nil, status, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite da fonte atingido", Retryable: true}
+		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite da fonte atingido", Retryable: true}
 	}
 	if source == "linear" && status == 400 {
-		return response, headers, status, nil
+		return response, headers, status, wireBytes, nil
 	}
 	if status < 200 || status >= 300 {
-		return nil, nil, status, &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: fmt.Sprintf("fonte retornou HTTP %d", status)}
+		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: fmt.Sprintf("fonte retornou HTTP %d", status)}
 	}
-	return response, headers, status, nil
+	return response, headers, status, wireBytes, nil
 }
 
 func waitUntil(ctx context.Context, t time.Time) error {
@@ -279,7 +297,7 @@ func (c *Client) githubWalk(ctx context.Context, path string, maxPages int, cuto
 		if err != nil || current.Host != base.Host || current.Scheme != "https" {
 			return requests, &contract.ErrorResponse{Code: "ERR_UNSUPPORTED_SOURCE", Message: "paginação fora do host autorizado"}
 		}
-		data, headers, _, err := c.request(ctx, "github", "GET", u, nil)
+		data, headers, _, wireBytes, err := c.request(ctx, "github", "GET", u, nil)
 		requests++
 		if err != nil {
 			return requests, err
@@ -313,7 +331,7 @@ func (c *Client) githubWalk(ctx context.Context, path string, maxPages int, cuto
 				}
 			}
 		}
-		if err := committed(items, u, int64(len(data))); err != nil {
+		if err := committed(items, u, wireBytes); err != nil {
 			return requests, err
 		}
 	}
@@ -348,7 +366,7 @@ func (c *Client) LinearQuery(ctx context.Context, query string, variables map[st
 		Query     string            `json:"query"`
 		Variables map[string]string `json:"variables"`
 	}{query, variables})
-	data, _, _, err := c.request(ctx, "linear", "POST", c.LinearURL, strings.NewReader(string(requestBody)))
+	data, _, _, _, err := c.request(ctx, "linear", "POST", c.LinearURL, strings.NewReader(string(requestBody)))
 	if err != nil {
 		return nil, err
 	}

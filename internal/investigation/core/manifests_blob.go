@@ -33,9 +33,9 @@ func (c *Core) collectManifestBlob(ctx context.Context, plan contract.Plan, r co
 	}
 	if os.IsNotExist(err) {
 		endpoint := c.collector.GitHubURL + "/repos/" + r.Name + "/git/blobs/" + entry.SHA
-		body, _, _, fetchErr := c.collector.GetGitHub(ctx, endpoint)
+		body, _, _, wireBytes, fetchErr := c.collector.GetGitHubWithBytes(ctx, endpoint)
 		run.Requests++
-		run.Bytes += int64(len(body))
+		run.Bytes += wireBytes
 		if !c.saveRun(run) {
 			return facts, evidence, fault("ERR_AUDIT_FAILED", "falha ao auditar blob Git")
 		}

@@ -53,7 +53,9 @@ func NewCore(cfg CoreConfig) (*Core, error) {
 	if err != nil {
 		return nil, fault("ERR_AUDIT_FAILED", "não foi possível criar armazenamento SQL")
 	}
-	c := &Core{setup: NewSetup(cfg.Clock), collector: collect.NewClient(cfg.HTTPClient, cfg.Secrets), store: s, query: q, finalizer: cfg.Finalizer, gitMirror: newGitMirror, runs: make(map[string]context.CancelFunc), locks: make(map[string]func())}
+	collector := collect.NewClient(cfg.HTTPClient, cfg.Secrets)
+	collector.SetCacheStore(s)
+	c := &Core{setup: NewSetup(cfg.Clock), collector: collector, store: s, query: q, finalizer: cfg.Finalizer, gitMirror: newGitMirror, runs: make(map[string]context.CancelFunc), locks: make(map[string]func())}
 	if err := c.recoverInterrupted(); err != nil {
 		return nil, fault("ERR_AUDIT_FAILED", "falha ao recuperar runs interrompidos")
 	}
