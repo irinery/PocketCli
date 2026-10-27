@@ -407,7 +407,7 @@ const realAppJSTemplate = `(() => {
       select.append(option);
     });
     const editor = node('textarea');
-    editor.value = 'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name LIMIT 50';
+    editor.value = 'SELECT id, window_start, window_end FROM v_snapshot';
     const parameters = node('textarea');
     parameters.style.minHeight = '75px';
     parameters.value = '[]';
@@ -421,7 +421,7 @@ const realAppJSTemplate = `(() => {
       result.replaceChildren(node('p', 'loading', 'Consultando…'));
       try {
         const rows = await write('/snapshots/' + segment(snapshot.id) + '/query', {
-          snapshot_id: snapshot.id, sql: editor.value, parameters: JSON.parse(parameters.value), max_rows: 200, timeout_ms: 10000
+          snapshot_id: snapshot.id, sql: editor.value, parameters: JSON.parse(parameters.value), max_rows: 200, timeout_ms: 5000
         });
         result.replaceChildren(node('p', 'muted', rows.returned_rows + ' linhas · ' + rows.elapsed_ms + ' ms' + (rows.truncated ? ' · truncado' : '')));
         result.append(table((rows.columns || []).map(c => c.name), (rows.rows || []).map(row => row.map(c => c.kind === 'null' ? null : c.value))));
