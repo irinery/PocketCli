@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.5.0"
+const Version = "1.6.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -181,10 +181,11 @@ func Evaluate(d query.Dataset) query.Dataset {
 				}
 			}
 		}
-		if l.Relation == "blocked_by" && l.Status == "direct" {
-			target, ok := issueByID[l.TargetID]
-			if ok && !isDone(target.State) {
-				d.Findings = append(d.Findings, finding("R-BLOCK-001", "medium", l.SourceID, "Dependência pendente observada", "Há relação explícita de bloqueio com item ainda não concluído.", "direct", []string{l.EvidenceID, target.EvidenceID}, "Correlação temporal não prova causa adicional."))
+		if l.Relation == "blocked_by" && l.Status == "direct" && l.EvidenceID != "" {
+			source, sourceFound := issueByID[l.SourceID]
+			target, targetFound := issueByID[l.TargetID]
+			if sourceFound && targetFound && source.EvidenceID != "" && target.EvidenceID != "" && issueActiveObserved(source) && issueActiveObserved(target) {
+				d.Findings = append(d.Findings, finding("R-BLOCK-001", "medium", l.SourceID, "Dependência pendente observada", "Há relação explícita de bloqueio entre dois itens com estado ativo observado.", "direct", []string{l.EvidenceID, source.EvidenceID, target.EvidenceID}, "A relação e os estados observados não demonstram quanto tempo houve bloqueio nem sua causa adicional."))
 			}
 		}
 	}
@@ -255,10 +256,14 @@ func isDone(s string) bool {
 }
 func isOpen(s string) bool {
 	switch strings.ToLower(s) {
-	case "open", "todo", "in_progress", "started", "reopened":
+	case "open", "todo", "in_progress", "started", "reopened", "unstarted", "backlog", "triage":
 		return true
 	}
 	return false
+}
+
+func issueActiveObserved(issue query.Issue) bool {
+	return (issue.Outcome == "" || issue.Outcome == "active") && isOpen(issue.State)
 }
 
 func metrics(d query.Dataset) []contract.Metric {

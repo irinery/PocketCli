@@ -214,7 +214,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.5.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.6.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1883,6 +1883,11 @@ func TestLinearHistoryAndCommentsPaginateWithEvidence(t *testing.T) {
 		if coverage.Collection == "history" || coverage.Collection == "comments" {
 			if coverage.Status != "complete" {
 				t.Fatalf("cobertura Linear: %+v", coverage)
+			}
+		}
+		if coverage.Collection == "relations" || coverage.Collection == "inverseRelations" {
+			if coverage.Status != "unsupported" {
+				t.Fatalf("campo de relação ausente virou cobertura completa: %+v", coverage)
 			}
 		}
 	}
