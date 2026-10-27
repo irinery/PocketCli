@@ -34,6 +34,10 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 		return fault("ERR_AUDIT_FAILED", "identidade Git indisponível")
 	}
 	key := storage.Hash([]byte(plan.InvestigationID + ":" + r.ID + ":" + auth.GitHub))
+	heads, graphComplete, err := c.observedGitHeads(plan, r, auth)
+	if err != nil {
+		return fault("ERR_AUDIT_FAILED", "heads Git observadas indisponíveis")
+	}
 	observer, err := c.gitMirror(filepath.Join(c.store.Root, "git", key))
 	if errors.Is(err, gitmirror.ErrUnavailable) {
 		d.Coverage = append(d.Coverage, c.coverage(resource, "git_commits", "unsupported", 0, "git não está disponível neste Agent"))
@@ -50,59 +54,71 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 		}
 	}
 	newCount, invalidDates, selectedReachable := 0, 0, 0
-	complete, err := observer.WalkCommits(ctx, journal.Observation.NewOID, func(commit gitmirror.Commit) (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
+	seenInWalk := make(map[string]bool)
+	complete := true
+	for _, head := range heads {
+		walkComplete, walkErr := observer.WalkCommits(ctx, head.OID, func(commit gitmirror.Commit) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			if _, err := time.Parse(time.RFC3339, commit.CommittedAt); err != nil {
+				if !seenInWalk[commit.OID] {
+					invalidDates++
+					seenInWalk[commit.OID] = true
+				}
+				return true, nil
+			}
+			if !timestampInWindow(plan.WindowStart, plan.WindowEnd, commit.CommittedAt) || seenInWalk[commit.OID] {
+				return true, nil
+			}
+			seenInWalk[commit.OID] = true
+			selectedReachable++
+			if seen[commit.OID] {
+				return true, nil
+			}
+			record, err := json.Marshal(struct {
+				Repository  string `json:"repository"`
+				Ref         string `json:"ref"`
+				CommitOID   string `json:"commit_oid"`
+				CommittedAt string `json:"committed_at"`
+				ObservedAt  string `json:"observed_at"`
+			}{r.Name, head.Name, commit.OID, commit.CommittedAt, journal.ObservedAt})
+			if err != nil {
+				return false, fault("ERR_AUDIT_FAILED", "commit inválido")
+			}
+			evidence, err := c.evidence("git", fmt.Sprintf("%s:commit:%s", r.Name, commit.OID), commit.CommittedAt, record)
+			if err != nil {
+				return false, err
+			}
+			upsertEvidence(d, evidence)
+			upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":commit:" + commit.OID))[:24], EntityID: entityID, Type: "commit_reachable_observed", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
+			seen[commit.OID] = true
+			newCount++
+			run.Items++
+			return newCount < commitsPerRound, nil
+		})
+		if walkErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
 		}
-		if _, err := time.Parse(time.RFC3339, commit.CommittedAt); err != nil {
-			invalidDates++
-			return true, nil
+		if !walkComplete {
+			complete = false
+			break
 		}
-		if !timestampInWindow(plan.WindowStart, plan.WindowEnd, commit.CommittedAt) {
-			return true, nil
-		}
-		selectedReachable++
-		if seen[commit.OID] {
-			return true, nil
-		}
-		record, err := json.Marshal(struct {
-			Repository  string `json:"repository"`
-			Ref         string `json:"ref"`
-			CommitOID   string `json:"commit_oid"`
-			CommittedAt string `json:"committed_at"`
-			ObservedAt  string `json:"observed_at"`
-		}{r.Name, journal.Observation.Ref, commit.OID, commit.CommittedAt, journal.ObservedAt})
-		if err != nil {
-			return false, fault("ERR_AUDIT_FAILED", "commit inválido")
-		}
-		evidence, err := c.evidence("git", fmt.Sprintf("%s:commit:%s", r.Name, commit.OID), commit.CommittedAt, record)
-		if err != nil {
-			return false, err
-		}
-		upsertEvidence(d, evidence)
-		upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":commit:" + commit.OID))[:24], EntityID: entityID, Type: "commit_reachable_observed", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
-		seen[commit.OID] = true
-		newCount++
-		run.Items++
-		return newCount < commitsPerRound, nil
-	})
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
 	}
 	if !c.saveRun(run) {
 		return fault("ERR_AUDIT_FAILED", "falha ao auditar commits Git")
 	}
 	status, reason := "complete", "commits alcançáveis selecionados pela data do commit"
-	if !complete || !journal.Observation.GraphComplete || invalidDates > 0 {
+	if !complete || !graphComplete || invalidDates > 0 {
 		status = "partial"
 		switch {
 		case !complete:
 			reason = "fila de commits pendente; continue com refresh"
-		case !journal.Observation.GraphComplete:
-			reason = "grafo Git raso ou incompleto"
+		case !graphComplete:
+			reason = "branches pendentes ou grafo Git raso/incompleto"
 		default:
 			reason = "um ou mais commits sem data válida"
 		}

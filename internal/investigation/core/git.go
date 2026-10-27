@@ -16,6 +16,7 @@ import (
 
 type gitObserver interface {
 	Observe(context.Context, string, []byte, gitmirror.RefState, int64) (gitmirror.Observation, error)
+	ObserveHead(context.Context, string, []byte, gitmirror.HeadRef, gitmirror.RefState, int64) (gitmirror.Observation, error)
 	WalkCommits(context.Context, string, func(gitmirror.Commit) (bool, error)) (bool, error)
 	EnsureTrees(context.Context, string, []byte, string, string, int64) (int64, error)
 	ChangedFiles(context.Context, string, int) ([]gitmirror.ChangedFile, bool, error)
