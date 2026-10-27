@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,6 +21,7 @@ import (
 	"pocketcli/internal/investigation/core"
 	"pocketcli/internal/investigation/query"
 	"pocketcli/internal/investigation/secrets"
+	"pocketcli/internal/pocketpath"
 )
 
 func newInvestigateCommand() *cobra.Command {
@@ -220,6 +220,15 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	if !c.SQLAvailable() {
 		return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "motor completo indisponível; compile com CGO_ENABLED=1 e -tags investigate_sqlite"}
 	}
+	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !f.json
+	if shouldPromptInvestigationWizard(f, interactive) {
+		var wizardScope string
+		input, wizardScope, err = promptInvestigationWizard(os.Stdin, os.Stderr, input)
+		if err != nil {
+			return err
+		}
+		f.scope = wizardScope
+	}
 	if f.scope != "" {
 		var body []byte
 		if f.scope == "-" {
@@ -265,7 +274,6 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		input.Scope.Mode = "selected"
 		input.Scope.Teams = f.teams
 	}
-	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !f.json
 	if input.Period.Preset == "" {
 		if !interactive {
 			return &contract.ErrorResponse{Code: "ERR_PERIOD_REQUIRED", Message: "--period obrigatório em modo não interativo"}
@@ -273,6 +281,20 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		input.Period.Preset, err = promptLine("Período [30d,60d,90d,1y,all,custom]: ")
 		if err != nil {
 			return err
+		}
+	}
+	if interactive && input.Period.Preset == "custom" {
+		if input.Period.FromDate == "" {
+			input.Period.FromDate, err = promptLine("Data inicial AAAA-MM-DD: ")
+			if err != nil {
+				return err
+			}
+		}
+		if input.Period.ToDate == "" {
+			input.Period.ToDate, err = promptLine("Data final AAAA-MM-DD: ")
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if err := loadCredentials(store, input); err != nil {
@@ -287,12 +309,8 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Plano %s\nJanela: %s até %s\nRecursos autorizados:\n", plan.Hash, plan.WindowStart, plan.WindowEnd)
-		for _, r := range plan.Resources {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s %s (%s)\n", r.Source, r.Name, r.ID)
-		}
-		for _, warning := range plan.Warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "Aviso: %s\n", warning)
+		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano"); err != nil {
+			return err
 		}
 	}
 	if f.prepare {
@@ -389,12 +407,8 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Plano atualizado %s\nJanela: %s até %s\n", plan.Hash, plan.WindowStart, plan.WindowEnd)
-		for _, r := range plan.Resources {
-			fmt.Fprintf(cmd.OutOrStdout(), "  %s %s\n", r.Source, r.Name)
-		}
-		for _, warning := range plan.Warnings {
-			fmt.Fprintf(cmd.OutOrStdout(), "Aviso: %s\n", warning)
+		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano atualizado"); err != nil {
+			return err
 		}
 	}
 	if f.prepare {
@@ -436,12 +450,41 @@ func discoveryContext(f investigationFlags) context.Context {
 }
 
 func promptLine(label string) (string, error) {
-	fmt.Fprint(os.Stderr, label)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	return promptLineFrom(os.Stdin, os.Stderr, label)
+}
+
+func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title string) error {
+	dataDir, err := pocketpath.DataDir()
 	if err != nil {
-		return "", err
+		return err
 	}
-	return strings.TrimSpace(line), nil
+	input := plan.Input
+	modules := make([]string, 0, 5)
+	for _, module := range []struct {
+		name    string
+		enabled bool
+	}{{"github_issues", input.Modules.GitHubIssues}, {"code_history", input.Modules.CodeHistory}, {"ci", input.Modules.CI}, {"deployments", input.Modules.Deployments}, {"runtime_import", input.Modules.RuntimeImport}} {
+		if module.enabled {
+			modules = append(modules, module.name)
+		}
+	}
+	if len(modules) == 0 {
+		modules = append(modules, "nenhum opcional")
+	}
+	if _, err := fmt.Fprintf(out, "%s %s\nJanela: %s até %s\nMódulos: %s\nLimites: GitHub %d req/h, Linear %d req/h; sessão %s, transferência %d bytes, armazenamento %d bytes\nDuração/custo: a estimar\nArmazenamento: %s\nRecursos autorizados:\n", title, plan.Hash, plan.WindowStart, plan.WindowEnd, strings.Join(modules, ", "), input.Limits.GitHubRPH, input.Limits.LinearRPH, time.Duration(input.Limits.MaxSessionMS)*time.Millisecond, input.Limits.MaxTransferBytes, input.Limits.MaxLocalBytes, filepath.Join(dataDir, "investigations")); err != nil {
+		return err
+	}
+	for _, r := range plan.Resources {
+		if _, err := fmt.Fprintf(out, "  %s %s (%s)\n", r.Source, r.Name, r.ID); err != nil {
+			return err
+		}
+	}
+	for _, warning := range plan.Warnings {
+		if _, err := fmt.Fprintf(out, "Aviso: %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func loadCredentials(store *secrets.SessionStore, input contract.PlanInput) error {
 	githubEnabled, linearEnabled := input.GitHubEnabled, input.LinearEnabled
