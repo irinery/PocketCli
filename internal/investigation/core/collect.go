@@ -104,15 +104,24 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				prIDs[pr.ID] = true
 			}
 			prFileEvidenceIDs := make(map[string]bool)
+			prMappingEvidenceIDs := make(map[string]bool)
+			prFileIDs := make(map[string]bool)
 			for _, link := range prior.Links {
 				if link.Relation == "modifies_file" && prIDs[link.SourceID] {
 					prFileEvidenceIDs[link.EvidenceID] = true
+					prFileIDs[link.TargetID] = true
+				}
+			}
+			for _, link := range prior.Links {
+				if link.Relation == "maps_to_component" && prFileIDs[link.SourceID] {
+					prMappingEvidenceIDs[link.EvidenceID] = true
 				}
 			}
 			for _, evidence := range prior.Evidence {
-				if prFileEvidenceIDs[evidence.ID] {
+				if prFileEvidenceIDs[evidence.ID] || prMappingEvidenceIDs[evidence.ID] {
 					// Old mappings copied PR.updated_at onto individual file
-					// evidence even though the files API has no such field.
+					// evidence and head-tree mappings, neither of which has
+					// a source update timestamp.
 					evidence.SourceUpdatedAt = ""
 				}
 				if referenced[evidence.ID] || timestampInWindow(plan.WindowStart, plan.WindowEnd, evidence.SourceUpdatedAt) {

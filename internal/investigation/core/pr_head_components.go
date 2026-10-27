@@ -184,13 +184,19 @@ func (c *Core) mapPRHeadFiles(ctx context.Context, plan contract.Plan, r contrac
 			if err != nil {
 				return fault("ERR_AUDIT_FAILED", "vínculo temporal inválido")
 			}
-			e, err := c.evidence("git", r.Name+":"+file.Path+"@"+pr.HeadSHA+":component", pr.UpdatedAt, record)
+			e, err := c.evidence("git", r.Name+":"+file.Path+"@"+pr.HeadSHA+":component", "", record)
 			if err != nil {
 				return err
 			}
+			for _, existing := range d.Evidence {
+				if existing.ID == e.ID {
+					e = existing // Keep the first observed validity start on refresh.
+					break
+				}
+			}
 			upsertEvidence(d, e)
 			linkID := "lnk-" + storage.Hash([]byte(file.ID + ":maps_to_component:" + componentID + ":" + e.ID))[:24]
-			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: file.ID, Relation: "maps_to_component", TargetID: componentID, Status: "direct", EvidenceID: e.ID, ValidFrom: pr.UpdatedAt})
+			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: file.ID, Relation: "maps_to_component", TargetID: componentID, Status: "direct", EvidenceID: e.ID, ValidFrom: e.ObservedAt})
 			mapped++
 			run.Items++
 		}

@@ -8,8 +8,10 @@ import (
 // differ while earlier file identities and their evidence remain historical.
 func reusePriorFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string, referenced map[string]bool) {
 	activeSources := make(map[string]bool, len(d.PullRequests)+len(d.Events))
+	activePRs := make(map[string]bool, len(d.PullRequests))
 	for _, pr := range d.PullRequests {
 		activeSources[pr.ID] = true
+		activePRs[pr.ID] = true
 	}
 	for _, event := range d.Events {
 		if event.Type == "commit_reachable_observed" {
@@ -17,10 +19,14 @@ func reusePriorFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string
 		}
 	}
 	fileComponents := make(map[string]bool)
+	prFileComponents := make(map[string]bool)
 	for _, link := range prior.Links {
 		if link.Relation == "modifies_file" && activeSources[link.SourceID] {
 			upsertLink(d, link)
 			fileComponents[link.TargetID] = true
+			if activePRs[link.SourceID] {
+				prFileComponents[link.TargetID] = true
+			}
 			referenced[link.EvidenceID] = true
 		}
 	}
@@ -32,11 +38,21 @@ func reusePriorFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string
 		}
 	}
 	mappedComponents := make(map[string]bool)
+	evidenceObservedAt := make(map[string]string, len(prior.Evidence))
+	for _, evidence := range prior.Evidence {
+		evidenceObservedAt[evidence.ID] = evidence.ObservedAt
+	}
 	for _, link := range prior.Links {
 		if link.Relation != "maps_to_component" || !fileComponents[link.SourceID] {
 			continue
 		}
-		if link.ValidFrom != "" && windowEnd != "" && !timestampInWindow("", windowEnd, link.ValidFrom) {
+		if prFileComponents[link.SourceID] {
+			observedAt := evidenceObservedAt[link.EvidenceID]
+			if observedAt == "" || (windowEnd != "" && !timestampInWindow("", windowEnd, observedAt)) {
+				continue
+			}
+			link.ValidFrom = observedAt // Older mappings used PR.updated_at as the validity start.
+		} else if link.ValidFrom != "" && windowEnd != "" && !timestampInWindow("", windowEnd, link.ValidFrom) {
 			continue
 		}
 		upsertLink(d, link)
