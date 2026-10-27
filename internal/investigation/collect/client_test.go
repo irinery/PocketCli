@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/secrets"
+	"pocketcli/internal/investigation/storage"
 )
 
 type transportFunc func(*http.Request) (*http.Response, error)
@@ -89,6 +92,61 @@ func TestGitHubForbiddenIsNotEmptyList(t *testing.T) {
 	items, _, err := c.GitHubList(context.Background(), "/user/repos", 1)
 	if err == nil || len(items) != 0 || strings.Contains(err.Error(), "topsecret") {
 		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+}
+
+func TestCredentialEchoCannotReachPersistentCacheOrCaller(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, header string
+		status             int
+	}{
+		{"body", `[{"title":"topsecret"}]`, "", 200},
+		{"escaped JSON", `[{"title":"topse\u0063ret"}]`, "", 200},
+		{"pagination header", `[]`, `<https://api.github.com/user/repos?token=topsecret>; rel="next"`, 200},
+		{"error body", `{"message":"denied topsecret"}`, "", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := storage.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := secretClient(t, func(*http.Request) (*http.Response, error) {
+				res := response(tc.status, tc.body)
+				res.Header.Set("ETag", `"echoed"`)
+				if tc.header != "" {
+					res.Header.Set("Link", tc.header)
+				}
+				return res, nil
+			})
+			client.SetCacheStore(store)
+			data, headers, _, _, err := client.GetGitHubWithBytes(WithRunID(context.Background(), "run-echo"), "https://api.github.com/user/repos")
+			expectedCode := "ERR_UNAVAILABLE"
+			if tc.status == http.StatusForbidden {
+				expectedCode = "ERR_FORBIDDEN"
+			}
+			if err == nil || !strings.Contains(err.Error(), expectedCode) || strings.Contains(err.Error(), "topsecret") || data != nil || headers != nil {
+				t.Fatalf("resposta com credencial chegou ao chamador: data=%q headers=%v err=%v", data, headers, err)
+			}
+			if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					return nil
+				}
+				content, readErr := os.ReadFile(path)
+				if readErr != nil {
+					return readErr
+				}
+				if strings.Contains(string(content), "topsecret") || strings.Contains(string(content), `topse\u0063ret`) {
+					t.Errorf("credencial persistida em %s", path)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

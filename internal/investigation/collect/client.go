@@ -146,6 +146,17 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if cacheErr != nil {
 				return cacheErr
 			}
+			if credentialEchoed(cached.Body, cached.Header, secret) {
+				delete(c.cache, cacheKey)
+				c.cacheSize -= int64(len(cached.Body))
+				if c.cacheStore != nil {
+					// A tombstone with another key invalidates this bounded slot.
+					if err := c.cacheStore.Put(cacheKind, cacheSlot(cacheKey), persistedETagEntry{}); err != nil {
+						return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao descartar cache com credencial"}
+					}
+				}
+				return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "cache HTTP continha credencial"}
+			}
 		}
 		skipConditional := false
 		for attempt := 0; attempt < 4; attempt++ {
@@ -203,6 +214,19 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			response, err = io.ReadAll(io.LimitReader(res.Body, 10*1024*1024+1))
 			res.Body.Close()
 			wireBytes += int64(len(response))
+			if credentialEchoed(response, headers, secret) {
+				// Record the attempt without retaining the echoed representation.
+				if auditErr := c.recordRequest(ctx, source, method, endpoint, started, status, int64(len(response)), nil, false, ""); auditErr != nil {
+					return auditErr
+				}
+				if err := c.finishPacing(ctx, source, secret, started); err != nil {
+					return err
+				}
+				if status == http.StatusUnauthorized || status == http.StatusForbidden {
+					return &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: "leitura negada pela fonte"}
+				}
+				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "fonte retornou conteúdo com credencial"}
+			}
 			cacheHit := status == http.StatusNotModified && cached.ETag != "" && !skipConditional
 			auditBody := response
 			if cacheHit {
@@ -307,6 +331,53 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: fmt.Sprintf("fonte retornou HTTP %d", status)}
 	}
 	return response, headers, status, wireBytes, nil
+}
+
+// credentialEchoed rejects a source response before it can reach the disk cache,
+// evidence objects, browser or PDF. JSON strings are decoded so escaped tokens
+// are caught as well as literal bytes in a non-JSON error response.
+func credentialEchoed(body []byte, headers http.Header, secret []byte) bool {
+	if len(secret) == 0 {
+		return false
+	}
+	for _, values := range headers {
+		for _, value := range values {
+			if strings.Contains(value, string(secret)) || strings.Contains(value, url.QueryEscape(string(secret))) {
+				return true
+			}
+		}
+	}
+	if bytes.Contains(body, secret) {
+		return true
+	}
+	if !bytes.ContainsRune(body, '\\') {
+		return false
+	}
+	var value any
+	if json.Unmarshal(body, &value) != nil {
+		return false
+	}
+	return jsonContainsSecret(value, string(secret))
+}
+
+func jsonContainsSecret(value any, secret string) bool {
+	switch v := value.(type) {
+	case string:
+		return strings.Contains(v, secret)
+	case []any:
+		for _, item := range v {
+			if jsonContainsSecret(item, secret) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, item := range v {
+			if strings.Contains(key, secret) || jsonContainsSecret(item, secret) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func waitUntil(ctx context.Context, t time.Time) error {
