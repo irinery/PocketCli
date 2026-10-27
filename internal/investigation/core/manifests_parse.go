@@ -12,8 +12,15 @@ import (
 )
 
 type manifestFacts struct {
-	Name     string   `json:"name,omitempty"`
-	Services []string `json:"services,omitempty"`
+	Name                   string               `json:"name,omitempty"`
+	Services               []string             `json:"services,omitempty"`
+	Dependencies           []manifestDependency `json:"dependencies,omitempty"`
+	UnresolvedDependencies []string             `json:"unresolved_dependencies,omitempty"`
+}
+
+type manifestDependency struct {
+	Service   string `json:"service"`
+	DependsOn string `json:"depends_on"`
 }
 
 func parseManifest(kind string, content []byte) (manifestFacts, error) {
@@ -77,6 +84,59 @@ func parseManifest(kind string, content []byte) (manifestFacts, error) {
 			facts.Services = append(facts.Services, service)
 		}
 		sort.Strings(facts.Services)
+		for _, service := range facts.Services {
+			node := doc.Services[service]
+			if node.Kind != yaml.MappingNode {
+				return manifestFacts{}, errors.New("service Compose inválido")
+			}
+			for index := 0; index < len(node.Content); index += 2 {
+				if node.Content[index].Value != "depends_on" {
+					continue
+				}
+				dependencies := node.Content[index+1]
+				var names []string
+				switch dependencies.Kind {
+				case yaml.SequenceNode:
+					for _, item := range dependencies.Content {
+						if item.Kind != yaml.ScalarNode {
+							return manifestFacts{}, errors.New("depends_on Compose inválido")
+						}
+						names = append(names, item.Value)
+					}
+				case yaml.MappingNode:
+					for i := 0; i < len(dependencies.Content); i += 2 {
+						if dependencies.Content[i].Kind != yaml.ScalarNode {
+							return manifestFacts{}, errors.New("depends_on Compose inválido")
+						}
+						names = append(names, dependencies.Content[i].Value)
+					}
+				default:
+					return manifestFacts{}, errors.New("depends_on Compose inválido")
+				}
+				seen := make(map[string]bool, len(names))
+				for _, dependency := range names {
+					if !runtimeName.MatchString(dependency) || dependency == service {
+						return manifestFacts{}, errors.New("dependência Compose inválida")
+					}
+					if seen[dependency] {
+						continue
+					}
+					seen[dependency] = true
+					if _, exists := doc.Services[dependency]; !exists {
+						facts.UnresolvedDependencies = append(facts.UnresolvedDependencies, service+"->"+dependency)
+						continue
+					}
+					facts.Dependencies = append(facts.Dependencies, manifestDependency{Service: service, DependsOn: dependency})
+				}
+			}
+		}
+		sort.Slice(facts.Dependencies, func(i, j int) bool {
+			if facts.Dependencies[i].Service != facts.Dependencies[j].Service {
+				return facts.Dependencies[i].Service < facts.Dependencies[j].Service
+			}
+			return facts.Dependencies[i].DependsOn < facts.Dependencies[j].DependsOn
+		})
+		sort.Strings(facts.UnresolvedDependencies)
 	case "api_contract":
 		var doc struct {
 			OpenAPI string `json:"openapi" yaml:"openapi"`
@@ -125,6 +185,16 @@ func safeYAML(content []byte) error {
 			case "!!map", "!!seq", "!!str", "!!int", "!!bool", "!!null", "!!float":
 			default:
 				return errors.New("tag YAML não permitida")
+			}
+		}
+		if node.Kind == yaml.MappingNode {
+			seen := make(map[string]bool, len(node.Content)/2)
+			for index := 0; index < len(node.Content); index += 2 {
+				key := node.Content[index]
+				if key.Kind != yaml.ScalarNode || seen[key.Value] {
+					return errors.New("chave YAML duplicada ou inválida")
+				}
+				seen[key.Value] = true
 			}
 		}
 		for _, child := range node.Content {

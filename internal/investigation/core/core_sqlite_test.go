@@ -220,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.11.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.12.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1453,6 +1453,66 @@ func TestManifestBlobIsVerifiedParsedAndCached(t *testing.T) {
 	}
 	if err := store.Get("runstats", run.ID, &stats); err != nil || stats.ReuseCounter != 2 {
 		t.Fatalf("reuso de árvore e blob: %+v err=%v", stats, err)
+	}
+}
+
+func TestComposeDependenciesLinkOnlyVerifiedServices(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := secrets.NewSessionStore()
+	if _, err := ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	treeOID := strings.Repeat("a", 40)
+	content := []byte("services:\n  api:\n    depends_on: [db]\n  worker:\n    depends_on:\n      db:\n        condition: service_healthy\n      external_service:\n        condition: service_started\n  db:\n    image: postgres:18\n")
+	object := append([]byte(fmt.Sprintf("blob %d\x00", len(content))), content...)
+	sum := sha1.Sum(object)
+	blobOID := hex.EncodeToString(sum[:])
+	calls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		var body string
+		switch r.URL.Path {
+		case "/repos/acme/api/git/trees/" + treeOID:
+			body = fmt.Sprintf(`{"sha":%q,"truncated":false,"tree":[{"path":"deploy/compose.yaml","mode":"100644","type":"blob","sha":%q,"size":%d}]}`, treeOID, blobOID, len(content))
+		case "/repos/acme/api/git/blobs/" + blobOID:
+			body = fmt.Sprintf(`{"sha":%q,"encoding":"base64","content":%q,"size":%d}`, blobOID, base64.StdEncoding.EncodeToString(content), len(content))
+		default:
+			t.Fatalf("request inesperada: %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contract.Plan{ID: "compose-dependencies", Input: contract.PlanInput{Limits: contract.Limits{MaxTransferBytes: 1 << 20, MaxLocalBytes: 1 << 20}}}
+	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
+	run := contract.Run{ID: "compose-dependencies-run"}
+	d := query.Dataset{}
+	if err := c.collectManifestPaths(context.Background(), plan, r, treeOID, "identity", "2026-01-10T00:00:00Z", &d, &run); err != nil {
+		t.Fatal(err)
+	}
+	serviceNames := make(map[string]string)
+	for _, component := range d.Components {
+		if component.Kind == "compose_service" {
+			serviceNames[component.ID] = component.Name
+		}
+	}
+	dependencies := make(map[string]bool)
+	for _, link := range d.Links {
+		if link.Relation != "depends_on" {
+			continue
+		}
+		if link.Status != "direct" || link.EvidenceID == "" {
+			t.Fatalf("dependência sem evidência verificada: %+v", link)
+		}
+		dependencies[serviceNames[link.SourceID]+"->"+serviceNames[link.TargetID]] = true
+	}
+	if calls != 2 || len(serviceNames) != 3 || len(dependencies) != 2 || !dependencies["api->db"] || !dependencies["worker->db"] || d.Coverage[1].Status != "partial" {
+		t.Fatalf("vínculos ou cobertura Compose incorretos: components=%+v links=%+v coverage=%+v calls=%d", d.Components, d.Links, d.Coverage, calls)
 	}
 }
 
