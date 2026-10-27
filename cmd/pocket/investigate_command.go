@@ -60,7 +60,7 @@ func newInvestigateCommand() *cobra.Command {
 		}
 		return writeJSON(cmd.OutOrStdout(), stats)
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "start PLAN_ID --confirm HASH", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "start PLAN_ID --confirm CÓDIGO", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f, err := parseInvestigationFlags(args[1:])
 		if err != nil {
 			return err
@@ -84,7 +84,7 @@ func newInvestigateCommand() *cobra.Command {
 		if _, err := rand.Read(key[:]); err != nil {
 			return err
 		}
-		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: f.confirm, IdempotencyKey: hex.EncodeToString(key[:])})
+		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: expandPlanConfirmation(f.confirm, plan.Hash), IdempotencyKey: hex.EncodeToString(key[:])})
 		if err != nil {
 			return err
 		}
@@ -229,12 +229,10 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	}
 	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !f.json
 	if shouldPromptInvestigationWizard(f, interactive) {
-		var wizardScope string
-		input, wizardScope, err = promptInvestigationWizard(os.Stdin, os.Stderr, input)
+		input, err = promptInvestigationWizard(os.Stdin, os.Stderr, input)
 		if err != nil {
 			return err
 		}
-		f.scope = wizardScope
 	}
 	if f.scope != "" {
 		var body []byte
@@ -260,7 +258,10 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		if !interactive {
 			return &contract.ErrorResponse{Code: "ERR_PERIOD_REQUIRED", Message: "--period obrigatório em modo não interativo"}
 		}
-		input.Period.Preset, err = promptLine("Período [30d,60d,90d,1y,all,custom]: ")
+		input.Period.Preset, err = promptLine("Período [30d] (12h, 7d, 90d, 1y, all, custom): ")
+		if input.Period.Preset == "" {
+			input.Period.Preset = "30d"
+		}
 		if err != nil {
 			return err
 		}
@@ -310,13 +311,17 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	confirm := f.confirm
 	if confirm == "" {
 		if !interactive {
-			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm HASH"}
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano)"}
 		}
-		confirm, err = promptLine("Digite o hash do plano para iniciar: ")
+		confirm, err = promptLine("Digite " + planCode(plan.Hash) + " para iniciar (Enter cancela): ")
 		if err != nil {
 			return err
 		}
+		if confirm == "" {
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "coleta cancelada antes de iniciar"}
+		}
 	}
+	confirm = expandPlanConfirmation(confirm, plan.Hash)
 	if confirm != plan.Hash {
 		return &contract.ErrorResponse{Code: "ERR_PLAN_CHANGED", Message: "hash de confirmação divergente"}
 	}
@@ -407,13 +412,17 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 	confirm := f.confirm
 	if confirm == "" {
 		if !interactive {
-			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm HASH"}
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano)"}
 		}
-		confirm, err = promptLine("Digite o hash do plano para iniciar: ")
+		confirm, err = promptLine("Digite " + planCode(plan.Hash) + " para iniciar (Enter cancela): ")
 		if err != nil {
 			return err
 		}
+		if confirm == "" {
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "coleta cancelada antes de iniciar"}
+		}
 	}
+	confirm = expandPlanConfirmation(confirm, plan.Hash)
 	var key [16]byte
 	if _, err := rand.Read(key[:]); err != nil {
 		return err
@@ -464,11 +473,15 @@ func writeInvestigationPDFWarningJSON(out io.Writer, reportErr error) error {
 	}{Type: "warning", Code: "ERR_PDF_DEPENDENCY", Message: investigationPDFStatus(reportErr)})
 }
 
+// printInvestigationPlanSummary shows what the run will read before the
+// operator confirms it: one aligned line per topic, with the confirmation
+// code highlighted. The full plan stays available through --json.
 func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title string, reportErr error) error {
 	dataDir, err := pocketpath.DataDir()
 	if err != nil {
 		return err
 	}
+	p := newPalette(out)
 	input := plan.Input
 	modules := make([]string, 0, 5)
 	for _, module := range []struct {
@@ -479,25 +492,120 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 			modules = append(modules, module.name)
 		}
 	}
-	if len(modules) == 0 {
-		modules = append(modules, "nenhum opcional")
-	}
-	if _, err := fmt.Fprintf(out, "%s %s\nJanela: %s até %s\nMódulos: %s\nLimites: GitHub %d req/h, Linear %d req/h; sessão %s, transferência %d bytes, armazenamento %d bytes\nDuração/custo: a estimar\nArmazenamento: %s\nRecursos autorizados:\n", title, plan.Hash, plan.WindowStart, plan.WindowEnd, strings.Join(modules, ", "), input.Limits.GitHubRPH, input.Limits.LinearRPH, time.Duration(input.Limits.MaxSessionMS)*time.Millisecond, input.Limits.MaxTransferBytes, input.Limits.MaxLocalBytes, filepath.Join(dataDir, "investigations")); err != nil {
-		return err
-	}
-	for _, r := range plan.Resources {
-		if _, err := fmt.Fprintf(out, "  %s %s (%s)\n", r.Source, r.Name, r.ID); err != nil {
-			return err
+	resources := make([]string, 0, len(plan.Resources))
+	for i, r := range plan.Resources {
+		if i == 8 {
+			resources = append(resources, p.dim(fmt.Sprintf("+%d outros (lista completa com --json)", len(plan.Resources)-8)))
+			break
 		}
+		resources = append(resources, r.Source+" "+p.bold(r.Name))
 	}
+	if len(resources) == 0 {
+		resources = append(resources, p.dim("nenhum recurso remoto"))
+	}
+	limits := []string{}
+	if input.GitHubEnabled {
+		limits = append(limits, fmt.Sprintf("GitHub %d req/h", input.Limits.GitHubRPH))
+	}
+	if input.LinearEnabled {
+		limits = append(limits, fmt.Sprintf("Linear %d req/h", input.Limits.LinearRPH))
+	}
+	limits = append(limits, "sessão "+formatDuration(time.Duration(input.Limits.MaxSessionMS)*time.Millisecond), "transferência "+formatBytes(input.Limits.MaxTransferBytes), "local "+formatBytes(input.Limits.MaxLocalBytes), "duração a estimar")
+	row := func(label, value string) string {
+		return fmt.Sprintf("  %s %s\n", p.dim(fmt.Sprintf("%-11s", label)), value)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s %s\n", p.cyan("●"), p.bold(title), p.dim("· código ")+p.bold(p.yellow(planCode(plan.Hash))))
+	b.WriteString(row("Janela", formatWindow(plan.WindowStart, plan.WindowEnd, input.Period)))
+	b.WriteString(row("Recursos", strings.Join(resources, p.dim(" · "))))
+	if len(modules) > 0 {
+		b.WriteString(row("Módulos", strings.Join(modules, ", ")))
+	}
+	b.WriteString(row("Limites", p.dim(strings.Join(limits, " · "))))
+	b.WriteString(row("Dados", p.dim(filepath.Join(dataDir, "investigations"))))
 	for _, warning := range plan.Warnings {
-		if _, err := fmt.Fprintf(out, "Aviso: %s\n", warning); err != nil {
-			return err
+		// Verified accounts arrive as plan notes; they confirm, not warn.
+		if account, ok := strings.CutPrefix(warning, "conta "); ok {
+			b.WriteString(row("Conta", p.dim(account)))
+			continue
 		}
+		fmt.Fprintf(&b, "  %s %s\n", p.yellow("!"), warning)
 	}
-	_, err = fmt.Fprintln(out, investigationPDFStatus(reportErr))
+	if reportErr == nil {
+		fmt.Fprintf(&b, "  %s %s\n", p.green("✓"), investigationPDFStatus(nil))
+	} else {
+		fmt.Fprintf(&b, "  %s %s\n", p.yellow("!"), investigationPDFStatus(reportErr))
+	}
+	_, err = io.WriteString(out, b.String())
 	return err
 }
+
+// planCode is the short form of the plan hash the operator types to start.
+func planCode(hash string) string {
+	if len(hash) > planCodeLength {
+		return hash[:planCodeLength]
+	}
+	return hash
+}
+
+const planCodeLength = 8
+
+// expandPlanConfirmation accepts the full hash or its short code. Anything
+// else is passed through unchanged and rejected by the hash comparison.
+func expandPlanConfirmation(confirm, hash string) string {
+	if len(confirm) >= planCodeLength && strings.HasPrefix(hash, confirm) {
+		return hash
+	}
+	return confirm
+}
+
+func formatWindow(start, end string, period contract.Period) string {
+	label := period.Preset
+	if period.Preset == "custom" {
+		label = period.FromDate + " a " + period.ToDate
+	}
+	if start == "" {
+		return label + " (todo o histórico)"
+	}
+	loc, err := time.LoadLocation(period.Timezone)
+	if err != nil || period.Timezone == "" {
+		loc = time.UTC
+	}
+	format := func(value string) string {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return value
+		}
+		return at.In(loc).Format("02/01/2006 15:04")
+	}
+	return fmt.Sprintf("%s → %s %s", format(start), format(end), "("+label+", "+loc.String()+")")
+}
+
+// formatDuration drops zero units: 2h0m0s reads as 2h, 4m0s as 4m.
+func formatDuration(d time.Duration) string {
+	text := d.String()
+	if strings.HasSuffix(text, "m0s") {
+		text = strings.TrimSuffix(text, "0s")
+	}
+	if strings.HasSuffix(text, "h0m") {
+		text = strings.TrimSuffix(text, "0m")
+	}
+	return text
+}
+
+func formatBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
 func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allowPrompt bool) error {
 	githubEnabled, linearEnabled := input.GitHubEnabled, input.LinearEnabled
 	githubHint := "GitHub PAT: Metadata read; Pull requests read"
@@ -544,6 +652,11 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonMode bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	var bar *progressBar
+	if !jsonMode {
+		bar = newProgressBar(cmd.OutOrStdout())
+		defer bar.done()
+	}
 	finish := func(completed contract.Run) error {
 		if jsonMode {
 			return writeJSON(cmd.OutOrStdout(), completed)
@@ -593,10 +706,21 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonM
 					}{Type: "progress", Run: run}); err != nil {
 						return err
 					}
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "run=%s state=%s snapshot=%s\n", run.ID, run.State, run.SnapshotID)
+				} else if !bar.live {
+					fmt.Fprintf(cmd.OutOrStdout(), "run=%s state=%s progress=%d%% snapshot=%s\n", run.ID, run.State, run.Progress, run.SnapshotID)
 				}
 				last = run.State
+			}
+			if bar != nil {
+				bar.update(run)
+				switch run.State {
+				case "completed", "completed_partial", "report_failed", "failed", "cancelled", "paused":
+					investigationID := ""
+					if plan, err := c.LoadPlan(run.PlanID); err == nil {
+						investigationID = plan.InvestigationID
+					}
+					bar.finish(run, investigationID)
+				}
 			}
 			switch run.State {
 			case "completed", "completed_partial":

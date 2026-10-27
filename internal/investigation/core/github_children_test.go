@@ -27,6 +27,10 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 	}
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		body, ok := responses[r.URL.Path]
+		if r.URL.Path == "/graphql" {
+			// No GraphQL batch here: every item falls back to its REST pages.
+			body, ok = `{"errors":[{"message":"unavailable"}]}`, true
+		}
 		if !ok {
 			if strings.HasSuffix(r.URL.Path, "/comments") {
 				body = "[]"
@@ -119,6 +123,10 @@ func TestGitHubClosedAtOnlyMarksCurrentlyClosedIssue(t *testing.T) {
 	}
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		body, ok := responses[r.URL.Path]
+		if r.URL.Path == "/graphql" {
+			// No GraphQL batch here: every item falls back to its REST pages.
+			body, ok = `{"errors":[{"message":"unavailable"}]}`, true
+		}
 		if !ok {
 			if strings.HasSuffix(r.URL.Path, "/comments") {
 				body = "[]"

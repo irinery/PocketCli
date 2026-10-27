@@ -102,6 +102,7 @@ type Run struct {
 	PlanID     string         `json:"plan_id"`
 	State      string         `json:"state"`
 	Stage      string         `json:"stage"`
+	Progress   int            `json:"progress"` // 0..100, estimated
 	Requests   int64          `json:"requests"`
 	Bytes      int64          `json:"bytes"`
 	Items      int64          `json:"items"`

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"pocketcli/internal/investigation/contract"
@@ -37,105 +38,83 @@ func shouldPromptInvestigationWizard(f investigationFlags, interactive bool) boo
 	return interactive && f.scope == "" && f.period == "" && f.from == "" && f.to == "" && f.timezone == "" && f.confirm == "" && f.investigation == "" && len(f.repos) == 0 && len(f.teams) == 0 && !f.noGitHub && !f.noLinear
 }
 
-func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanInput) (contract.PlanInput, string, error) {
-	if _, err := io.WriteString(out, "Escopo padrão: todos os recursos autorizados pelas fontes escolhidas.\n"); err != nil {
-		return input, "", err
+// promptInvestigationWizard asks only what changes the plan: sources, their
+// scope, GitHub modules and the period. Enter keeps each default; the name,
+// timezone and YAML scope remain available as flags (--timezone, --scope).
+func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanInput) (contract.PlanInput, error) {
+	p := newPalette(out)
+	ask := func(question, hint string) (string, error) {
+		return promptLineFrom(in, out, p.bold(question)+" "+p.dim(hint)+": ")
 	}
-	yamlPath, err := promptLineFrom(in, out, "YAML opcional (Enter para configurar aqui): ")
-	if err != nil || yamlPath != "" {
-		return input, yamlPath, err
-	}
-	name, err := promptLineFrom(in, out, "Nome da investigação [investigation]: ")
+	sources, err := ask("Fontes", "[github,linear]")
 	if err != nil {
-		return input, "", err
-	}
-	if name != "" {
-		input.Name = name
-	}
-	sources, err := promptLineFrom(in, out, "Fontes [github,linear] (none para só importação local): ")
-	if err != nil {
-		return input, "", err
+		return input, err
 	}
 	sourceNames, err := wizardNames(sources, []string{"github", "linear"}, []string{"github", "linear"})
 	if err != nil {
-		return input, "", err
+		return input, err
 	}
 	input.GitHubEnabled, input.LinearEnabled = sourceNames["github"], sourceNames["linear"]
 	input.Scope = &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}
-	if _, err := io.WriteString(out, "Lista vazia descobre todos os recursos autorizados daquela fonte.\n"); err != nil {
-		return input, "", err
-	}
 	if input.GitHubEnabled {
-		value, err := promptLineFrom(in, out, "Repositórios GitHub owner/repo separados por vírgula (Enter=todos autorizados): ")
+		value, err := ask("Repositórios GitHub", "(owner/repo, vírgula; Enter = todos autorizados)")
 		if err != nil {
-			return input, "", err
+			return input, err
 		}
-		input.Scope.Repositories, err = wizardCSV(value)
-		if err != nil {
-			return input, "", err
+		if input.Scope.Repositories, err = wizardCSV(value); err != nil {
+			return input, err
 		}
 	}
 	if input.LinearEnabled {
-		value, err := promptLineFrom(in, out, "Teams Linear por chave ou ID, separados por vírgula (Enter=todos autorizados): ")
+		value, err := ask("Teams Linear", "(chave ou ID, vírgula; Enter = todos autorizados)")
 		if err != nil {
-			return input, "", err
+			return input, err
 		}
-		input.Scope.Teams, err = wizardCSV(value)
-		if err != nil {
-			return input, "", err
+		if input.Scope.Teams, err = wizardCSV(value); err != nil {
+			return input, err
 		}
 	}
 	if len(input.Scope.Repositories)+len(input.Scope.Teams) > 0 {
 		input.Scope.Mode = "selected"
 	}
-	defaults := []string{}
-	if input.GitHubEnabled {
-		defaults = []string{"github_issues", "code_history"}
+	input.Modules = contract.Modules{}
+	switch {
+	case input.GitHubEnabled:
+		modules, err := ask("Módulos", "[github_issues,code_history] (+ci, deployments, runtime_import)")
+		if err != nil {
+			return input, err
+		}
+		moduleNames, err := wizardNames(modules, []string{"github_issues", "code_history"}, []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"})
+		if err != nil {
+			return input, err
+		}
+		input.Modules = contract.Modules{GitHubIssues: moduleNames["github_issues"], CodeHistory: moduleNames["code_history"], CI: moduleNames["ci"], Deployments: moduleNames["deployments"], RuntimeImport: moduleNames["runtime_import"]}
+	case !input.LinearEnabled:
+		input.Modules.RuntimeImport = true // "none": only a local runtime import
 	}
-	modules, err := promptLineFrom(in, out, "Módulos [github_issues,code_history] (ci,deployments,runtime_import opcionais; none=nenhum): ")
+	period, err := ask("Período", "[30d] (12h, 7d, 90d, 1y, all, custom)")
 	if err != nil {
-		return input, "", err
+		return input, err
 	}
-	moduleNames, err := wizardNames(modules, defaults, []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"})
-	if err != nil {
-		return input, "", err
+	if period == "" {
+		period = "30d"
 	}
-	if !input.GitHubEnabled && (moduleNames["github_issues"] || moduleNames["code_history"] || moduleNames["ci"] || moduleNames["deployments"]) {
-		return input, "", fmt.Errorf("ERR_VALIDATION: módulos GitHub exigem a fonte GitHub")
+	if period != "all" && period != "custom" && period != "1y" && !wizardRelativePeriod.MatchString(period) {
+		return input, fmt.Errorf("ERR_PERIOD_REQUIRED: use 12h, 7d, 30d, 90d, 1y, all ou custom")
 	}
-	input.Modules = contract.Modules{GitHubIssues: moduleNames["github_issues"], CodeHistory: moduleNames["code_history"], CI: moduleNames["ci"], Deployments: moduleNames["deployments"], RuntimeImport: moduleNames["runtime_import"]}
-	if !input.GitHubEnabled && !input.LinearEnabled && !input.Modules.RuntimeImport {
-		return input, "", fmt.Errorf("ERR_VALIDATION: selecione uma fonte ou runtime_import")
-	}
-	period, err := promptLineFrom(in, out, "Período [30d,60d,90d,1y,all,custom]: ")
-	if err != nil {
-		return input, "", err
-	}
-	switch period {
-	case "30d", "60d", "90d", "1y", "all", "custom":
-		input.Period.Preset = period
-	default:
-		return input, "", fmt.Errorf("ERR_PERIOD_REQUIRED: escolha 30d, 60d, 90d, 1y, all ou custom")
-	}
+	input.Period.Preset = period
 	if period == "custom" {
-		input.Period.FromDate, err = promptLineFrom(in, out, "Data inicial AAAA-MM-DD: ")
-		if err != nil {
-			return input, "", err
+		if input.Period.FromDate, err = ask("Data inicial", "AAAA-MM-DD"); err != nil {
+			return input, err
 		}
-		input.Period.ToDate, err = promptLineFrom(in, out, "Data final AAAA-MM-DD: ")
-		if err != nil {
-			return input, "", err
+		if input.Period.ToDate, err = ask("Data final", "AAAA-MM-DD"); err != nil {
+			return input, err
 		}
 	}
-	timezone, err := promptLineFrom(in, out, "Timezone [America/Sao_Paulo]: ")
-	if err != nil {
-		return input, "", err
-	}
-	if timezone != "" {
-		input.Period.Timezone = timezone
-	}
-	return input, "", nil
+	return input, nil
 }
+
+var wizardRelativePeriod = regexp.MustCompile(`^[1-9][0-9]{0,3}[hd]$`)
 
 func wizardCSV(value string) ([]string, error) {
 	if value == "" {

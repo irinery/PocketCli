@@ -192,6 +192,7 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		}
 		run.State = "building"
 		run.Stage = "building"
+		setProgress(&run, progressBuilding)
 		if !c.saveRun(&run) {
 			return
 		}
@@ -251,6 +252,7 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 	run.SnapshotID = d.Snapshot.ID
 	run.State = "analysis_ready"
 	run.Stage = "analysis_ready"
+	setProgress(&run, progressPublished)
 	run.Coverage = coverageStatus(d.Coverage)
 	if !c.saveRun(&run) {
 		return
@@ -266,6 +268,7 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 	}
 	run.State = "reporting"
 	run.Stage = "reporting"
+	setProgress(&run, progressReporting)
 	if !c.saveRun(&run) {
 		return
 	}
@@ -293,6 +296,7 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		run.State = "completed_partial"
 	}
 	run.Stage = "completed"
+	setProgress(&run, progressCompleted)
 	c.saveRun(&run)
 }
 
@@ -379,6 +383,7 @@ func (c *Core) CompleteReport(ctx context.Context, artifact contract.ReportArtif
 			run.State = "completed_partial"
 		}
 		run.Stage = "completed"
+		setProgress(&run, progressCompleted)
 		run.LastError = nil
 		if err := c.store.Put("runs", id, run); err != nil {
 			return fault("ERR_AUDIT_FAILED", "falha ao confirmar retry do PDF")
