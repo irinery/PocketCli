@@ -99,3 +99,100 @@ func TestLinkInCommentBodyIsNeverFollowed(t *testing.T) {
 		t.Fatalf("requests=%d items=%s err=%v", requests, items, err)
 	}
 }
+
+func TestSameCredentialRequestsAreSerialAcrossClients(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	active, maximum, calls := 0, 0, 0
+	transport := transportFunc(func(*http.Request) (*http.Response, error) {
+		mu.Lock()
+		active++
+		calls++
+		if active > maximum {
+			maximum = active
+		}
+		mu.Unlock()
+		time.Sleep(60 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return response(http.StatusOK, `[]`), nil
+	})
+	clients := []*Client{secretClient(t, transport), secretClient(t, transport)}
+	for _, client := range clients {
+		client.SetCacheStore(store)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, client := range clients {
+		wg.Add(1)
+		go func(i int, client *Client) {
+			defer wg.Done()
+			<-start
+			_, _, _, _, err := client.GetGitHubWithBytes(WithRunID(context.Background(), "run-concurrent-"+string(rune('0'+i))), "https://api.github.com/user/repos")
+			if err != nil {
+				t.Errorf("cliente %d: %v", i, err)
+			}
+		}(i, client)
+	}
+	close(start)
+	wg.Wait()
+	if maximum != 1 || calls != 2 {
+		t.Fatalf("concorrência por credencial: max=%d calls=%d", maximum, calls)
+	}
+}
+
+func TestPrincipalLockCancellationStopsBeforeNetwork(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.Lock("http-" + rateHoldKey("github", []byte("topsecret")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	calls := 0
+	client := secretClient(t, func(*http.Request) (*http.Response, error) {
+		calls++
+		return response(200, `[]`), nil
+	})
+	client.SetCacheStore(store)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, _, _, err = client.GetGitHubWithBytes(ctx, "https://api.github.com/user/repos")
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 0 {
+		t.Fatalf("request atravessou lock: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestPacingIsSharedAcrossClientRestarts(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var attempts []time.Time
+	transport := transportFunc(func(*http.Request) (*http.Response, error) {
+		attempts = append(attempts, time.Now())
+		return response(200, `[]`), nil
+	})
+	const endpoint = "https://api.github.com/user/repos"
+	first := secretClient(t, transport)
+	first.SetCacheStore(store)
+	first.SetRPH("github", 36000) // One request per 100 ms.
+	if _, _, _, _, err := first.GetGitHubWithBytes(context.Background(), endpoint); err != nil {
+		t.Fatal(err)
+	}
+	second := secretClient(t, transport)
+	second.SetCacheStore(store)
+	second.SetRPH("github", 36000)
+	if _, _, _, _, err := second.GetGitHubWithBytes(context.Background(), endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 || attempts[1].Sub(attempts[0]) < 90*time.Millisecond {
+		t.Fatalf("pacing perdido entre clientes: %v", attempts)
+	}
+}

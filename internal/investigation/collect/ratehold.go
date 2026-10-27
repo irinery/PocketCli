@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"pocketcli/internal/investigation/contract"
@@ -29,6 +30,25 @@ func rateHoldKey(source string, secret []byte) string {
 	hash.Write([]byte(source + ":"))
 	hash.Write(secret)
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func (c *Client) lockPrincipal(ctx context.Context, source string, secret []byte) (func(), error) {
+	if c.cacheStore == nil {
+		return func() {}, nil
+	}
+	id := "http-" + rateHoldKey(source, secret)
+	for {
+		release, err := c.cacheStore.Lock(id)
+		if err == nil {
+			return release, nil
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+			return nil, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao serializar requests da fonte"}
+		}
+		if err := waitUntil(ctx, time.Now().Add(25*time.Millisecond)); err != nil {
+			return nil, err
+		}
+	}
 }
 
 func (c *Client) waitRateHold(ctx context.Context, source string, secret []byte) error {
@@ -62,7 +82,21 @@ func (c *Client) saveRateHold(source string, secret []byte, delay time.Duration)
 		return nil
 	}
 	key := rateHoldKey(source, secret)
-	if err := c.cacheStore.Put(rateHoldKind, key, rateHold{Key: key, Source: source, Until: time.Now().UTC().Add(delay)}); err != nil {
+	until := time.Now().UTC().Add(delay)
+	var previous rateHold
+	err := c.cacheStore.Get(rateHoldKind, key, &previous)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "espera da fonte corrompida"}
+	}
+	if err == nil {
+		if previous.Key != key || previous.Source != source || previous.Until.IsZero() {
+			return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "espera da fonte corrompida"}
+		}
+		if previous.Until.After(until) {
+			until = previous.Until
+		}
+	}
+	if err := c.cacheStore.Put(rateHoldKind, key, rateHold{Key: key, Source: source, Until: until}); err != nil {
 		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao auditar espera da fonte"}
 	}
 	return nil

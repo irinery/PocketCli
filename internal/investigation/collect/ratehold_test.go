@@ -234,3 +234,23 @@ func TestRetryBackoffHasBoundedJitter(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderHoldNeverShortensExistingPacing(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := secretClient(t, func(*http.Request) (*http.Response, error) { return response(200, `[]`), nil })
+	client.SetCacheStore(store)
+	secret := []byte("topsecret")
+	if err := client.saveRateHold("github", secret, 10*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.saveRateHold("github", secret, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	var hold rateHold
+	if err := store.Get(rateHoldKind, rateHoldKey("github", secret), &hold); err != nil || time.Until(hold.Until) < 9*time.Second {
+		t.Fatalf("hold encurtado: %+v err=%v", hold, err)
+	}
+}

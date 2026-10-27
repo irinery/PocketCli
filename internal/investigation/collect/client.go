@@ -103,6 +103,11 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 	var wireBytes int64
 	var sourceRateLimited bool
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
+		release, err := c.lockPrincipal(ctx, source, secret)
+		if err != nil {
+			return err
+		}
+		defer release()
 		cacheKey := ""
 		var cached etagEntry
 		if method == "GET" {
@@ -140,6 +145,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				req.Header.Set("Content-Type", "application/json")
 			}
 			c.next[source] = time.Now().Add(c.spacing[source])
+			if err := c.saveRateHold(source, secret, c.spacing[source]); err != nil {
+				return err
+			}
 			started := time.Now().UTC()
 			res, err := c.HTTP.Do(req)
 			if err != nil {

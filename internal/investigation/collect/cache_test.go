@@ -141,6 +141,7 @@ type failingCacheStore struct{}
 
 func (failingCacheStore) Get(string, string, any) error { return os.ErrNotExist }
 func (failingCacheStore) Put(string, string, any) error { return errors.New("disk full") }
+func (failingCacheStore) Lock(string) (func(), error)   { return func() {}, nil }
 
 func TestCacheWriteFailureStopsPagination(t *testing.T) {
 	calls := 0
