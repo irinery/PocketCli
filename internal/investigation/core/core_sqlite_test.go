@@ -220,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.15.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.16.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1611,6 +1611,9 @@ func TestPRFilesLinkExactObservedPathWithoutAssumingComponent(t *testing.T) {
 	if d.Events[0].EventAt != "" || d.Events[0].ObservedAt == "" || d.Events[0].ObservedAt != d.Evidence[0].ObservedAt || d.Events[0].OldValue != "services/api/old.go" || d.Events[0].NewValue != "services/api/new.go" {
 		t.Fatalf("rename recebeu data inferida ou perdeu evidência de observação: %+v", d.Events[0])
 	}
+	if d.Evidence[0].SourceUpdatedAt != "" {
+		t.Fatalf("arquivo de PR recebeu source_updated_at inferido: %+v", d.Evidence[0])
+	}
 	retry := query.Dataset{PullRequests: d.PullRequests}
 	if err := c.collectPRFiles(context.Background(), plan, r, &retry, &run); err != nil || calls != 1 {
 		t.Fatalf("journal de arquivos não reutilizado: %+v %v calls=%d", retry, err, calls)
@@ -1666,8 +1669,8 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 		mappingFound = mappingFound || link.ID == "link-map-old"
 	}
 	for _, evidence := range d.Evidence {
-		evidenceFound = evidenceFound || evidence.ID == "ev-file"
-		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map"
+		evidenceFound = evidenceFound || evidence.ID == "ev-file" && evidence.SourceUpdatedAt == ""
+		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map" && evidence.SourceUpdatedAt == "2026-01-03T00:00:00Z"
 	}
 	for _, event := range d.Events {
 		if event.ID == "old-rename" {
