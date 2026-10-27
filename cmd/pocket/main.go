@@ -28,6 +28,11 @@ func main() {
 				os.Exit(1)
 			}
 		}
+		if len(os.Args) > 1 && os.Args[1] == "investigate" {
+			p := newPalette(os.Stderr)
+			fmt.Fprintln(os.Stderr, p.red("✗")+" "+err.Error())
+			os.Exit(1)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

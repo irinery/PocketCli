@@ -99,7 +99,7 @@ func TestOfflineRuntimeToPDF(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if run.SnapshotID == "" || (run.State != "completed" && run.State != "completed_partial") {
+	if run.SnapshotID == "" || (run.State != "completed" && run.State != "completed_partial") || run.Progress != 100 {
 		t.Fatalf("run não finalizou: %+v", run)
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_components", MaxRows: 10, TimeoutMS: 1000})

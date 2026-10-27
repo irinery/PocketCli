@@ -3,9 +3,9 @@ package core
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -130,7 +130,7 @@ func (s *Setup) Parse(_ context.Context, req contract.SetupParseRequest) (contra
 		input.Limits.GitHubRPH = 300
 	}
 	if input.Limits.LinearRPH == 0 {
-		input.Limits.LinearRPH = 180
+		input.Limits.LinearRPH = linearDefaultRPH
 	}
 	if input.Limits.MaxSessionMS == 0 {
 		input.Limits.MaxSessionMS = 7200000
@@ -179,6 +179,13 @@ func validateYAML(n *yaml.Node) error {
 	return nil
 }
 
+// linearDefaultRPH paces Linear at one request every three seconds. Batched
+// child reads keep a typical team window to a few dozen requests, so this
+// stays far below the API key quota while finishing in about a minute.
+const linearDefaultRPH = 1200
+
+var relativePeriod = regexp.MustCompile(`^([1-9][0-9]{0,3})([hd])$`)
+
 var secretKey = regexp.MustCompile(`(?i)(^|_)(token|secret|api_key|password|credential)(_|$)`)
 
 func (s *Setup) ResolvePeriod(_ context.Context, p contract.Period) (contract.ResolvedPeriod, error) {
@@ -200,10 +207,6 @@ func (s *Setup) ResolvePeriod(_ context.Context, p contract.Period) (contract.Re
 	out = contract.ResolvedPeriod{Preset: p.Preset, Timezone: p.Timezone, AnchorEnd: anchor.UTC().Format(time.RFC3339), WindowEnd: anchor.UTC().Format(time.RFC3339)}
 	var start time.Time
 	switch p.Preset {
-	case "30d", "60d", "90d":
-		var days int
-		fmt.Sscanf(p.Preset, "%dd", &days)
-		start = anchor.AddDate(0, 0, -days)
 	case "1y":
 		start = anchor.AddDate(-1, 0, 0)
 		if anchor.Month() == time.February && anchor.Day() == 29 {
@@ -223,7 +226,21 @@ func (s *Setup) ResolvePeriod(_ context.Context, p contract.Period) (contract.Re
 		start = from
 		out.WindowEnd = to.AddDate(0, 0, 1).UTC().Format(time.RFC3339)
 	default:
-		return contract.ResolvedPeriod{}, fault("ERR_VALIDATION", "preset inválido")
+		// Short relative windows: "12h", "7d", "30d", "90d"... Days are
+		// calendar days in the plan timezone, hours are elapsed hours.
+		m := relativePeriod.FindStringSubmatch(p.Preset)
+		if m == nil {
+			return contract.ResolvedPeriod{}, fault("ERR_VALIDATION", "preset inválido")
+		}
+		n, _ := strconv.Atoi(m[1])
+		if (m[2] == "h" && n > 8760) || (m[2] == "d" && n > 3650) {
+			return contract.ResolvedPeriod{}, fault("ERR_VALIDATION", "período relativo acima de 8760h ou 3650d")
+		}
+		if m[2] == "h" {
+			start = anchor.Add(-time.Duration(n) * time.Hour)
+		} else {
+			start = anchor.AddDate(0, 0, -n)
+		}
 	}
 	out.WindowStart = start.UTC().Format(time.RFC3339)
 	return out, nil

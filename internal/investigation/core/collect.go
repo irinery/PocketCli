@@ -131,70 +131,56 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			}
 		}
 	}
-	for _, r := range plan.Resources {
+	for i, r := range plan.Resources {
 		if err := ctx.Err(); err != nil {
 			return d, err
 		}
+		share := 1 / float64(len(plan.Resources))
+		ctx := withProgressRange(ctx, float64(i)*share, float64(i+1)*share)
+		var steps []func(context.Context) error
 		switch r.Source {
 		case "github":
-			if err := c.collectRepository(ctx, plan, r, previous, &d, run); err != nil {
-				return d, err
-			}
-			if err := c.collectGitHubFormalLinks(ctx, plan, r, &d, run); err != nil {
-				return d, err
-			}
+			steps = append(steps,
+				func(ctx context.Context) error { return c.collectRepository(ctx, plan, r, previous, &d, run) },
+				func(ctx context.Context) error { return c.collectGitHubFormalLinks(ctx, plan, r, &d, run) })
 			if plan.Input.Modules.CI {
-				if err := c.collectActions(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectChecks(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
+				steps = append(steps,
+					func(ctx context.Context) error { return c.collectActions(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectChecks(ctx, plan, r, &d, run) })
 			}
 			if plan.Input.Modules.Deployments {
-				if err := c.collectDeployments(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
+				steps = append(steps, func(ctx context.Context) error { return c.collectDeployments(ctx, plan, r, &d, run) })
 			}
 			if plan.Input.Modules.CodeHistory {
-				if err := c.collectGitRef(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectGitBranches(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectGitBranchGraphs(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectGitCommits(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectGitCommitFiles(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectPRFiles(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.collectPRCommits(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				if err := c.mapCurrentRefFiles(ctx, plan, r, &d); err != nil {
-					return d, err
-				}
-				if err := c.mapPRHeadFiles(ctx, plan, r, &d, run); err != nil {
-					return d, err
-				}
-				c.completeCodeHistoryCoverage(r.ID, &d)
+				steps = append(steps,
+					func(ctx context.Context) error { return c.collectGitRef(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectGitBranches(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectGitBranchGraphs(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectGitCommits(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectGitCommitFiles(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectPRFiles(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.collectPRCommits(ctx, plan, r, &d, run) },
+					func(ctx context.Context) error { return c.mapCurrentRefFiles(ctx, plan, r, &d) },
+					func(ctx context.Context) error {
+						if err := c.mapPRHeadFiles(ctx, plan, r, &d, run); err != nil {
+							return err
+						}
+						c.completeCodeHistoryCoverage(r.ID, &d)
+						return nil
+					})
 			}
 		case "linear":
-			if err := c.collectTeam(ctx, plan, r, &d, run); err != nil {
-				return d, err
-			}
+			steps = append(steps, func(ctx context.Context) error { return c.collectTeam(ctx, plan, r, &d, run) })
 		case "runtime":
-			if err := c.collectRuntime(ctx, r, &d, run); err != nil {
+			steps = append(steps, func(ctx context.Context) error { return c.collectRuntime(ctx, r, &d, run) })
+		}
+		for k, step := range steps {
+			stepShare := 1 / float64(len(steps))
+			if err := step(withProgressRange(ctx, float64(k)*stepShare, float64(k+1)*stepShare)); err != nil {
 				return d, err
 			}
 		}
+		reportProgress(ctx, run, 1)
 	}
 	if !plan.Input.Modules.CI {
 		d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "github", ID: "all"}, "actions", "not_selected", 0, "módulo CI não selecionado"))
@@ -473,13 +459,15 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			return err
 		}
 	}
+	reportProgress(ctx, run, 0.2)
 	if err := c.collectComments(ctx, plan, r, previous, d, run); err != nil {
 		return err
 	}
 	if err := c.collectReviewComments(ctx, plan, r, previous, d, run); err != nil {
 		return err
 	}
-	if err := c.collectGitHubChildren(ctx, plan, r, d, run); err != nil {
+	reportProgress(ctx, run, 0.3)
+	if err := c.collectGitHubChildren(withProgressRange(ctx, 0.3, 1), plan, r, d, run); err != nil {
 		return err
 	}
 	return nil
@@ -650,20 +638,33 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	const fullQuery = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	const deltaQuery = `query TeamIssuesDelta($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	const gapQuery = `query TeamIssuesGap($team: ID!, $after: String, $since: DateTimeOrDuration!, $until: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since, lt: $until}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	// The first read of a bounded window identifies its issues on the server
+	// instead of walking the whole team: a custom window keeps only issues
+	// updated since its start (anything created in it was updated in it), and
+	// a preset window also keeps open issues, which carry into it.
+	const windowQuery = `query TeamIssuesWindow($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {and: [{team: {id: {eq: $team}}}, {or: [{updatedAt: {gte: $since}}, {state: {type: {nin: ["completed", "canceled"]}}}]}]}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	status, reason := "complete", ""
 	items := []json.RawMessage{}
 	pagesComplete := true
 	spans := cursor.linearIssueSpans(plan)
+	identify := len(spans) == 1 && spans[0] == (sourceInterval{}) && plan.WindowStart != ""
+	if identify {
+		spans[0].Start = plan.WindowStart
+	}
 	for _, span := range spans {
 		gql := fullQuery
 		if span.End != "" {
 			gql = gapQuery
+		} else if identify && plan.Input.Period.Preset != "custom" {
+			gql = windowQuery
 		} else if span.Start != "" {
 			gql = deltaQuery
 		}
 		journalKey := plan.ID + ":" + r.ID + ":linear:issues"
 		if len(spans) > 1 {
 			journalKey += ":" + span.Start + ":" + span.End
+		} else if identify {
+			journalKey += ":window"
 		}
 		journalID := storage.Hash([]byte(journalKey))
 		journal := linearJournal{PlanID: plan.ID, ResourceID: r.ID, Items: []json.RawMessage{}}
@@ -729,6 +730,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			}
 			journal.Items = append(journal.Items, result.Issues.Nodes...)
 			journal.Pages++
+			reportProgress(ctx, run, 0.2*float64(journal.Pages)/20)
 			journal.Complete = !result.Issues.PageInfo.HasNextPage
 			journal.Cursor = next
 			if err := c.store.Put("journals", journalID, journal); err != nil {
@@ -835,7 +837,8 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 		}
 	} else {
 		firstChildCoverage := len(d.Coverage)
-		if err := c.collectLinearChildren(ctx, plan, r, d, run); err != nil {
+		reportProgress(ctx, run, 0.2)
+		if err := c.collectLinearChildren(withProgressRange(ctx, 0.2, 0.9), plan, r, d, run); err != nil {
 			return err
 		}
 		if status != "complete" {
@@ -848,6 +851,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			}
 		}
 	}
+	reportProgress(ctx, run, 0.9)
 	if plan.Input.LinearEnabled {
 		if err := c.collectLinearProjects(ctx, plan, r, d, run); err != nil {
 			return err

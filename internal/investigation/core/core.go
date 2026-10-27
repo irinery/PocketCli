@@ -187,7 +187,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 		input.Limits.GitHubRPH = 300
 	}
 	if input.Limits.LinearRPH <= 0 {
-		input.Limits.LinearRPH = 180
+		input.Limits.LinearRPH = linearDefaultRPH
 	}
 	if input.Limits.MaxSessionMS == 0 {
 		input.Limits.MaxSessionMS = 7200000

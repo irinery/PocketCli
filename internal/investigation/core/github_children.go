@@ -48,16 +48,19 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			timeline = append(timeline, githubChildTarget{Number: n, Index: i, EntityID: issue.ID})
 		}
 	}
-	for _, collection := range []struct {
-		name    string
-		targets []githubChildTarget
-	}{{"reviews", prs}, {"timeline", timeline}} {
+	type childPlan struct {
+		name           string
+		targets        []githubChildTarget
+		status, reason string
+		cursorID       string
+	}
+	plans := []*childPlan{{name: "reviews", targets: prs}, {name: "timeline", targets: timeline}}
+	for _, collection := range plans {
 		targets := collection.targets
 		sort.Slice(targets, func(i, j int) bool { return targets[i].EntityID < targets[j].EntityID })
-		status, reason := "complete", ""
-		cursorID := ""
+		collection.status = "complete"
 		if len(targets) > githubChildTargetLimit {
-			status, reason = "partial", fmt.Sprintf("fila de reconciliação: %d itens pendentes nesta rodada", len(targets)-githubChildTargetLimit)
+			collection.status, collection.reason = "partial", fmt.Sprintf("fila de reconciliação: %d itens pendentes nesta rodada", len(targets)-githubChildTargetLimit)
 			scopeID := plan.InvestigationID
 			if scopeID == "" {
 				scopeID = plan.ID
@@ -66,9 +69,9 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			if err != nil {
 				return err
 			}
-			cursorID = storage.Hash([]byte(scopeID + ":" + r.ID + ":" + collection.name + ":" + auth.GitHub))
+			collection.cursorID = storage.Hash([]byte(scopeID + ":" + r.ID + ":" + collection.name + ":" + auth.GitHub))
 			var cursor githubReconcileCursor
-			if err := c.store.Get("reconcile", cursorID, &cursor); err != nil && !os.IsNotExist(err) {
+			if err := c.store.Get("reconcile", collection.cursorID, &cursor); err != nil && !os.IsNotExist(err) {
 				return fault("ERR_AUDIT_FAILED", "cursor de reconciliação corrompido")
 			}
 			start := sort.Search(len(targets), func(i int) bool { return targets[i].EntityID > cursor.LastEntityID })
@@ -79,12 +82,25 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			targets = append(ordered, targets[:start]...)
 			targets = targets[:githubChildTargetLimit]
 		}
+		collection.targets = targets
+	}
+	if err := c.prefetchGitHubChildren(withProgressRange(ctx, 0, 0.2), plan, r, plans[0].targets, plans[1].targets, run); err != nil {
+		return err
+	}
+	total := len(plans[0].targets) + len(plans[1].targets)
+	done := 0
+	for _, collection := range plans {
+		targets := collection.targets
+		status, reason := collection.status, collection.reason
+		cursorID := collection.cursorID
 		var observed int64
 		lastComplete := ""
 		for _, target := range targets {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			done++
+			reportProgress(ctx, run, 0.2+0.8*float64(done)/float64(total))
 			path := fmt.Sprintf("/repos/%s/issues/%d/timeline?per_page=100", r.Name, target.Number)
 			if collection.name == "reviews" {
 				path = fmt.Sprintf("/repos/%s/pulls/%d/reviews?per_page=100", r.Name, target.Number)
@@ -159,7 +175,7 @@ func (c *Core) githubChildPages(ctx context.Context, plan contract.Plan, r contr
 }
 
 func (c *Core) githubChildPagesField(ctx context.Context, plan contract.Plan, r contract.Resource, collection string, number int, path, field string, run *contract.Run) ([]json.RawMessage, bool, error) {
-	journalID := storage.Hash([]byte(fmt.Sprintf("%s:%s:%s:%d", plan.ID, r.ID, collection, number)))
+	journalID := githubChildJournalID(plan, r, collection, number)
 	journal := githubJournal{PlanID: plan.ID, ResourceID: r.ID, Collection: collection, Items: []json.RawMessage{}}
 	if err := c.store.Get("journals", journalID, &journal); err == nil {
 		if journal.PlanID != plan.ID || journal.ResourceID != r.ID || journal.Collection != collection {

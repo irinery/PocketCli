@@ -1125,7 +1125,7 @@ func TestLinearCursorUsesUpdatedAtAfterConfirmedCoverage(t *testing.T) {
 	if err := c.collectTeam(context.Background(), third, r, thirdData, &run); err != nil {
 		t.Fatal(err)
 	}
-	if len(queries) != 4 || strings.Contains(queries[0], "TeamIssuesDelta") || !strings.Contains(queries[1], "TeamIssuesDelta") || !strings.Contains(queries[2], "TeamIssuesGap") || !strings.Contains(queries[3], "TeamIssuesDelta") || sinceValues[0] != "" || sinceValues[1] != "2026-01-08T00:00:00Z" || sinceValues[2] != "2025-12-01T00:00:00Z" || untilValues[2] != "2026-01-01T00:00:00Z" || sinceValues[3] != "2026-01-10T00:00:00Z" {
+	if len(queries) != 4 || !strings.Contains(queries[0], "TeamIssuesWindow") || !strings.Contains(queries[1], "TeamIssuesDelta") || !strings.Contains(queries[2], "TeamIssuesGap") || !strings.Contains(queries[3], "TeamIssuesDelta") || sinceValues[0] != "2026-01-01T00:00:00Z" || sinceValues[1] != "2026-01-08T00:00:00Z" || sinceValues[2] != "2025-12-01T00:00:00Z" || untilValues[2] != "2026-01-01T00:00:00Z" || sinceValues[3] != "2026-01-10T00:00:00Z" {
 		t.Fatalf("seletores Linear inválidos: since=%v until=%v queries=%v", sinceValues, untilValues, queries)
 	}
 	if len(thirdData.Issues) != 2 || thirdData.Issues[0].ID != "linear-issue-old" || thirdData.Issues[1].ID != "linear-issue-1" {
@@ -2067,6 +2067,12 @@ func TestLinearHistoryAndCommentsPaginateWithEvidence(t *testing.T) {
 		if strings.Contains(input.Query, "IssueFields") {
 			kind = "schema"
 			response = `{"data":{"__type":{"fields":[{"name":"history"},{"name":"comments"}]}}}`
+		} else if strings.Contains(input.Query, "IssueChildrenBatch") {
+			kind = "batch"
+			if input.Variables["i0"] != "issue-1" || !strings.Contains(input.Query, "history(first: 25") || !strings.Contains(input.Query, "comments(first: 25") {
+				t.Fatalf("lote Linear inesperado: %s %+v", input.Query, input.Variables)
+			}
+			response = `{"data":{"i0":{"id":"issue-1","history":{"nodes":[{"id":"history-1","createdAt":"2026-01-04T00:00:00Z","fromState":{"name":"Done","type":"completed"},"toState":{"name":"In Progress","type":"started"},"fromEstimate":3,"toEstimate":5,"actor":{"id":"user-1"}}],"pageInfo":{"hasNextPage":false}},"comments":{"nodes":[{"id":"comment-1","body":"revisado","createdAt":"2026-01-05T00:00:00Z","updatedAt":"2026-01-06T00:00:00Z","user":{"id":"user-2"}}],"pageInfo":{"hasNextPage":false}}}}}`
 		} else if strings.Contains(input.Query, "IssueHistory") {
 			kind = "history"
 			response = `{"data":{"issue":{"id":"issue-1","history":{"nodes":[{"id":"history-1","createdAt":"2026-01-04T00:00:00Z","fromState":{"name":"Done","type":"completed"},"toState":{"name":"In Progress","type":"started"},"fromEstimate":3,"toEstimate":5,"actor":{"id":"user-1"}}],"pageInfo":{"hasNextPage":false}}}}}`
@@ -2091,7 +2097,8 @@ func TestLinearHistoryAndCommentsPaginateWithEvidence(t *testing.T) {
 	if err := c.collectTeam(context.Background(), plan, r, &d, &run); err != nil {
 		t.Fatal(err)
 	}
-	if calls["issues"] != 1 || calls["schema"] != 1 || calls["history"] != 1 || calls["comments"] != 1 || calls["projects"] != 1 || len(d.Issues) != 1 || d.Issues[0].State != "started" || len(d.Estimates) != 1 || d.Estimates[0].Timing != "after_start" || len(d.Events) != 2 || d.Events[0].OldValue != "completed" || d.Events[0].NewValue != "started" || len(d.Evidence) != 5 || len(d.Components) != 2 || len(d.Links) != 1 {
+	// History and comments of the issue arrive in one batch request.
+	if calls["issues"] != 1 || calls["schema"] != 1 || calls["batch"] != 1 || calls["history"] != 0 || calls["comments"] != 0 || calls["projects"] != 1 || len(d.Issues) != 1 || d.Issues[0].State != "started" || len(d.Estimates) != 1 || d.Estimates[0].Timing != "after_start" || len(d.Events) != 2 || d.Events[0].OldValue != "completed" || d.Events[0].NewValue != "started" || len(d.Evidence) != 5 || len(d.Components) != 2 || len(d.Links) != 1 {
 		t.Fatalf("linear=%+v calls=%+v", d, calls)
 	}
 	for _, coverage := range d.Coverage {

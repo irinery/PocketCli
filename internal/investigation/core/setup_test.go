@@ -115,6 +115,21 @@ func TestResolveLeapYearAndMissing(t *testing.T) {
 	}
 }
 
+func TestResolveRelativePeriods(t *testing.T) {
+	s := NewSetup(func() time.Time { return time.Date(2026, 10, 27, 19, 30, 0, 0, time.UTC) })
+	for preset, start := range map[string]string{"12h": "2026-10-27T07:30:00Z", "7d": "2026-10-20T19:30:00Z", "30d": "2026-09-27T19:30:00Z", "1h": "2026-10-27T18:30:00Z"} {
+		p, err := s.ResolvePeriod(context.Background(), contract.Period{Preset: preset, Timezone: "UTC"})
+		if err != nil || p.WindowStart != start || p.WindowEnd != "2026-10-27T19:30:00Z" {
+			t.Fatalf("%s: %+v err=%v", preset, p, err)
+		}
+	}
+	for _, preset := range []string{"0h", "12", "h", "1w", "8761h", "3651d", "012h", "-3d"} {
+		if _, err := s.ResolvePeriod(context.Background(), contract.Period{Preset: preset, Timezone: "UTC"}); err == nil || !strings.Contains(err.Error(), "ERR_VALIDATION") {
+			t.Fatalf("aceitou período %q: %v", preset, err)
+		}
+	}
+}
+
 func TestResolvePeriodRejectsDatesOutsideCustom(t *testing.T) {
 	s := NewSetup(nil)
 	for _, period := range []contract.Period{

@@ -29,7 +29,7 @@ func TestPaginatedLinearIssuesStillCollectObservedHistoryAsPartial(t *testing.T)
 	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "test-linear", Persistence: "session"}); err != nil {
 		t.Fatal(err)
 	}
-	historyCalls := 0
+	historyCalls, batchCalls := 0, 0
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -54,6 +54,9 @@ func TestPaginatedLinearIssuesStillCollectObservedHistoryAsPartial(t *testing.T)
 			}
 		case strings.Contains(input.Query, "IssueFields"):
 			response = `{"data":{"__type":{"fields":[{"name":"history"}]}}}`
+		case strings.Contains(input.Query, "IssueChildrenBatch"):
+			batchCalls++
+			response = `{"data":{"i0":{"id":"issue-1","history":{"nodes":[{"id":"transition-1","createdAt":"2026-01-03T00:00:00Z","fromState":{"name":"Backlog","type":"backlog"},"toState":{"name":"In Progress","type":"started"}}],"pageInfo":{"hasNextPage":false}}},"i1":{"id":"issue-2","history":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}`
 		case strings.Contains(input.Query, "IssueHistory"):
 			historyCalls++
 			if input.Variables["id"] == "issue-1" {
@@ -77,7 +80,7 @@ func TestPaginatedLinearIssuesStillCollectObservedHistoryAsPartial(t *testing.T)
 	if err := c.collectTeam(context.Background(), plan, contract.Resource{Source: "linear", ID: "team-smf", Name: "SMF"}, &d, &contract.Run{ID: "paginated-linear-run"}); err != nil {
 		t.Fatal(err)
 	}
-	if historyCalls != 2 || len(d.Events) != 1 || d.Events[0].EntityID != "linear-issue-1" {
+	if batchCalls != 1 || historyCalls != 0 || len(d.Events) != 1 || d.Events[0].EntityID != "linear-issue-1" {
 		t.Fatalf("histórico das issues observadas não coletado: calls=%d events=%+v", historyCalls, d.Events)
 	}
 	statuses := map[string]string{}

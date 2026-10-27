@@ -15,11 +15,20 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const linearHistoryQuery = `query IssueHistory($id: String!, $after: String) { issue(id: $id) { id history(first: 100, after: $after, includeArchived: true) { nodes { id createdAt actor { id } fromState { name type } toState { name type } fromEstimate toEstimate fromProjectId toProjectId } pageInfo { hasNextPage endCursor } } } }`
-const linearCommentsQuery = `query IssueComments($id: String!, $after: String) { issue(id: $id) { id comments(first: 100, after: $after, includeArchived: true) { nodes { id body createdAt updatedAt user { id } } pageInfo { hasNextPage endCursor } } } }`
-const linearRelationsQuery = `query IssueRelations($id: String!, $after: String) { issue(id: $id) { id relations(first: 100, after: $after, includeArchived: false) { nodes { id type createdAt updatedAt issue { id } relatedIssue { id } } pageInfo { hasNextPage endCursor } } } }`
-const linearInverseRelationsQuery = `query IssueInverseRelations($id: String!, $after: String) { issue(id: $id) { id inverseRelations(first: 100, after: $after, includeArchived: false) { nodes { id type createdAt updatedAt issue { id } relatedIssue { id } } pageInfo { hasNextPage endCursor } } } }`
-const linearAttachmentsQuery = `query IssueAttachments($id: String!, $after: String) { issue(id: $id) { id attachments(first: 100, after: $after) { nodes { id url createdAt updatedAt } pageInfo { hasNextPage endCursor } } } }`
+// Node selections are shared by the per-issue queries and the batch query, so
+// a page read either way projects the same fields.
+const (
+	linearHistoryNodes   = `id createdAt actor { id } fromState { name type } toState { name type } fromEstimate toEstimate fromProjectId toProjectId`
+	linearCommentNodes   = `id body createdAt updatedAt user { id }`
+	linearRelationNodes  = `id type createdAt updatedAt issue { id } relatedIssue { id }`
+	linearAttachmentNode = `id url createdAt updatedAt`
+)
+
+const linearHistoryQuery = `query IssueHistory($id: String!, $after: String) { issue(id: $id) { id history(first: 100, after: $after, includeArchived: true) { nodes { ` + linearHistoryNodes + ` } pageInfo { hasNextPage endCursor } } } }`
+const linearCommentsQuery = `query IssueComments($id: String!, $after: String) { issue(id: $id) { id comments(first: 100, after: $after, includeArchived: true) { nodes { ` + linearCommentNodes + ` } pageInfo { hasNextPage endCursor } } } }`
+const linearRelationsQuery = `query IssueRelations($id: String!, $after: String) { issue(id: $id) { id relations(first: 100, after: $after, includeArchived: false) { nodes { ` + linearRelationNodes + ` } pageInfo { hasNextPage endCursor } } } }`
+const linearInverseRelationsQuery = `query IssueInverseRelations($id: String!, $after: String) { issue(id: $id) { id inverseRelations(first: 100, after: $after, includeArchived: false) { nodes { ` + linearRelationNodes + ` } pageInfo { hasNextPage endCursor } } } }`
+const linearAttachmentsQuery = `query IssueAttachments($id: String!, $after: String) { issue(id: $id) { id attachments(first: 100, after: $after) { nodes { ` + linearAttachmentNode + ` } pageInfo { hasNextPage endCursor } } } }`
 const linearIssueFieldsQuery = `query IssueFields { __type(name: "Issue") { fields { name } } }`
 
 type linearChildSchema struct {
@@ -92,41 +101,67 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].ID < targets[j].ID })
-	for _, collection := range []struct {
-		name, gql string
-		available bool
-	}{{"history", linearHistoryQuery, schema.History}, {"comments", linearCommentsQuery, schema.Comments}, {"relations", linearRelationsQuery, schema.Relations}, {"inverseRelations", linearInverseRelationsQuery, schema.InverseRelations}, {"attachments", linearAttachmentsQuery, schema.Attachments}} {
+	type childPlan struct {
+		name, gql      string
+		available      bool
+		status, reason string
+		selected       []query.Issue
+		cursorID       string
+	}
+	plans := []*childPlan{{name: "history", gql: linearHistoryQuery, available: schema.History}, {name: "comments", gql: linearCommentsQuery, available: schema.Comments}, {name: "relations", gql: linearRelationsQuery, available: schema.Relations}, {name: "inverseRelations", gql: linearInverseRelationsQuery, available: schema.InverseRelations}, {name: "attachments", gql: linearAttachmentsQuery, available: schema.Attachments}}
+	wanted := make(map[string][]string)
+	for _, collection := range plans {
 		if !collection.available {
-			d.Coverage = append(d.Coverage, c.coverage(r, collection.name, "unsupported", 0, "campo ausente no schema Linear consultado"))
 			continue
 		}
-		status, reason := "complete", "coleção por issue consultada com paginação"
-		selected := targets
-		cursorID := ""
+		collection.status, collection.reason = "complete", "coleção por issue consultada com paginação"
+		collection.selected = targets
 		if len(targets) > 100 {
-			status, reason = "partial", fmt.Sprintf("fila de reconciliação Linear: %d issues pendentes", len(targets)-100)
+			collection.status, collection.reason = "partial", fmt.Sprintf("fila de reconciliação Linear: %d issues pendentes", len(targets)-100)
 			var auth planAuth
 			if err := c.store.Get("planauth", plan.ID, &auth); err != nil {
 				return fault("ERR_AUDIT_FAILED", "identidade Linear indisponível")
 			}
-			cursorID = storage.Hash([]byte(plan.InvestigationID + ":" + r.ID + ":" + collection.name + ":" + auth.Linear))
+			collection.cursorID = storage.Hash([]byte(plan.InvestigationID + ":" + r.ID + ":" + collection.name + ":" + auth.Linear))
 			var cursor githubReconcileCursor
-			if err := c.store.Get("reconcile", cursorID, &cursor); err != nil && !os.IsNotExist(err) {
+			if err := c.store.Get("reconcile", collection.cursorID, &cursor); err != nil && !os.IsNotExist(err) {
 				return fault("ERR_AUDIT_FAILED", "cursor Linear corrompido")
 			}
 			start := sort.Search(len(targets), func(i int) bool { return targets[i].ID > cursor.LastEntityID })
 			if start >= len(targets) {
 				start = 0
 			}
-			selected = append(append([]query.Issue{}, targets[start:]...), targets[:start]...)
-			selected = selected[:100]
+			selected := append(append([]query.Issue{}, targets[start:]...), targets[:start]...)
+			collection.selected = selected[:100]
 		}
+		for _, issue := range collection.selected {
+			wanted[issue.ID] = append(wanted[issue.ID], collection.name)
+		}
+	}
+	if err := c.prefetchLinearChildren(withProgressRange(ctx, 0, 0.5), plan, r, targets, wanted, run); err != nil {
+		return err
+	}
+	total := 0
+	for _, issues := range wanted {
+		total += len(issues)
+	}
+	done := 0
+	for _, collection := range plans {
+		if !collection.available {
+			d.Coverage = append(d.Coverage, c.coverage(r, collection.name, "unsupported", 0, "campo ausente no schema Linear consultado"))
+			continue
+		}
+		status, reason := collection.status, collection.reason
+		selected := collection.selected
+		cursorID := collection.cursorID
 		var observed int64
 		lastComplete := ""
 		for _, issue := range selected {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			done++
+			reportProgress(ctx, run, 0.5+0.5*float64(done)/float64(total))
 			items, complete, err := c.linearChildPages(ctx, plan, r, issue, collection.name, collection.gql, run)
 			if err != nil {
 				var coded *contract.ErrorResponse
@@ -212,7 +247,7 @@ func (c *Core) projectLinearAttachment(plan contract.Plan, issue query.Issue, ra
 }
 
 func (c *Core) linearChildPages(ctx context.Context, plan contract.Plan, r contract.Resource, issue query.Issue, collection, gql string, run *contract.Run) ([]json.RawMessage, bool, error) {
-	journalID := storage.Hash([]byte(plan.ID + ":" + r.ID + ":linear:" + collection + ":" + issue.ID))
+	journalID := linearChildJournalID(plan, r, collection, issue)
 	journal := linearJournal{PlanID: plan.ID, ResourceID: r.ID, Items: []json.RawMessage{}}
 	if err := c.store.Get("journals", journalID, &journal); err == nil {
 		if journal.PlanID != plan.ID || journal.ResourceID != r.ID {

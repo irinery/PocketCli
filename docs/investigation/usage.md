@@ -93,10 +93,10 @@ Prepare um plano para o repositório escolhido. `--no-linear` deixa explícito q
 /tmp/pocket investigate --repo owner/repo --no-linear --period 90d --prepare --json
 ```
 
-Defina `POCKETCLI_INVESTIGATE_GITHUB_TOKEN` com um token autorizado de leitura antes da execução (ou informe-o no prompt seguro quando a CLI pedir). Do JSON, copie `id`, `hash` e `investigation_id`; confirme o hash exato para iniciar. A execução mostra progresso no terminal e publica o snapshot:
+Defina `POCKETCLI_INVESTIGATE_GITHUB_TOKEN` com um token autorizado de leitura antes da execução (ou informe-o no prompt seguro quando a CLI pedir). Do JSON, copie `id`, `hash` e `investigation_id`; para iniciar, confirme com o código do plano (os 8 primeiros caracteres do hash) ou o hash completo. A execução mostra uma barra de porcentagem no terminal até a conclusão (fora de terminal, uma linha `progress=N%` por mudança de estado) e publica o snapshot:
 
 ```sh
-/tmp/pocket investigate start PLAN_ID --confirm HASH
+/tmp/pocket investigate start PLAN_ID --confirm CODIGO
 ```
 
 Para acompanhar achados e evidências numa UI local em tempo real, abra a investigação após a coleta:
