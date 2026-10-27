@@ -49,7 +49,7 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 	completedEligible, assigneeUnknown := int64(0), int64(0)
 	for _, issue := range d.Issues {
 		issueByID[issue.ID] = issue
-		if issue.IsContext || !observedInWindow(issue.CompletedAt, d.Snapshot) {
+		if !completedIssueInWindow(issue, d.Snapshot) {
 			continue
 		}
 		completedEligible++
@@ -124,6 +124,39 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 	}
 	if assigneeUnknown > 0 {
 		out = append(out, integerMetric("metric-completed-assignee-unknown", "Issues concluídas sem responsável conhecido", assigneeUnknown, assigneeUnknown, &completedEligible, "Issues não contextuais com completed_at na janela e assignee_id ausente no snapshot", "Ausência de responsável não identifica quem executou o trabalho."))
+	}
+	return out
+}
+
+func issueOutcomeMetrics(d query.Dataset) []contract.Metric {
+	counts := map[string]int64{"completed": 0, "cancelled": 0, "duplicate": 0, "not_planned": 0, "unknown": 0}
+	var terminal int64
+	for _, issue := range d.Issues {
+		if issue.IsContext {
+			continue
+		}
+		if _, ok := counts[issue.Outcome]; ok {
+			counts[issue.Outcome]++
+			terminal++
+		}
+	}
+	if terminal == 0 {
+		return nil
+	}
+	labels := []struct{ outcome, name string }{
+		{"completed", "Issues com conclusão explícita"},
+		{"cancelled", "Issues canceladas"},
+		{"duplicate", "Issues marcadas como duplicadas"},
+		{"not_planned", "Issues fechadas como não planejadas"},
+		{"unknown", "Issues fechadas sem motivo conhecido"},
+	}
+	out := make([]contract.Metric, 0, len(labels))
+	for _, item := range labels {
+		count := counts[item.outcome]
+		id := "metric-issue-outcome-" + strings.ReplaceAll(item.outcome, "_", "-")
+		out = append(out, integerMetric(id, item.name, count, count, &terminal,
+			"Classificação do estado atual de issues não contextuais na representação observada neste snapshot",
+			"Não é uma contagem de transições no período nem uma taxa de entrega; status anteriores podem ter sido diferentes."))
 	}
 	return out
 }
@@ -218,7 +251,7 @@ func estimateMetrics(d query.Dataset) []contract.Metric {
 			if issue.EstimateCurrent != nil {
 				team.known++
 			}
-			if observedInWindow(issue.CompletedAt, d.Snapshot) {
+			if completedIssueInWindow(issue, d.Snapshot) {
 				team.completed++
 			}
 			teams[issue.TeamID] = team
@@ -398,7 +431,7 @@ func cycleTimeMetrics(d query.Dataset) []contract.Metric {
 	cohorts := make(map[string][]int64)
 	eligible := make(map[string]int64)
 	for _, issue := range d.Issues {
-		if issue.IsContext || issue.TeamID == "" || !observedInWindow(issue.CompletedAt, d.Snapshot) {
+		if issue.TeamID == "" || !completedIssueInWindow(issue, d.Snapshot) {
 			continue
 		}
 		eligible[issue.TeamID]++

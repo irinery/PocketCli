@@ -58,6 +58,12 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			referenced := make(map[string]bool)
 			for _, i := range prior.Issues {
 				if activeInWindow(plan.WindowStart, plan.WindowEnd, i.CreatedAt, i.UpdatedAt, i.State, plan.Input.Period.Preset != "custom") {
+					if i.Outcome == "" && (i.Source == "github" || i.Source == "linear") {
+						i, err = c.classifyRetainedIssue(i)
+						if err != nil {
+							return d, err
+						}
+					}
 					d.Issues = append(d.Issues, i)
 					referenced[i.EvidenceID] = true
 				}
@@ -340,7 +346,8 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				upsertPR(d, p)
 			} else {
 				i := query.Issue{ID: fmt.Sprintf("github-issue-%d", obj.ID), Identifier: fmt.Sprintf("%s#%d", r.Name, obj.Number), Source: "github", Title: c.safeTitle(ctx, obj.Title), State: obj.State, CreatedAt: obj.CreatedAt, UpdatedAt: obj.UpdatedAt, EvidenceID: e.ID, IsContext: contextOnly(plan.WindowStart, obj.CreatedAt, obj.UpdatedAt)}
-				if obj.State == "closed" && obj.StateReason == "completed" && obj.ClosedAt != nil {
+				i.Outcome = githubIssueOutcome(obj.State, obj.StateReason)
+				if i.Outcome == "completed" && obj.ClosedAt != nil {
 					i.CompletedAt = *obj.ClosedAt
 				}
 				upsertIssue(d, i)
@@ -658,20 +665,18 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			return err
 		}
 		upsertEvidence(d, e)
-		i := query.Issue{ID: "linear-" + node.ID, Identifier: node.Identifier, Source: "linear", Title: c.safeTitle(ctx, node.Title), CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt, StartedAt: node.StartedAt, CompletedAt: node.CompletedAt, EstimateCurrent: node.Estimate, TeamID: r.ID, EvidenceID: e.ID, IsContext: contextOnly(plan.WindowStart, node.CreatedAt, node.UpdatedAt)}
+		i := query.Issue{ID: "linear-" + node.ID, Identifier: node.Identifier, Source: "linear", Title: c.safeTitle(ctx, node.Title), Outcome: "unclassified", CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt, StartedAt: node.StartedAt, EstimateCurrent: node.Estimate, TeamID: r.ID, EvidenceID: e.ID, IsContext: contextOnly(plan.WindowStart, node.CreatedAt, node.UpdatedAt)}
+		if node.State != nil {
+			i.Outcome = linearIssueOutcome(node.State.Type, node.State.Name)
+		}
+		if i.Outcome == "completed" {
+			i.CompletedAt = node.CompletedAt
+		}
 		if node.Assignee != nil {
 			i.AssigneeID = node.Assignee.ID
 		}
 		i.State = state
-		if i.StartedAt != "" && i.CompletedAt != "" {
-			start, e1 := time.Parse(time.RFC3339, i.StartedAt)
-			end, e2 := time.Parse(time.RFC3339, i.CompletedAt)
-			if e1 == nil && e2 == nil && end.After(start) {
-				seconds := int64(end.Sub(start).Seconds())
-				i.DurationValid = true
-				i.CycleSeconds = &seconds
-			}
-		}
+		setIssueCycle(&i)
 		upsertIssue(d, i)
 		if node.Project != nil && node.Project.ID != "" {
 			projectID := "proj-" + storage.Hash([]byte(node.Project.ID))[:24]
@@ -768,6 +773,100 @@ func terminalState(s string) bool {
 		return true
 	}
 	return false
+}
+
+func githubIssueOutcome(state, reason string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "open":
+		return "active"
+	case "closed":
+		// Only a closed issue has a terminal outcome to classify.
+	default:
+		return "unclassified"
+	}
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "completed", "duplicate", "not_planned":
+		return strings.ToLower(strings.TrimSpace(reason))
+	default:
+		return "unknown"
+	}
+}
+
+func linearIssueOutcome(stateType, stateName string) string {
+	kind := strings.ToLower(strings.TrimSpace(stateType))
+	name := strings.ToLower(strings.TrimSpace(stateName))
+	if name == "duplicate" && (kind == "canceled" || kind == "cancelled" || kind == "completed" || kind == "") {
+		return "duplicate"
+	}
+	switch kind {
+	case "completed":
+		return "completed"
+	case "canceled", "cancelled":
+		return "cancelled"
+	case "":
+		switch name {
+		case "completed", "done":
+			return "completed"
+		case "canceled", "cancelled":
+			return "cancelled"
+		}
+	case "started", "unstarted", "backlog", "triage":
+		return "active"
+	}
+	return "unclassified"
+}
+
+func (c *Core) classifyRetainedIssue(issue query.Issue) (query.Issue, error) {
+	var raw json.RawMessage
+	if issue.EvidenceID == "" || c.store.Get("objects", issue.EvidenceID, &raw) != nil || !json.Valid(raw) {
+		return issue, fault("ERR_AUDIT_FAILED", "evidência de issue anterior indisponível")
+	}
+	switch issue.Source {
+	case "github":
+		var item struct {
+			State       string  `json:"state"`
+			StateReason string  `json:"state_reason"`
+			ClosedAt    *string `json:"closed_at"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			return issue, fault("ERR_AUDIT_FAILED", "evidência de issue GitHub inválida")
+		}
+		issue.Outcome = githubIssueOutcome(item.State, item.StateReason)
+		issue.CompletedAt = ""
+		if issue.Outcome == "completed" && item.ClosedAt != nil {
+			issue.CompletedAt = *item.ClosedAt
+		}
+	case "linear":
+		var item struct {
+			CompletedAt string                       `json:"completedAt"`
+			State       *struct{ Type, Name string } `json:"state"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			return issue, fault("ERR_AUDIT_FAILED", "evidência de issue Linear inválida")
+		}
+		issue.Outcome, issue.CompletedAt = "unclassified", ""
+		if item.State != nil {
+			issue.Outcome = linearIssueOutcome(item.State.Type, item.State.Name)
+			if issue.Outcome == "completed" {
+				issue.CompletedAt = item.CompletedAt
+			}
+		}
+	}
+	setIssueCycle(&issue)
+	return issue, nil
+}
+
+func setIssueCycle(issue *query.Issue) {
+	issue.DurationValid, issue.CycleSeconds = false, nil
+	if issue.StartedAt == "" || issue.CompletedAt == "" {
+		return
+	}
+	start, startErr := time.Parse(time.RFC3339, issue.StartedAt)
+	end, endErr := time.Parse(time.RFC3339, issue.CompletedAt)
+	if startErr == nil && endErr == nil && end.After(start) {
+		seconds := int64(end.Sub(start).Seconds())
+		issue.DurationValid, issue.CycleSeconds = true, &seconds
+	}
 }
 func contextOnly(start, created, updated string) bool {
 	if start == "" {

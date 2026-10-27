@@ -34,6 +34,7 @@ type Event struct{ ID, EntityID, Type, EventAt, ObservedAt, ActorID, OldValue, N
 
 type Issue struct {
 	ID, Identifier, Source, Title, State, AssigneeID, TeamID, ComponentID string
+	Outcome                                                               string
 	CreatedAt, UpdatedAt, StartedAt, CompletedAt                          string
 	EstimateBeforeStart, EstimateCurrent                                  *float64
 	ReopenCount                                                           int
