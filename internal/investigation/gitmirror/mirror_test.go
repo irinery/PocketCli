@@ -22,6 +22,33 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func TestDirectoryBytesToleratesVanishedGitTemporaryObject(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tmp_pack")
+	if err := os.WriteFile(path, []byte("temporary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("listagem do objeto temporário: %v, %d entradas", err, len(entries))
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if size, err := directoryEntryBytes(root, path, entries[0], nil); err != nil || size != 0 {
+		t.Fatalf("arquivo renomeado durante a medição: bytes=%d err=%v", size, err)
+	}
+	if size, err := directoryEntryBytes(root, path, nil, os.ErrNotExist); err != nil || size != 0 {
+		t.Fatalf("subdiretório removido durante a medição: bytes=%d err=%v", size, err)
+	}
+	if _, err := directoryEntryBytes(root, root, nil, os.ErrNotExist); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("raiz ausente deveria falhar: %v", err)
+	}
+	if _, err := directoryBytes(filepath.Join(root, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("diretório ausente deveria falhar: %v", err)
+	}
+}
+
 func TestMirrorDetectsAdvanceAndDivergenceWithoutRunningRepositoryCode(t *testing.T) {
 	root := t.TempDir()
 	work := filepath.Join(root, "work")

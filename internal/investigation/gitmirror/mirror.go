@@ -468,20 +468,37 @@ func (m *Mirror) environment(remote string, secret []byte) []string {
 func directoryBytes(root string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		size, err := directoryEntryBytes(root, path, entry, err)
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		total += info.Size()
+		total += size
 		return nil
 	})
 	return total, err
+}
+
+func directoryEntryBytes(root, path string, entry fs.DirEntry, walkErr error) (int64, error) {
+	// Git atomically renames and removes temporary objects during fetch.
+	// A vanished child is no longer part of the local budget; a missing root
+	// or any other filesystem failure still aborts the audit.
+	if walkErr != nil {
+		if path != root && errors.Is(walkErr, fs.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, walkErr
+	}
+	if entry.IsDir() {
+		return 0, nil
+	}
+	info, err := entry.Info()
+	if path != root && errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 func StorageBytes(root string) (int64, error) { return directoryBytes(root) }
