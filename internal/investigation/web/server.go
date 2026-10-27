@@ -24,12 +24,14 @@ import (
 )
 
 type PreviewOptions struct {
-	Demo         bool
-	BindHost     string
-	Port         int
-	Scenario     string
-	DataDir      string
-	QueryHistory *queries.Store
+	Demo            bool
+	InvestigationID string
+	SnapshotID      string
+	BindHost        string
+	Port            int
+	Scenario        string
+	DataDir         string
+	QueryHistory    *queries.Store
 }
 type EditorialService interface {
 	Models(context.Context) ([]editorial.Model, error)
@@ -85,6 +87,9 @@ type Handler struct {
 func NewHandler(core contract.Core, setup contract.SetupService, credentials contract.CredentialStore, editorialService EditorialService, annotationStore AnnotationStore, reports ReportService, options PreviewOptions) (http.Handler, string, error) {
 	if core == nil {
 		return nil, "", errors.New("investigation core is required")
+	}
+	if !options.Demo && strings.TrimSpace(options.InvestigationID) == "" {
+		return nil, "", errors.New("investigation id is required")
 	}
 	if options.BindHost == "" {
 		options.BindHost = "127.0.0.1"
@@ -156,7 +161,13 @@ func (h *Handler) root(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if asset == "app.js" {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = io.WriteString(w, appJS)
+		if h.options.Demo {
+			_, _ = io.WriteString(w, appJS)
+		} else if _, ok := h.authenticated(r); !ok {
+			_, _ = io.WriteString(w, realUnlockJS)
+		} else {
+			_, _ = io.WriteString(w, realAppJS(h.options.InvestigationID, h.options.SnapshotID))
+		}
 		return
 	}
 	if _, ok := h.authenticated(r); !ok {
@@ -168,6 +179,7 @@ func (h *Handler) root(w http.ResponseWriter, r *http.Request) {
 	page := appHTML
 	if !h.options.Demo {
 		page = strings.Replace(page, `<span class="demo-badge">DEMO · DADOS FICTÍCIOS</span>`, `<span class="tag green">INVESTIGAÇÃO LOCAL</span>`, 1)
+		page = strings.Replace(page, "Carregando dados de demonstração…", "Carregando investigação…", 1)
 	}
 	_, _ = io.WriteString(w, page)
 }
@@ -821,7 +833,7 @@ func (h *Handler) validateAnnotationTarget(ctx context.Context, in annotations.C
 	return nil
 }
 func (h *Handler) unavailable(w http.ResponseWriter, name string) {
-	h.writeError(w, 501, "ERR_UNAVAILABLE", name+" indisponível no modo preview.")
+	h.writeError(w, 501, "ERR_UNAVAILABLE", name+" indisponível nesta sessão.")
 }
 func (h *Handler) respond(w http.ResponseWriter, v any, err error) {
 	if err != nil {
