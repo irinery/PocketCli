@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.10.0"
+const Version = "1.11.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -225,17 +225,11 @@ func Evaluate(d query.Dataset) query.Dataset {
 					notAncestorEvidence = relation.EvidenceID
 				}
 			}
-			if included {
+			if included || notAncestorEvidence == "" {
 				continue
 			}
 			evidence := uniqueEvidenceIDs(append([]string{p.EvidenceID, delivery.EvidenceID, l.EvidenceID, notAncestorEvidence}, correctionIDs...))
-			body := "Uma correção declarada foi mesclada antes da observação do artefato; a revisão declarada do artefato difere do SHA de merge, e a presença da correção não foi comprovada."
-			limitation := "Ancestralidade não verificada; SHA diferente não demonstra ausência do código por cherry-pick ou proveniência declarada incorreta."
-			if notAncestorEvidence != "" {
-				body = "O commit de merge da correção declarada não é ancestral da revisão observada do artefato."
-				limitation = "A ausência do commit no grafo não exclui patch equivalente por cherry-pick nem erro na proveniência declarada do artefato."
-			}
-			d.Findings = append(d.Findings, finding("R-DELIVERY-001", "high", delivery.ComponentID, "Correção não comprovada no artefato observado", body, "direct", evidence, limitation))
+			d.Findings = append(d.Findings, finding("R-DELIVERY-001", "high", delivery.ComponentID, "Correção não comprovada no artefato observado", "O commit de merge da correção declarada não é ancestral da revisão observada do artefato.", "direct", evidence, "A ausência do commit no grafo não exclui patch equivalente por cherry-pick nem erro na proveniência declarada do artefato."))
 		}
 	}
 	d.Metrics = metrics(d)

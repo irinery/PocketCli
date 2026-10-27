@@ -16,7 +16,7 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 		Issues:       []query.Issue{{ID: "iss-1", Identifier: "UNI-1", State: "done", CompletedAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-1"}, {ID: "iss-3", Identifier: "UNI-3", State: "open", EvidenceID: "ev-3"}},
 		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, MergedAt: "2026-01-04T01:00:00Z", EvidenceID: "ev-4", MergeSHA: "new-sha"}},
 		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
-		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}},
+		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-ancestry", SourceID: "art-1", TargetID: "pr-10", Relation: "merge_commit_not_ancestor", Status: "direct", EvidenceID: "ev-9"}},
 		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
 		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EvidenceID: "ev-6"}},
 		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ObservedAt: "2026-01-30T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
@@ -31,7 +31,7 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 		if _, ok := want[f.RuleID]; ok {
 			want[f.RuleID] = true
 		}
-		if f.RuleID == "R-DELIVERY-001" && !reflect.DeepEqual(f.EvidenceIDs, []string{"ev-4", "ev-8"}) {
+		if f.RuleID == "R-DELIVERY-001" && !reflect.DeepEqual(f.EvidenceIDs, []string{"ev-4", "ev-8", "ev-9"}) {
 			t.Fatalf("delivery evidence incomplete: %+v", f.EvidenceIDs)
 		}
 		if f.RuleID == "R-FLOW-001" && (len(f.EvidenceIDs) != 2 || f.EvidenceIDs[0] != "ev-ready" || f.EvidenceIDs[1] != "ev-review") {
@@ -106,18 +106,23 @@ func TestDeliveryFindingRequiresCorrectionAndLaterArtifactObservation(t *testing
 	}
 	withFix := makeDataset()
 	withFix.Links = append(withFix.Links, contract.LinkRecord{ID: "fix", SourceID: "pr-1", Relation: "declares_fix_of", TargetID: "issue-1", Status: "direct", EvidenceID: "ev-fix"})
+	if got := findDelivery(withFix); got != nil {
+		t.Fatalf("different SHA without Git ancestry proof became a finding: %+v", got)
+	}
+	proof := contract.LinkRecord{ID: "ancestry", SourceID: "artifact", Relation: "merge_commit_not_ancestor", TargetID: "pr-1", Status: "direct", EvidenceID: "ev-ancestry"}
+	withFix.Links = append(withFix.Links, proof)
 	got := findDelivery(withFix)
-	if got == nil || !reflect.DeepEqual(got.EvidenceIDs, []string{"ev-artifact", "ev-file", "ev-fix", "ev-pr"}) {
+	if got == nil || !reflect.DeepEqual(got.EvidenceIDs, []string{"ev-ancestry", "ev-artifact", "ev-file", "ev-fix", "ev-pr"}) {
 		t.Fatalf("explicit correction evidence missing: %+v", got)
 	}
 	beforeMerge := makeDataset()
-	beforeMerge.Links = append(beforeMerge.Links, withFix.Links[1])
+	beforeMerge.Links = append(beforeMerge.Links, withFix.Links[1:]...)
 	beforeMerge.Deliveries[0].ObservedAt = "2026-01-04T00:00:00Z"
 	if got := findDelivery(beforeMerge); got != nil {
 		t.Fatalf("older artifact was treated as post-correction: %+v", got)
 	}
 	sameRevision := makeDataset()
-	sameRevision.Links = append(sameRevision.Links, withFix.Links[1])
+	sameRevision.Links = append(sameRevision.Links, withFix.Links[1:]...)
 	sameRevision.Deliveries[0].RevisionSHA = "merge-sha"
 	if got := findDelivery(sameRevision); got != nil {
 		t.Fatalf("matching artifact was flagged: %+v", got)
@@ -127,7 +132,7 @@ func TestDeliveryFindingRequiresCorrectionAndLaterArtifactObservation(t *testing
 		t.Fatalf("matching artifact with uppercase SHA was flagged: %+v", got)
 	}
 	futureArtifact := makeDataset()
-	futureArtifact.Links = append(futureArtifact.Links, withFix.Links[1])
+	futureArtifact.Links = append(futureArtifact.Links, withFix.Links[1:]...)
 	futureArtifact.Deliveries[0].ObservedAt = "2026-01-11T00:00:00Z"
 	if got := findDelivery(futureArtifact); got != nil {
 		t.Fatalf("artifact outside the snapshot window was flagged: %+v", got)
