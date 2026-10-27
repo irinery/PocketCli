@@ -273,6 +273,7 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 	defer cancel()
 	args := []string{"--headless", "--disable-background-networking", "--host-resolver-rules=MAP * ~NOTFOUND", "--no-pdf-header-footer", "--user-data-dir=" + profile, "--print-to-pdf=" + tempPDF, fileURL}
 	cmd := exec.CommandContext(jobCtx, f.chromium, args...)
+	stopProcessGroupOnCancel(cmd)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + profile}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
