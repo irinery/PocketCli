@@ -55,3 +55,42 @@ func TestInvestigationFlagsRejectDatesForNonCustomPeriod(t *testing.T) {
 		t.Fatalf("aceitou data sobre preset do YAML: %v", err)
 	}
 }
+
+func TestDisableSourceFlagClearsDependentYAMLFields(t *testing.T) {
+	input := contract.PlanInput{
+		GitHubEnabled: true, LinearEnabled: true,
+		Scope:   &contract.Scope{Mode: "selected", Repositories: []string{"owner/repo"}, Teams: []string{"UNI"}},
+		Modules: contract.Modules{GitHubIssues: true, CodeHistory: true, CI: true, Deployments: true},
+	}
+	effective, changes, err := applyInvestigationFlags(input, investigationFlags{scope: "plan.yaml", noGitHub: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.GitHubEnabled || len(effective.Scope.Repositories) != 0 || len(effective.Scope.Teams) != 1 || effective.Scope.Mode != "selected" || effective.Modules.GitHubIssues || effective.Modules.CodeHistory || effective.Modules.CI || effective.Modules.Deployments {
+		t.Fatalf("dependências GitHub não foram desligadas: %#v", effective)
+	}
+	if !input.GitHubEnabled || len(input.Scope.Repositories) != 1 || !input.Modules.GitHubIssues {
+		t.Fatal("YAML original foi alterado")
+	}
+	var output bytes.Buffer
+	if err := printInvestigationOverrides(&output, changes); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"sources.github", "scope.repositories", "modules.github_issues", "modules.code_history", "modules.ci", "modules.deployments"} {
+		if !strings.Contains(output.String(), field+":") {
+			t.Errorf("override de %s ausente: %s", field, output.String())
+		}
+	}
+	if _, _, err := applyInvestigationFlags(input, investigationFlags{noGitHub: true, repos: []string{"owner/repo"}}); err == nil {
+		t.Fatal("aceitou --no-github junto de --repo")
+	}
+	if _, _, err := applyInvestigationFlags(input, investigationFlags{noLinear: true, teams: []string{"UNI"}}); err == nil {
+		t.Fatal("aceitou --no-linear junto de --team")
+	}
+	input.GitHubEnabled = false
+	input.Scope.Repositories = []string{}
+	input.Modules = contract.Modules{}
+	if _, _, err := applyInvestigationFlags(input, investigationFlags{scope: "plan.yaml", repos: []string{"owner/repo"}}); err == nil {
+		t.Fatal("aceitou --repo sobre YAML com GitHub desligado")
+	}
+}

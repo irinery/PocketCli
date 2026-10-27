@@ -12,12 +12,20 @@ import (
 // an optional YAML plan. Scope is copied because callers may keep the original
 // input to audit which fields the flags replaced.
 func applyInvestigationFlags(input contract.PlanInput, f investigationFlags) (contract.PlanInput, []string, error) {
+	if f.noGitHub && len(f.repos) > 0 {
+		return input, nil, fmt.Errorf("ERR_VALIDATION: --repo exige a fonte GitHub")
+	}
+	if f.noLinear && len(f.teams) > 0 {
+		return input, nil, fmt.Errorf("ERR_VALIDATION: --team exige a fonte Linear")
+	}
 	before := input
 	if input.Scope != nil {
 		scope := *input.Scope
 		scope.Repositories = slices.Clone(scope.Repositories)
 		scope.Teams = slices.Clone(scope.Teams)
 		input.Scope = &scope
+	} else {
+		input.Scope = &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}
 	}
 	if f.period != "" {
 		input.Period.Preset = f.period
@@ -43,9 +51,15 @@ func applyInvestigationFlags(input contract.PlanInput, f investigationFlags) (co
 	}
 	if f.noGitHub {
 		input.GitHubEnabled = false
+		input.Scope.Repositories = []string{}
+		input.Modules.GitHubIssues = false
+		input.Modules.CodeHistory = false
+		input.Modules.CI = false
+		input.Modules.Deployments = false
 	}
 	if f.noLinear {
 		input.LinearEnabled = false
+		input.Scope.Teams = []string{}
 	}
 	if len(f.repos) > 0 {
 		input.Scope.Mode = "selected"
@@ -54,6 +68,15 @@ func applyInvestigationFlags(input contract.PlanInput, f investigationFlags) (co
 	if len(f.teams) > 0 {
 		input.Scope.Mode = "selected"
 		input.Scope.Teams = slices.Clone(f.teams)
+	}
+	if input.Scope.Mode == "selected" && len(input.Scope.Repositories)+len(input.Scope.Teams) == 0 {
+		input.Scope.Mode = "all_authorized"
+	}
+	if !input.GitHubEnabled && len(input.Scope.Repositories) > 0 {
+		return input, nil, fmt.Errorf("ERR_VALIDATION: --repo exige a fonte GitHub")
+	}
+	if !input.LinearEnabled && len(input.Scope.Teams) > 0 {
+		return input, nil, fmt.Errorf("ERR_VALIDATION: --team exige a fonte Linear")
 	}
 	if input.Period.Preset != "" && input.Period.Preset != "custom" && (input.Period.FromDate != "" || input.Period.ToDate != "") {
 		return input, nil, fmt.Errorf("ERR_VALIDATION: --from e --to exigem período custom")
@@ -74,6 +97,10 @@ func applyInvestigationFlags(input contract.PlanInput, f investigationFlags) (co
 	add("investigation_id", before.InvestigationID, input.InvestigationID)
 	add("sources.github", before.GitHubEnabled, input.GitHubEnabled)
 	add("sources.linear", before.LinearEnabled, input.LinearEnabled)
+	add("modules.github_issues", before.Modules.GitHubIssues, input.Modules.GitHubIssues)
+	add("modules.code_history", before.Modules.CodeHistory, input.Modules.CodeHistory)
+	add("modules.ci", before.Modules.CI, input.Modules.CI)
+	add("modules.deployments", before.Modules.Deployments, input.Modules.Deployments)
 	if before.Scope != nil && input.Scope != nil {
 		add("scope.mode", before.Scope.Mode, input.Scope.Mode)
 		if !slices.Equal(before.Scope.Repositories, input.Scope.Repositories) {

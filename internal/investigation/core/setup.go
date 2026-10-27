@@ -98,10 +98,12 @@ func (s *Setup) Parse(_ context.Context, req contract.SetupParseRequest) (contra
 	if raw.PDF.Automatic != nil && !*raw.PDF.Automatic {
 		return out, fault("ERR_VALIDATION", "pdf.automatic deve ser true")
 	}
+	githubEnabled := boolDefault(raw.Sources.GitHub, true)
+	linearEnabled := boolDefault(raw.Sources.Linear, true)
 	input := contract.PlanInput{SchemaVersion: contract.Version, Name: raw.Name,
-		GitHubEnabled: boolDefault(raw.Sources.GitHub, true), LinearEnabled: boolDefault(raw.Sources.Linear, true),
+		GitHubEnabled: githubEnabled, LinearEnabled: linearEnabled,
 		Period:  contract.Period{Preset: raw.Period.Preset, FromDate: raw.Period.FromDate, ToDate: raw.Period.ToDate, Timezone: raw.Period.Timezone},
-		Modules: contract.Modules{GitHubIssues: boolDefault(raw.Modules.GitHubIssues, true), CodeHistory: boolDefault(raw.Modules.CodeHistory, true), CI: boolDefault(raw.Modules.CI, false), Deployments: boolDefault(raw.Modules.Deployments, false), RuntimeImport: boolDefault(raw.Modules.RuntimeImport, false)},
+		Modules: contract.Modules{GitHubIssues: boolDefault(raw.Modules.GitHubIssues, githubEnabled), CodeHistory: boolDefault(raw.Modules.CodeHistory, githubEnabled), CI: boolDefault(raw.Modules.CI, false), Deployments: boolDefault(raw.Modules.Deployments, false), RuntimeImport: boolDefault(raw.Modules.RuntimeImport, false)},
 		Limits:  contract.Limits{GitHubRPH: raw.Limits.GitHubRPH, LinearRPH: raw.Limits.LinearRPH, MaxSessionMS: raw.Limits.MaxSessionMS, MaxTransferBytes: raw.Limits.MaxTransferBytes, MaxLocalBytes: raw.Limits.MaxLocalBytes},
 	}
 	if raw.Scope == nil {
@@ -120,6 +122,9 @@ func (s *Setup) Parse(_ context.Context, req contract.SetupParseRequest) (contra
 	}
 	if input.Scope.Mode == "all_authorized" && (len(input.Scope.Repositories) > 0 || len(input.Scope.Teams) > 0) {
 		return out, fault("ERR_VALIDATION", "all_authorized não aceita seletores; use selected")
+	}
+	if err := validateSourceSelection(input); err != nil {
+		return out, err
 	}
 	if input.Limits.GitHubRPH == 0 {
 		input.Limits.GitHubRPH = 300

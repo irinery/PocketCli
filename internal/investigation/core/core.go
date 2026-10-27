@@ -147,6 +147,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}
 	input.Scope.Repositories = dedupe(input.Scope.Repositories)
 	input.Scope.Teams = dedupe(input.Scope.Teams)
+	if err := validateSourceSelection(input); err != nil {
+		return out, err
+	}
 	discoveryLimit := collect.DiscoveryBudget(ctx)
 	if discoveryLimit == 0 {
 		discoveryLimit = collect.DefaultDiscoveryBudget

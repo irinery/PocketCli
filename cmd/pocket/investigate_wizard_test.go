@@ -57,6 +57,24 @@ func TestInvestigationWizardMatchesYAMLPlanInput(t *testing.T) {
 	}
 }
 
+func TestInvestigationWizardLinearOnlyMatchesYAMLDefaults(t *testing.T) {
+	answers := strings.NewReader("\nlinear-only\nlinear\nUNI\n\n30d\nUTC\n")
+	var output bytes.Buffer
+	manual, _, err := promptInvestigationWizard(answers, &output, wizardBaseInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	yaml := "schema_version: investigate.v1\nname: linear-only\nsources:\n  github: false\n  linear: true\nscope:\n  mode: selected\n  teams: [UNI]\nperiod:\n  preset: 30d\n  timezone: UTC\n"
+	parsed, err := core.NewSetup(nil).Parse(context.Background(), contract.SetupParseRequest{Filename: "scope.yaml", Content: yaml})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual.Limits = parsed.Input.Limits
+	if !reflect.DeepEqual(manual, parsed.Input) {
+		t.Fatalf("YAML e wizard Linear divergem: manual=%#v YAML=%#v", manual, parsed.Input)
+	}
+}
+
 func TestInvestigationWizardAcceptsYAMLWithoutConsumingNextAnswer(t *testing.T) {
 	answers := strings.NewReader("./auditoria.yaml\nnext-answer\n")
 	var output bytes.Buffer
