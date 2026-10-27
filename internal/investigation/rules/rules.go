@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.8.1"
+const Version = "1.9.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -190,23 +190,62 @@ func Evaluate(d query.Dataset) query.Dataset {
 		}
 	}
 	for _, delivery := range d.Deliveries {
-		if delivery.RevisionSHA == "" || delivery.ProvenanceStatus == "unknown" {
+		if delivery.RevisionSHA == "" || (delivery.ProvenanceStatus != "declared" && delivery.ProvenanceStatus != "observed") || delivery.EvidenceID == "" || !observedInWindow(delivery.ObservedAt, d.Snapshot) {
+			continue
+		}
+		observedAt, err := time.Parse(time.RFC3339, delivery.ObservedAt)
+		if err != nil {
 			continue
 		}
 		for _, l := range d.Links {
-			if l.Relation != "modifies_component" || l.TargetID != delivery.ComponentID || l.Status != "direct" {
+			if l.Relation != "modifies_component" || l.TargetID != delivery.ComponentID || l.Status != "direct" || l.EvidenceID == "" {
 				continue
 			}
 			p, ok := prByID[l.SourceID]
-			if !ok || p.MergeSHA == "" || p.MergeSHA == delivery.RevisionSHA {
+			if !ok || p.MergeSHA == "" || strings.EqualFold(p.MergeSHA, delivery.RevisionSHA) || p.EvidenceID == "" || !observedInWindow(p.MergedAt, d.Snapshot) {
 				continue
 			}
-			d.Findings = append(d.Findings, finding("R-DELIVERY-001", "high", delivery.ComponentID, "Correção não comprovada no artefato observado", "Há correção registrada; sua presença no artefato observado não foi comprovada.", "direct", []string{p.EvidenceID, delivery.EvidenceID}, "Revisões diferentes não demonstram sozinhas ausência do código por cherry-pick."))
+			mergedAt, err := time.Parse(time.RFC3339, p.MergedAt)
+			if err != nil || observedAt.Before(mergedAt) {
+				continue
+			}
+			correctionIDs := correctionEvidenceIDs(p, issueByID, d.Links)
+			if len(correctionIDs) == 0 {
+				continue
+			}
+			evidence := uniqueEvidenceIDs(append([]string{p.EvidenceID, delivery.EvidenceID, l.EvidenceID}, correctionIDs...))
+			d.Findings = append(d.Findings, finding("R-DELIVERY-001", "high", delivery.ComponentID, "Correção não comprovada no artefato observado", "Uma correção relacionada foi mesclada antes da observação do artefato; a revisão declarada do artefato difere do SHA de merge, e a presença da correção não foi comprovada.", "direct", evidence, "SHA diferente não demonstra ausência do código: pode haver ancestralidade, cherry-pick ou proveniência declarada incorreta."))
 		}
 	}
 	d.Metrics = metrics(d)
 	sort.Slice(d.Findings, func(i, j int) bool { return d.Findings[i].ID < d.Findings[j].ID })
 	return d
+}
+
+func correctionEvidenceIDs(pr query.PullRequest, issues map[string]query.Issue, links []contract.LinkRecord) []string {
+	ids := make([]string, 0)
+	for _, link := range links {
+		if link.Relation != "declares_fix_of" || link.SourceID != pr.ID || link.Status != "direct" || link.EvidenceID == "" {
+			continue
+		}
+		if issue, ok := issues[link.TargetID]; ok && !issue.IsContext {
+			ids = append(ids, link.EvidenceID)
+		}
+	}
+	return uniqueEvidenceIDs(ids)
+}
+
+func uniqueEvidenceIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func revertLinkCoverage(existing []contract.Coverage, events []query.Event, commits map[string]query.Event, checkedAt string) []contract.Coverage {

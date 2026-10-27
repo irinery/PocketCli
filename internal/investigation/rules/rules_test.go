@@ -14,12 +14,12 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	wait := int64(172800)
 	d := query.Dataset{
 		Issues:       []query.Issue{{ID: "iss-1", Identifier: "UNI-1", State: "done", CompletedAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-1"}, {ID: "iss-3", Identifier: "UNI-3", State: "open", EvidenceID: "ev-3"}},
-		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, EvidenceID: "ev-4", MergeSHA: "new-sha"}},
+		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, MergedAt: "2026-01-04T01:00:00Z", EvidenceID: "ev-4", MergeSHA: "new-sha"}},
 		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
-		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}},
+		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}},
 		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
 		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EvidenceID: "ev-6"}},
-		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
+		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ObservedAt: "2026-01-30T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
 	}
 	a := Evaluate(d)
 	b := Evaluate(d)
@@ -31,8 +31,8 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 		if _, ok := want[f.RuleID]; ok {
 			want[f.RuleID] = true
 		}
-		if f.RuleID == "R-DELIVERY-001" && len(f.EvidenceIDs) != 2 {
-			t.Fatal("delivery evidence incomplete")
+		if f.RuleID == "R-DELIVERY-001" && !reflect.DeepEqual(f.EvidenceIDs, []string{"ev-4", "ev-8"}) {
+			t.Fatalf("delivery evidence incomplete: %+v", f.EvidenceIDs)
 		}
 		if f.RuleID == "R-FLOW-001" && (len(f.EvidenceIDs) != 2 || f.EvidenceIDs[0] != "ev-ready" || f.EvidenceIDs[1] != "ev-review") {
 			t.Fatalf("review wait evidence incomplete: %+v", f.EvidenceIDs)
@@ -43,8 +43,13 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 			t.Fatalf("rule %s missing", id)
 		}
 	}
-	if len(a.Rework) != 1 || a.Rework[0].CauseStatus != "undetermined" {
-		t.Fatal("reopening invented a cause")
+	if len(a.Rework) != 2 {
+		t.Fatalf("expected reopening and declared correction: %+v", a.Rework)
+	}
+	for _, record := range a.Rework {
+		if record.CauseStatus != "undetermined" {
+			t.Fatal("rework invented a cause")
+		}
 	}
 	if a.Metrics[0].Value.Value != "1" {
 		t.Fatal("completed metric incorrect")
@@ -69,6 +74,63 @@ func TestMentionDoesNotBecomeConfirmedPRLinkForMissingLinkRule(t *testing.T) {
 		if finding.RuleID == "R-LINK-001" {
 			t.Fatalf("confirmed PR relation reported as missing: %+v", finding)
 		}
+	}
+}
+
+func TestDeliveryFindingRequiresCorrectionAndLaterArtifactObservation(t *testing.T) {
+	makeDataset := func() query.Dataset {
+		return query.Dataset{
+			Snapshot:     contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", AnalysisReferenceAt: "2026-01-10T00:00:00Z"},
+			Issues:       []query.Issue{{ID: "issue-1", Source: "github", State: "closed", EvidenceID: "ev-issue"}},
+			PullRequests: []query.PullRequest{{ID: "pr-1", MergeSHA: "merge-sha", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr"}},
+			Links:        []contract.LinkRecord{{ID: "modifies", SourceID: "pr-1", Relation: "modifies_component", TargetID: "cmp-1", Status: "direct", EvidenceID: "ev-file"}},
+			Deliveries:   []contract.DeliveryRecord{{ID: "artifact", ComponentID: "cmp-1", RevisionSHA: "other-sha", ObservedAt: "2026-01-06T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-artifact"}},
+		}
+	}
+	findDelivery := func(d query.Dataset) *contract.Finding {
+		for _, f := range Evaluate(d).Findings {
+			if f.RuleID == "R-DELIVERY-001" {
+				return &f
+			}
+		}
+		return nil
+	}
+	if got := findDelivery(makeDataset()); got != nil {
+		t.Fatalf("ordinary PR was called a correction: %+v", got)
+	}
+	linkedReopening := makeDataset()
+	linkedReopening.Links = append(linkedReopening.Links, contract.LinkRecord{ID: "reference", SourceID: "issue-1", Relation: "references_pr", TargetID: "pr-1", Status: "direct", EvidenceID: "ev-reference"})
+	linkedReopening.Events = append(linkedReopening.Events, query.Event{ID: "reopen", EntityID: "issue-1", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-reopen"})
+	if got := findDelivery(linkedReopening); got != nil {
+		t.Fatalf("issue reopening and PR reference were promoted to a correction: %+v", got)
+	}
+	withFix := makeDataset()
+	withFix.Links = append(withFix.Links, contract.LinkRecord{ID: "fix", SourceID: "pr-1", Relation: "declares_fix_of", TargetID: "issue-1", Status: "direct", EvidenceID: "ev-fix"})
+	got := findDelivery(withFix)
+	if got == nil || !reflect.DeepEqual(got.EvidenceIDs, []string{"ev-artifact", "ev-file", "ev-fix", "ev-pr"}) {
+		t.Fatalf("explicit correction evidence missing: %+v", got)
+	}
+	beforeMerge := makeDataset()
+	beforeMerge.Links = append(beforeMerge.Links, withFix.Links[1])
+	beforeMerge.Deliveries[0].ObservedAt = "2026-01-04T00:00:00Z"
+	if got := findDelivery(beforeMerge); got != nil {
+		t.Fatalf("older artifact was treated as post-correction: %+v", got)
+	}
+	sameRevision := makeDataset()
+	sameRevision.Links = append(sameRevision.Links, withFix.Links[1])
+	sameRevision.Deliveries[0].RevisionSHA = "merge-sha"
+	if got := findDelivery(sameRevision); got != nil {
+		t.Fatalf("matching artifact was flagged: %+v", got)
+	}
+	sameRevision.Deliveries[0].RevisionSHA = "MERGE-SHA"
+	if got := findDelivery(sameRevision); got != nil {
+		t.Fatalf("matching artifact with uppercase SHA was flagged: %+v", got)
+	}
+	futureArtifact := makeDataset()
+	futureArtifact.Links = append(futureArtifact.Links, withFix.Links[1])
+	futureArtifact.Deliveries[0].ObservedAt = "2026-01-11T00:00:00Z"
+	if got := findDelivery(futureArtifact); got != nil {
+		t.Fatalf("artifact outside the snapshot window was flagged: %+v", got)
 	}
 }
 
