@@ -593,6 +593,7 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	const gapQuery = `query TeamIssuesGap($team: ID!, $after: String, $since: DateTimeOrDuration!, $until: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since, lt: $until}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
 	status, reason := "complete", ""
 	items := []json.RawMessage{}
+	pagesComplete := true
 	spans := cursor.linearIssueSpans(plan)
 	for _, span := range spans {
 		gql := fullQuery
@@ -636,10 +637,17 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 					return ctx.Err()
 				}
 				var coded *contract.ErrorResponse
-				if errors.As(err, &coded) && coded.Code == "ERR_RATE_LIMITED" {
-					return err
+				if errors.As(err, &coded) {
+					switch coded.Code {
+					case "ERR_AUDIT_FAILED", "ERR_RESOURCE_EXHAUSTED", "ERR_RATE_LIMITED":
+						return err
+					case "ERR_FORBIDDEN":
+						spanStatus, spanReason = "unauthorized", "consulta Linear sem permissão"
+					}
 				}
-				spanStatus, spanReason = "partial", "consulta Linear falhou"
+				if spanStatus == "complete" {
+					spanStatus, spanReason = "partial", "consulta Linear falhou"
+				}
 				break
 			}
 			var result struct {
@@ -682,6 +690,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 			spanStatus, spanReason = "partial", "paginação Linear incompleta"
 		} else if journal.Pages > 1 && spanStatus == "complete" {
 			spanStatus, spanReason = "partial", "lista Linear paginada sem snapshot estável"
+		}
+		if !journal.Complete {
+			pagesComplete = false
 		}
 		if spanStatus != "complete" && status == "complete" {
 			status, reason = spanStatus, spanReason
@@ -755,17 +766,27 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	if err := c.finishSourceCursor(&cursor, plan, status); err != nil {
 		return err
 	}
-	if status != "complete" {
+	if !plan.Input.LinearEnabled {
+		for _, name := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
+			d.Coverage = append(d.Coverage, c.coverage(r, name, "not_selected", 0, "fonte Linear desabilitada no plano"))
+		}
+	} else if !pagesComplete {
 		for _, name := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
 			d.Coverage = append(d.Coverage, c.coverage(r, name, "partial", 0, "coleta de issues pendente"))
 		}
-	} else if plan.Input.LinearEnabled {
+	} else {
+		firstChildCoverage := len(d.Coverage)
 		if err := c.collectLinearChildren(ctx, plan, r, d, run); err != nil {
 			return err
 		}
-	} else {
-		for _, name := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
-			d.Coverage = append(d.Coverage, c.coverage(r, name, "not_selected", 0, "fonte Linear desabilitada no plano"))
+		if status != "complete" {
+			for i := firstChildCoverage; i < len(d.Coverage); i++ {
+				coverage := &d.Coverage[i]
+				if coverage.Status == "complete" || coverage.Status == "partial" {
+					coverage.Status = "partial"
+					coverage.Reason = "inventário de issues parcial; " + coverage.Reason
+				}
+			}
 		}
 	}
 	if plan.Input.LinearEnabled {

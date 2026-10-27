@@ -43,12 +43,16 @@ func (c *Core) collectLinearProjects(ctx context.Context, plan contract.Plan, r 
 		}
 		if queryErr != nil {
 			var coded *contract.ErrorResponse
-			if errors.As(queryErr, &coded) && coded.Code == "ERR_RATE_LIMITED" {
-				return queryErr
+			if errors.As(queryErr, &coded) {
+				switch coded.Code {
+				case "ERR_AUDIT_FAILED", "ERR_RESOURCE_EXHAUSTED", "ERR_RATE_LIMITED":
+					return queryErr
+				case "ERR_FORBIDDEN":
+					status, reason = "unauthorized", "consulta de projetos Linear sem permissão"
+				}
 			}
-			status, reason = "partial", "consulta de projetos Linear falhou"
-			if errors.As(queryErr, &coded) && coded.Code == "ERR_FORBIDDEN" {
-				status = "unauthorized"
+			if status == "complete" {
+				status, reason = "partial", "consulta de projetos Linear falhou"
 			}
 			break
 		}
