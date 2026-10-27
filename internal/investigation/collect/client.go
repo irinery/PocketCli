@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +101,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 	var headers http.Header
 	var status int
 	var wireBytes int64
+	var sourceRateLimited bool
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
 		cacheKey := ""
 		var cached etagEntry
@@ -118,6 +118,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 		}
 		skipConditional := false
 		for attempt := 0; attempt < 4; attempt++ {
+			if err := c.waitRateHold(ctx, source, secret); err != nil {
+				return err
+			}
 			if err := waitUntil(ctx, c.next[source]); err != nil {
 				return err
 			}
@@ -144,7 +147,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 					return auditErr
 				}
 				if attempt < 3 {
-					if e := waitUntil(ctx, time.Now().Add(time.Duration(1<<attempt)*time.Second)); e != nil {
+					if e := waitUntil(ctx, time.Now().Add(retryBackoff(attempt))); e != nil {
 						return e
 					}
 					continue
@@ -202,21 +205,31 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				c.cache[cacheKey] = entry
 				c.cacheSize += int64(len(copyBody))
 			}
+			if (source == "github" && status == http.StatusForbidden && githubRateLimited(status, headers, response)) || (source == "linear" && (status == http.StatusBadRequest || status == http.StatusOK) && linearRateLimited(response)) {
+				sourceRateLimited = true
+				if err := c.saveRateHold(source, secret, rateLimitDelay(source, headers)); err != nil {
+					return err
+				}
+				return nil
+			}
 			if status == 429 || status == 503 || status >= 500 {
-				if attempt < 3 {
-					delay := time.Duration(1<<attempt) * time.Second
-					if retryAfter := headers.Get("Retry-After"); retryAfter != "" {
-						if seconds, e := strconv.Atoi(retryAfter); e == nil && seconds >= 0 {
-							delay = time.Duration(seconds) * time.Second
-						} else if when, e := http.ParseTime(retryAfter); e == nil {
-							delay = time.Until(when)
-							if delay < 0 {
-								delay = 0
-							}
-						}
+				delay := retryBackoff(attempt)
+				if status == http.StatusTooManyRequests {
+					delay = rateLimitDelay(source, headers)
+				} else if value, ok := retryAfterDelay(headers); ok {
+					delay = value
+				}
+				if status == http.StatusTooManyRequests || headers.Get("Retry-After") != "" {
+					if err := c.saveRateHold(source, secret, delay); err != nil {
+						return err
 					}
+				}
+				if attempt < 3 {
 					if delay > 30*time.Second {
 						return &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "fonte solicitou espera longa", Retryable: true}
+					}
+					if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < delay {
+						return &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "espera da fonte excede sessão restante", Retryable: true}
 					}
 					if e := waitUntil(ctx, time.Now().Add(delay)); e != nil {
 						return e
@@ -231,7 +244,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 	if err != nil {
 		return nil, nil, 0, wireBytes, err
 	}
-	if status == 403 && headers.Get("X-RateLimit-Remaining") == "0" {
+	if sourceRateLimited && source == "github" {
 		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite GitHub atingido", Retryable: true}
 	}
 	if status == 401 || status == 403 {
