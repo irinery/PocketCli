@@ -1821,6 +1821,9 @@ func TestRuntimeImportIsTypedAndPinnedByPlan(t *testing.T) {
 	if _, err := c.ImportRuntime(context.Background(), first.InvestigationID, []byte(`{"schema_version":"pocketcli.runtime.v1","secret":"x"}`)); err == nil {
 		t.Fatal("campo secreto aceito")
 	}
+	if _, err := c.ImportRuntime(context.Background(), first.InvestigationID, []byte(`{"schema_version":"pocketcli.runtime.v1","observed_at":"2026-01-08T00:00:00Z","environment":"production","components":[{"name":"api","enabled":false},{"name":"api","enabled":true}]}`)); err == nil {
+		t.Fatal("componentes contraditórios com o mesmo nome aceitos")
+	}
 	hash, err := c.ImportRuntime(context.Background(), first.InvestigationID, raw)
 	if err != nil {
 		t.Fatal(err)

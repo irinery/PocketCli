@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.11.0"
+const Version = "1.12.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -146,8 +146,13 @@ func Evaluate(d query.Dataset) query.Dataset {
 				}
 			}
 		}
-		if e.Type == "disabled" && completeRuntime {
-			d.Findings = append(d.Findings, finding("R-DISABLE-001", "medium", e.EntityID, "Recurso observado desativado", "Uma desativação foi observada no snapshot operacional aplicável.", "direct", []string{e.EvidenceID}, "A observação não reconstrói o passado."))
+	}
+	if completeRuntime {
+		for _, observation := range latestRuntimeObservations(d.Events, d.Snapshot) {
+			if observation.ambiguous || observation.event.Type != "disabled" || observation.event.EvidenceID == "" {
+				continue
+			}
+			d.Findings = append(d.Findings, finding("R-DISABLE-001", "medium", observation.event.EntityID, "Recurso observado desativado", "A observação operacional mais recente no período mostra o recurso desativado.", "direct", []string{observation.event.EvidenceID}, "A observação não reconstrói o passado nem outro ambiente."))
 		}
 	}
 	for _, e := range d.Estimates {
@@ -235,6 +240,39 @@ func Evaluate(d query.Dataset) query.Dataset {
 	d.Metrics = metrics(d)
 	sort.Slice(d.Findings, func(i, j int) bool { return d.Findings[i].ID < d.Findings[j].ID })
 	return d
+}
+
+type runtimeObservation struct {
+	event     query.Event
+	at        time.Time
+	ambiguous bool
+}
+
+func latestRuntimeObservations(events []query.Event, snapshot contract.Snapshot) map[string]runtimeObservation {
+	latest := make(map[string]runtimeObservation)
+	for _, event := range events {
+		if (event.Type != "enabled" && event.Type != "disabled") || event.EntityID == "" || !observedInWindow(event.EventAt, snapshot) {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, event.EventAt)
+		if err != nil {
+			continue
+		}
+		key := event.EntityID + "\x00" + event.NewValue // Environment is part of the observed state.
+		previous, found := latest[key]
+		if !found || at.After(previous.at) {
+			latest[key] = runtimeObservation{event: event, at: at}
+			continue
+		}
+		if at.Equal(previous.at) {
+			previous.ambiguous = previous.ambiguous || event.Type != previous.event.Type
+			if event.ID < previous.event.ID {
+				previous.event = event
+			}
+			latest[key] = previous
+		}
+	}
+	return latest
 }
 
 func correctionEvidenceIDs(pr query.PullRequest, issues map[string]query.Issue, links []contract.LinkRecord) []string {
