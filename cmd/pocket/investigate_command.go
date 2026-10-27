@@ -76,7 +76,7 @@ func newInvestigateCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if err := loadCredentials(store, plan.Input); err != nil {
+		if err := loadCredentials(store, plan.Input, term.IsTerminal(int(os.Stdin.Fd())) && !f.json); err != nil {
 			return err
 		}
 		var key [16]byte
@@ -106,7 +106,7 @@ func newInvestigateCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if err := loadCredentials(store, plan.Input); err != nil {
+		if err := loadCredentials(store, plan.Input, term.IsTerminal(int(os.Stdin.Fd()))); err != nil {
 			return err
 		}
 		run, err := c.ResumeRun(context.Background(), args[0])
@@ -277,7 +277,7 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
-	if err := loadCredentials(store, input); err != nil {
+	if err := loadCredentials(store, input, interactive); err != nil {
 		return err
 	}
 	plan, err := c.PreparePlan(discoveryContext(f), input)
@@ -359,7 +359,8 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	input.InvestigationID = args[0]
-	if err := loadCredentials(store, input); err != nil {
+	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !f.json
+	if err := loadCredentials(store, input, interactive); err != nil {
 		return err
 	}
 	plan, err := c.PreparePlan(discoveryContext(f), input)
@@ -380,7 +381,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 	}
 	confirm := f.confirm
 	if confirm == "" {
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
+		if !interactive {
 			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm HASH"}
 		}
 		confirm, err = promptLine("Digite o hash do plano para iniciar: ")
@@ -450,7 +451,7 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 	}
 	return nil
 }
-func loadCredentials(store *secrets.SessionStore, input contract.PlanInput) error {
+func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allowPrompt bool) error {
 	githubEnabled, linearEnabled := input.GitHubEnabled, input.LinearEnabled
 	githubHint := "GitHub PAT: Metadata read; Pull requests read"
 	if input.Modules.GitHubIssues {
@@ -474,7 +475,7 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput) erro
 		}
 		value := os.Getenv(source.env)
 		if value == "" {
-			if !term.IsTerminal(int(os.Stdin.Fd())) {
+			if !allowPrompt {
 				return &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: source.env + " ausente"}
 			}
 			fmt.Fprintln(os.Stderr, source.hint)
