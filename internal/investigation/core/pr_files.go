@@ -91,7 +91,9 @@ func (c *Core) collectPRFiles(ctx context.Context, plan contract.Plan, r contrac
 			linkID := "lnk-" + storage.Hash([]byte(pr.ID + ":modifies_file:" + fileID + ":" + e.ID))[:24]
 			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: pr.ID, Relation: "modifies_file", TargetID: fileID, Status: "direct", EvidenceID: e.ID})
 			if item.Status == "renamed" && validGitPath(item.PreviousFilename) {
-				upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(linkID + ":rename"))[:24], EntityID: fileID, Type: "file_rename_reported", EventAt: pr.UpdatedAt, ObservedAt: e.ObservedAt, OldValue: item.PreviousFilename, NewValue: item.Filename, EvidenceID: e.ID})
+				// The PR files API reports the rename but not its time. PR.updated_at
+				// can reflect unrelated activity, so only the observation is dated.
+				upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(linkID + ":rename"))[:24], EntityID: fileID, Type: "file_rename_reported", ObservedAt: e.ObservedAt, OldValue: item.PreviousFilename, NewValue: item.Filename, EvidenceID: e.ID})
 			}
 			run.Items++
 		}

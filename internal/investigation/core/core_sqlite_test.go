@@ -220,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.14.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.15.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1608,6 +1608,9 @@ func TestPRFilesLinkExactObservedPathWithoutAssumingComponent(t *testing.T) {
 	if calls != 1 || len(d.Components) != 1 || d.Components[0].Kind != "file_change" || len(d.Links) != 1 || d.Links[0].Relation != "modifies_file" || len(d.Events) != 1 || d.Events[0].Type != "file_rename_reported" || d.Coverage[0].Status != "complete" {
 		t.Fatalf("arquivos PR=%+v calls=%d", d, calls)
 	}
+	if d.Events[0].EventAt != "" || d.Events[0].ObservedAt == "" || d.Events[0].ObservedAt != d.Evidence[0].ObservedAt || d.Events[0].OldValue != "services/api/old.go" || d.Events[0].NewValue != "services/api/new.go" {
+		t.Fatalf("rename recebeu data inferida ou perdeu evidência de observação: %+v", d.Events[0])
+	}
 	retry := query.Dataset{PullRequests: d.PullRequests}
 	if err := c.collectPRFiles(context.Background(), plan, r, &retry, &run); err != nil || calls != 1 {
 		t.Fatalf("journal de arquivos não reutilizado: %+v %v calls=%d", retry, err, calls)
@@ -1628,7 +1631,7 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	modules := contract.Modules{CodeHistory: true}
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	prior := contract.Snapshot{ID: "prior-file-snapshot", PlanID: "prior-file-plan", InvestigationID: "file-investigation", Resources: []contract.Resource{r}, Modules: modules, WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", ObservationFinishedAt: "2026-01-09T00:00:00Z"}
-	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}, {ID: "manifest-old", Name: "go.mod", Repository: r.Name, Path: "go.mod", Kind: "go_module"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}, {ID: "link-map-old", SourceID: "file-old", Relation: "maps_to_component", TargetID: "manifest-old", Status: "direct", ValidFrom: "2026-01-03T00:00:00Z", EvidenceID: "ev-map"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-map", Source: "git", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
+	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}, {ID: "manifest-old", Name: "go.mod", Repository: r.Name, Path: "go.mod", Kind: "go_module"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}, {ID: "link-map-old", SourceID: "file-old", Relation: "maps_to_component", TargetID: "manifest-old", Status: "direct", ValidFrom: "2026-01-03T00:00:00Z", EvidenceID: "ev-map"}}, Events: []query.Event{{ID: "old-rename", EntityID: "file-old", Type: "file_rename_reported", EventAt: "2026-01-03T00:00:00Z", ObservedAt: "2026-01-09T00:00:00Z", OldValue: "old-api.go", NewValue: "api.go", EvidenceID: "ev-file"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-map", Source: "git", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
 	if err := store.Put("snapshots", prior.ID, prior); err != nil {
 		t.Fatal(err)
 	}
@@ -1653,7 +1656,7 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound := false, false, false, false, false, false
+	fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound, renameFound := false, false, false, false, false, false, false
 	for _, component := range d.Components {
 		fileFound = fileFound || component.ID == "file-old"
 		manifestFound = manifestFound || component.ID == "manifest-old"
@@ -1666,8 +1669,13 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 		evidenceFound = evidenceFound || evidence.ID == "ev-file"
 		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map"
 	}
-	if !fileFound || !manifestFound || !linkFound || !mappingFound || !evidenceFound || !mappingEvidenceFound {
-		t.Fatalf("observação temporal anterior desapareceu: file=%v manifest=%v file_link=%v mapping=%v file_evidence=%v mapping_evidence=%v", fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound)
+	for _, event := range d.Events {
+		if event.ID == "old-rename" {
+			renameFound = event.EventAt == "" && event.ObservedAt == "2026-01-09T00:00:00Z" && event.EntityID == "file-old"
+		}
+	}
+	if !fileFound || !manifestFound || !linkFound || !mappingFound || !evidenceFound || !mappingEvidenceFound || !renameFound {
+		t.Fatalf("observação temporal anterior desapareceu: file=%v manifest=%v file_link=%v mapping=%v file_evidence=%v mapping_evidence=%v rename=%v", fileFound, manifestFound, linkFound, mappingFound, evidenceFound, mappingEvidenceFound, renameFound)
 	}
 }
 

@@ -83,6 +83,11 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				}
 			}
 			for _, event := range prior.Events {
+				if event.Type == "file_rename_reported" {
+					// PR file renames have no source event time. Retain them only
+					// with the version-specific file graph below.
+					continue
+				}
 				if timestampInWindow(plan.WindowStart, plan.WindowEnd, event.EventAt) {
 					event, err = c.classifyRetainedActorEvent(event, d.PullRequests, evidenceHashes[event.EvidenceID])
 					if err != nil {

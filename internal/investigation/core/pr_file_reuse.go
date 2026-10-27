@@ -24,6 +24,13 @@ func reusePriorFileGraph(d *query.Dataset, prior query.Dataset, windowEnd string
 			referenced[link.EvidenceID] = true
 		}
 	}
+	for _, event := range prior.Events {
+		if event.Type == "file_rename_reported" && fileComponents[event.EntityID] {
+			event.EventAt = "" // Older mappings used PR.updated_at as a rename time.
+			upsertEvent(d, event)
+			referenced[event.EvidenceID] = true
+		}
+	}
 	mappedComponents := make(map[string]bool)
 	for _, link := range prior.Links {
 		if link.Relation != "maps_to_component" || !fileComponents[link.SourceID] {
