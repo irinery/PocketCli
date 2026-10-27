@@ -1398,6 +1398,13 @@ func TestManifestPathsArePinnedCachedAndBounded(t *testing.T) {
 	if calls != 1 || len(second.Components) != 1 || second.Evidence[0].ID != first.Evidence[0].ID {
 		t.Fatalf("cache não reutilizado: second=%+v calls=%d", second, calls)
 	}
+	reused := query.Dataset{Components: append([]contract.ComponentRecord(nil), first.Components...), Links: append([]contract.LinkRecord(nil), first.Links...)}
+	if err := c.collectManifestPaths(context.Background(), plan, r, treeOID, "identity", "2026-01-10T00:00:00Z", &reused, &run); err != nil {
+		t.Fatal(err)
+	}
+	if len(reused.Components) != 1 || len(reused.Links) != 1 {
+		t.Fatalf("manifesto reaproveitado foi duplicado: componentes=%d vínculos=%d", len(reused.Components), len(reused.Links))
+	}
 }
 
 func TestManifestBlobIsVerifiedParsedAndCached(t *testing.T) {

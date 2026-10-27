@@ -80,6 +80,19 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 			case "completed", "completed_partial":
 				return current
 			case "failed", "paused", "report_failed", "cancelled":
+				if current.LastError != nil && current.LastError.Message == "falha ao publicar projeção" {
+					var build runBuild
+					if err := core.store.Get("runbuilds", current.ID, &build); err == nil {
+						t.Logf("diagnóstico da projeção: %v", core.query.Publish(build.Dataset.Snapshot.ID, build.Dataset))
+						seen := make(map[string]string)
+						for _, component := range build.Dataset.Components {
+							if kind, exists := seen[component.ID]; exists {
+								t.Logf("componente duplicado: id=%s tipos=%s/%s", component.ID, kind, component.Kind)
+							}
+							seen[component.ID] = component.Kind
+						}
+					}
+				}
 				t.Fatalf("run não concluiu: estado=%s erro=%+v", current.State, current.LastError)
 			}
 			time.Sleep(100 * time.Millisecond)

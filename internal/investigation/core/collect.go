@@ -996,14 +996,15 @@ func upsertPR(d *query.Dataset, v query.PullRequest) {
 	d.PullRequests = append(d.PullRequests, v)
 }
 
-func upsertComponent(d *query.Dataset, v contract.ComponentRecord) {
+func upsertComponent(d *query.Dataset, v contract.ComponentRecord) int {
 	for i := range d.Components {
 		if d.Components[i].ID == v.ID {
 			d.Components[i] = v
-			return
+			return i
 		}
 	}
 	d.Components = append(d.Components, v)
+	return len(d.Components) - 1
 }
 
 func upsertLink(d *query.Dataset, v contract.LinkRecord) {

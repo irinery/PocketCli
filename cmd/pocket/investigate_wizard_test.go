@@ -87,9 +87,9 @@ func TestInvestigationWizardRuntimeOnlyAndValidation(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "opção interativa inválida") {
 		t.Fatalf("aceitou fonte inválida: %v", err)
 	}
-	_, _, err = promptInvestigationWizard(strings.NewReader("\n\n\nowner/repo\n\n"), &output, wizardBaseInput())
-	if err == nil || !strings.Contains(err.Error(), "nas duas fontes") {
-		t.Fatalf("aceitou seleção parcial de fontes: %v", err)
+	mixed, _, err := promptInvestigationWizard(strings.NewReader("\n\n\nowner/repo\n\n\n30d\n\n"), &output, wizardBaseInput())
+	if err != nil || mixed.Scope.Mode != "selected" || len(mixed.Scope.Repositories) != 1 || len(mixed.Scope.Teams) != 0 {
+		t.Fatalf("escopo misto por fonte incorreto: %#v, %v", mixed.Scope, err)
 	}
 }
 

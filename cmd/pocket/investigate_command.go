@@ -245,34 +245,9 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		}
 		input = parsed.Input
 	}
-	if f.period != "" {
-		input.Period.Preset = f.period
-	}
-	if f.from != "" {
-		input.Period.FromDate = f.from
-	}
-	if f.to != "" {
-		input.Period.ToDate = f.to
-	}
-	if f.timezone != "" {
-		input.Period.Timezone = f.timezone
-	}
-	if f.investigation != "" {
-		input.InvestigationID = f.investigation
-	}
-	if f.noGitHub {
-		input.GitHubEnabled = false
-	}
-	if f.noLinear {
-		input.LinearEnabled = false
-	}
-	if len(f.repos) > 0 {
-		input.Scope.Mode = "selected"
-		input.Scope.Repositories = f.repos
-	}
-	if len(f.teams) > 0 {
-		input.Scope.Mode = "selected"
-		input.Scope.Teams = f.teams
+	input, overrides, err := applyInvestigationFlags(input, f)
+	if err != nil {
+		return err
 	}
 	if input.Period.Preset == "" {
 		if !interactive {
@@ -305,10 +280,16 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if f.json {
+		if err := printInvestigationOverrides(os.Stderr, overrides); err != nil {
+			return err
+		}
 		if err := writeJSON(cmd.OutOrStdout(), plan); err != nil {
 			return err
 		}
 	} else {
+		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
+			return err
+		}
 		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano"); err != nil {
 			return err
 		}
@@ -368,33 +349,11 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	input := previous.Input
+	input, _, err = applyInvestigationFlags(input, f)
+	if err != nil {
+		return err
+	}
 	input.InvestigationID = args[0]
-	if f.period != "" {
-		input.Period.Preset = f.period
-	}
-	if f.from != "" {
-		input.Period.FromDate = f.from
-	}
-	if f.to != "" {
-		input.Period.ToDate = f.to
-	}
-	if f.timezone != "" {
-		input.Period.Timezone = f.timezone
-	}
-	if f.noGitHub {
-		input.GitHubEnabled = false
-	}
-	if f.noLinear {
-		input.LinearEnabled = false
-	}
-	if len(f.repos) > 0 {
-		input.Scope.Mode = "selected"
-		input.Scope.Repositories = f.repos
-	}
-	if len(f.teams) > 0 {
-		input.Scope.Mode = "selected"
-		input.Scope.Teams = f.teams
-	}
 	if err := loadCredentials(store, input); err != nil {
 		return err
 	}
