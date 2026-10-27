@@ -121,6 +121,7 @@ func TestReadOnlyAndFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wide.QueryID = strings.Repeat("x", 32) // Added by the local API before serialization.
 	encoded, err := json.Marshal(wide)
 	if err != nil || len(encoded) > 2*1024*1024 || !wide.Truncated || wide.ReturnedRows >= 1000 {
 		t.Fatalf("limite de bytes não aplicado ao JSON completo: bytes=%d rows=%d truncated=%v err=%v", len(encoded), wide.ReturnedRows, wide.Truncated, err)
