@@ -273,6 +273,8 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			} `json:"teams"`
 		}
 		foundTeams := make(map[string]string)
+		foundIDs := make(map[string]string)
+		selectedMatches := make(map[string]int)
 		cursor := ""
 		complete := false
 		for page := 0; page < discoveryLimit; page++ {
@@ -291,20 +293,34 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				return out, fault("ERR_UNAVAILABLE", "teams Linear inválidos")
 			}
 			for _, team := range result.Teams.Nodes {
-				if len(input.Scope.Teams) > 0 && !containsFold(input.Scope.Teams, team.Key) {
+				matches := make(map[string]bool)
+				for _, selected := range input.Scope.Teams {
+					if strings.EqualFold(selected, team.Key) || strings.EqualFold(selected, team.ID) {
+						matches[strings.ToLower(selected)] = true
+					}
+				}
+				if len(input.Scope.Teams) > 0 && len(matches) == 0 {
 					continue
 				}
 				if team.ID == "" || team.Key == "" {
 					return out, fault("ERR_UNAVAILABLE", "team Linear sem identidade")
 				}
 				key := strings.ToLower(team.Key)
+				id := strings.ToLower(team.ID)
 				if oldID, seen := foundTeams[key]; seen {
 					if oldID != team.ID {
 						return out, fault("ERR_UNAVAILABLE", "team Linear mudou durante descoberta")
 					}
 					continue
 				}
+				if oldKey, seen := foundIDs[id]; seen && oldKey != key {
+					return out, fault("ERR_UNAVAILABLE", "ID de team Linear duplicado na descoberta")
+				}
 				foundTeams[key] = team.ID
+				foundIDs[id] = key
+				for selected := range matches {
+					selectedMatches[selected]++
+				}
 				resources = append(resources, contract.Resource{ID: team.ID, Source: "linear", Name: team.Key, Access: "read"})
 			}
 			if !result.Teams.PageInfo.HasNextPage {
@@ -320,8 +336,12 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			return out, fault("ERR_RESOURCE_EXHAUSTED", "descoberta Linear incompleta")
 		}
 		for _, selected := range input.Scope.Teams {
-			if foundTeams[strings.ToLower(selected)] == "" {
+			switch selectedMatches[strings.ToLower(selected)] {
+			case 0:
 				return out, fault("ERR_FORBIDDEN", "team Linear selecionado não foi descoberto: "+selected)
+			case 1:
+			default:
+				return out, fault("ERR_VALIDATION", "identificador de team Linear ambíguo: "+selected)
 			}
 		}
 	}

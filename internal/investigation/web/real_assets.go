@@ -157,7 +157,7 @@ const realAppJSTemplate = `(() => {
     const repositories = node('textarea'), teams = node('textarea');
     repositories.style.minHeight = teams.style.minHeight = '75px';
     repositories.placeholder = 'owner/repo, um por linha';
-    teams.placeholder = 'team ID, um por linha';
+    teams.placeholder = 'chave ou ID do team, um por linha';
     const sources = node('div', 'controls');
     const github = node('input'), linear = node('input');
     github.type = linear.type = 'checkbox'; github.checked = true;
