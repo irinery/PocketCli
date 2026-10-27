@@ -163,6 +163,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				req.Header.Set("Authorization", "Bearer "+string(secret))
 				req.Header.Set("Accept", "application/vnd.github+json")
 				req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
+				if method == "POST" {
+					req.Header.Set("Content-Type", "application/json")
+				}
 				if cached.ETag != "" && !skipConditional {
 					req.Header.Set("If-None-Match", cached.ETag)
 				}
@@ -248,7 +251,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				c.cache[cacheKey] = entry
 				c.cacheSize += int64(len(copyBody))
 			}
-			if (source == "github" && status == http.StatusForbidden && githubRateLimited(status, headers, response)) || (source == "linear" && (status == http.StatusBadRequest || status == http.StatusOK) && linearRateLimited(response)) {
+			if (source == "github" && status == http.StatusForbidden && githubRateLimited(status, headers, response)) || (source == "github" && method == "POST" && (status == http.StatusOK || status == http.StatusBadRequest) && githubGraphQLRateLimited(response)) || (source == "linear" && (status == http.StatusBadRequest || status == http.StatusOK) && linearRateLimited(response)) {
 				sourceRateLimited = true
 				if err := c.saveRateHold(ctx, source, secret, rateLimitDelay(source, headers)); err != nil {
 					return err
