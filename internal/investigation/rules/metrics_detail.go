@@ -292,6 +292,83 @@ func reworkMetrics(d query.Dataset) []contract.Metric {
 	return out
 }
 
+func reworkWindowMetrics(d query.Dataset) []contract.Metric {
+	anchorText := d.Snapshot.AnalysisReferenceAt
+	if anchorText == "" {
+		anchorText = d.Snapshot.WindowEnd
+	}
+	anchor, err := time.Parse(time.RFC3339, anchorText)
+	if err != nil {
+		return nil
+	}
+	issues := make(map[string]bool, len(d.Issues))
+	for _, issue := range d.Issues {
+		if !issue.IsContext {
+			issues[issue.ID] = true
+		}
+	}
+	completions := make(map[string][]time.Time)
+	seenEvents := make(map[string]bool)
+	var observedCompletions, elapsed, incomplete int64
+	for _, event := range d.Events {
+		if event.ID == "" || seenEvents[event.ID] || !issues[event.EntityID] || event.Type != "state_changed" || !isDone(event.NewValue) || isDone(event.OldValue) || !observedInWindow(event.EventAt, d.Snapshot) {
+			continue
+		}
+		seenEvents[event.ID] = true
+		at, err := time.Parse(time.RFC3339, event.EventAt)
+		if err != nil || at.After(anchor) {
+			continue
+		}
+		completions[event.EntityID] = append(completions[event.EntityID], at)
+		observedCompletions++
+		if !anchor.Before(at.Add(30 * 24 * time.Hour)) {
+			elapsed++
+		} else {
+			incomplete++
+		}
+	}
+	for id := range completions {
+		sort.Slice(completions[id], func(i, j int) bool { return completions[id][i].Before(completions[id][j]) })
+	}
+	seenRework := make(map[string]bool)
+	var directRework, within, afterThirtyDays, noPrior int64
+	for _, record := range d.Rework {
+		if record.ID == "" || seenRework[record.ID] || record.Kind != "reopening" || record.EvidenceStatus != "direct" || !issues[record.SubjectID] || !observedInWindow(record.EventAt, d.Snapshot) {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, record.EventAt)
+		if err != nil || at.After(anchor) {
+			continue
+		}
+		seenRework[record.ID] = true
+		directRework++
+		var prior time.Time
+		for _, completed := range completions[record.SubjectID] {
+			if !completed.Before(at) {
+				break
+			}
+			prior = completed
+		}
+		if prior.IsZero() {
+			noPrior++
+		} else if at.Sub(prior) <= 30*24*time.Hour {
+			within++
+		} else {
+			afterThirtyDays++
+		}
+	}
+	if observedCompletions == 0 && directRework == 0 {
+		return nil
+	}
+	return []contract.Metric{
+		integerMetric("metric-rework-30d-observed", "Reaberturas observadas até 30 dias após conclusão", within, within, &directRework, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, até 30 dias UTC depois", "Contagem de ocorrências, não taxa por entrega; histórico parcial pode ocultar transições e zero não comprova ausência."),
+		integerMetric("metric-rework-after-30d-observed", "Reaberturas observadas após 30 dias da conclusão", afterThirtyDays, afterThirtyDays, &directRework, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, mais de 30 dias UTC depois", "Contagem de ocorrências fora da janela padrão; histórico parcial pode ocultar transições intermediárias."),
+		integerMetric("metric-rework-30d-elapsed-windows", "Janelas de 30 dias já decorridas", elapsed, elapsed, &observedCompletions, "Transições de conclusão observadas na janela cujo prazo de 30 dias já decorreu no analysis_reference_at", "Prazo decorrido não comprova cobertura completa da fonte nem ausência de reabertura."),
+		integerMetric("metric-rework-30d-incomplete-windows", "Janelas de 30 dias ainda incompletas", incomplete, incomplete, &observedCompletions, "Transições de conclusão observadas com menos de 30 dias até analysis_reference_at", "Essas entregas ainda não tiveram a janela temporal completa de observação."),
+		integerMetric("metric-rework-no-prior-completion", "Reaberturas sem conclusão anterior observada", noPrior, noPrior, &directRework, "Reaberturas diretas cujo item não tem transição anterior de conclusão observada na janela", "Histórico anterior ou cobertura parcial podem explicar a ausência da transição; não atribui causa."),
+	}
+}
+
 func cycleTimeMetrics(d query.Dataset) []contract.Metric {
 	cohorts := make(map[string][]int64)
 	eligible := make(map[string]int64)

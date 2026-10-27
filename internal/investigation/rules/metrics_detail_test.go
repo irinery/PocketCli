@@ -199,3 +199,77 @@ func TestCycleTimeMetricsUseOnlyValidCompletedIssuesInTeam(t *testing.T) {
 		}
 	}
 }
+
+func TestReworkThirtyDayObservationWindowDoesNotInferAbsence(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-03-10T00:00:00Z", AnalysisReferenceAt: "2026-03-10T00:00:00Z"},
+		Issues: []query.Issue{
+			{ID: "within"}, {ID: "after-window"}, {ID: "recent"}, {ID: "unknown"},
+		},
+		Events: []query.Event{
+			{ID: "done-1", EntityID: "within", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-01-02T00:00:00Z"},
+			{ID: "done-2", EntityID: "after-window", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-01-03T00:00:00Z"},
+			{ID: "done-3", EntityID: "recent", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-03-01T00:00:00Z"},
+		},
+		Rework: []contract.ReworkRecord{
+			{ID: "r-1", SubjectID: "within", Kind: "reopening", EvidenceStatus: "direct", EventAt: "2026-01-20T00:00:00Z"},
+			{ID: "r-2", SubjectID: "after-window", Kind: "reopening", EvidenceStatus: "direct", EventAt: "2026-02-10T00:00:00Z"},
+			{ID: "r-3", SubjectID: "unknown", Kind: "reopening", EvidenceStatus: "direct", EventAt: "2026-02-10T00:00:00Z"},
+		},
+	}
+	got := make(map[string]contract.Metric)
+	for _, metric := range reworkWindowMetrics(d) {
+		got[metric.ID] = metric
+	}
+	for id, value := range map[string]string{
+		"metric-rework-30d-observed":           "1",
+		"metric-rework-after-30d-observed":     "1",
+		"metric-rework-30d-elapsed-windows":    "2",
+		"metric-rework-30d-incomplete-windows": "1",
+		"metric-rework-no-prior-completion":    "1",
+	} {
+		if metric, ok := got[id]; !ok || metric.Value.Value != value {
+			t.Fatalf("metric %s=%+v want %s", id, metric, value)
+		}
+		if strings.Contains(strings.ToLower(got[id].Name), "taxa") {
+			t.Fatalf("rate claimed from incomplete coverage: %+v", got[id])
+		}
+	}
+}
+
+func TestReworkWindowUsesGeneratedReopening(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-20T00:00:00Z", AnalysisReferenceAt: "2026-02-20T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue-1", EvidenceID: "ev-issue"}},
+		Events: []query.Event{
+			{ID: "done", EntityID: "issue-1", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-done"},
+			{ID: "reopened", EntityID: "issue-1", Type: "state_changed", OldValue: "done", NewValue: "reopened", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"},
+		},
+	}
+	out := Evaluate(d)
+	for _, metric := range out.Metrics {
+		if metric.ID == "metric-rework-30d-observed" {
+			if metric.Value.Value != "1" {
+				t.Fatalf("generated reopening not counted: %+v", metric)
+			}
+			return
+		}
+	}
+	t.Fatal("30-day rework metric missing")
+}
+
+func TestReworkWindowDoesNotOrderSameTimestampEvents(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-20T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue-1"}},
+		Events:   []query.Event{{ID: "done", EntityID: "issue-1", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-01-03T00:00:00Z"}},
+		Rework:   []contract.ReworkRecord{{ID: "reopened", SubjectID: "issue-1", Kind: "reopening", EvidenceStatus: "direct", EventAt: "2026-01-03T00:00:00Z"}},
+	}
+	metrics := reworkWindowMetrics(d)
+	for _, metric := range metrics {
+		if metric.ID == "metric-rework-no-prior-completion" && metric.Value.Value == "1" {
+			return
+		}
+	}
+	t.Fatalf("same-timestamp events were ordered without evidence: %+v", metrics)
+}

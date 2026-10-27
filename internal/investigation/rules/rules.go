@@ -178,6 +178,7 @@ func metrics(d query.Dataset) []contract.Metric {
 	out = append(out, actorMetrics(d)...)
 	out = append(out, estimateMetrics(d)...)
 	out = append(out, reworkMetrics(d)...)
+	out = append(out, reworkWindowMetrics(d)...)
 	out = append(out, cycleTimeMetrics(d)...)
 	out = append(out, openAgingMetrics(d)...)
 	return out
