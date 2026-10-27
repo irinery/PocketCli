@@ -393,7 +393,17 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			return out, err
 		}
 		if principalID != "" {
-			warnings = append(warnings, fmt.Sprintf("conta %s verificada: ID %s", source.name, principalID))
+			identity := fmt.Sprintf("ID %s", principalID)
+			if source.name == "github" {
+				login, err := c.collector.PrincipalLogin(ctx, source.name)
+				if err != nil {
+					return out, err
+				}
+				if login != "" {
+					identity = fmt.Sprintf("@%s (%s)", login, identity)
+				}
+			}
+			warnings = append(warnings, fmt.Sprintf("conta %s verificada: %s", source.name, identity))
 		}
 	}
 	if discoveryLimit > collect.DefaultDiscoveryBudget {

@@ -101,6 +101,43 @@ func TestPrincipalLookupKeepsGitHubAPIPrefix(t *testing.T) {
 	}
 }
 
+func TestLegacyGitHubBindingRefreshesLoginOnce(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "token-a"
+	const host = "api.github.com"
+	key := principalCredentialKey("github", host, []byte(token))
+	legacy := principalBinding{CredentialKey: key, Source: "github", Host: host, PrincipalID: "42", PrincipalKey: principalHash("github", host, "42")}
+	if err := store.Put(principalBindingKind, key, legacy); err != nil {
+		t.Fatal(err)
+	}
+	identityCalls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/user" {
+			t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+		}
+		identityCalls++
+		return response(200, `{"id":42,"login":"octocat"}`), nil
+	})
+	client := principalClient(t, store, token, transport)
+	needed, err := client.PrincipalLookupNeeded(context.Background(), "github")
+	if err != nil || !needed {
+		t.Fatalf("legacy lookup needed=%v err=%v", needed, err)
+	}
+	if err := client.ensurePrincipal(context.Background(), "github"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ensurePrincipal(context.Background(), "github"); err != nil {
+		t.Fatal(err)
+	}
+	login, err := client.PrincipalLogin(context.Background(), "github")
+	if err != nil || login != "octocat" || identityCalls != 1 {
+		t.Fatalf("login=%q identity calls=%d err=%v", login, identityCalls, err)
+	}
+}
+
 func TestCredentialRotationDuringLookupStopsBeforeBusinessRequest(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

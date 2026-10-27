@@ -26,6 +26,8 @@ type principalBinding struct {
 	Host          string `json:"host"`
 	PrincipalID   string `json:"principal_id"`
 	PrincipalKey  string `json:"principal_key"`
+	Login         string `json:"login,omitempty"`
+	Version       int    `json:"version,omitempty"`
 }
 
 func (c *Client) EnablePrincipalResolution() { c.resolvePrincipals = true }
@@ -78,7 +80,7 @@ func (c *Client) bindingFor(source string, secret []byte) (principalBinding, boo
 	if errors.Is(err, os.ErrNotExist) {
 		return principalBinding{}, false, nil
 	}
-	if err != nil || binding.CredentialKey != key || binding.Source != source || binding.Host != host || !validPrincipalID(binding.PrincipalID) || binding.PrincipalKey != principalHash(source, host, binding.PrincipalID) {
+	if err != nil || binding.CredentialKey != key || binding.Source != source || binding.Host != host || !validPrincipalID(binding.PrincipalID) || binding.PrincipalKey != principalHash(source, host, binding.PrincipalID) || binding.Version < 0 || binding.Version > 1 || (binding.Login != "" && (source != "github" || !validGitHubLogin(binding.Login))) {
 		return principalBinding{}, false, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "identidade da fonte corrompida"}
 	}
 	return binding, true, nil
@@ -132,8 +134,8 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 	}
 	var alreadyBound bool
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
-		_, found, lookupErr := c.bindingFor(source, secret)
-		alreadyBound = found
+		binding, found, lookupErr := c.bindingFor(source, secret)
+		alreadyBound = found && !principalBindingNeedsRefresh(binding)
 		return lookupErr
 	})
 	if err != nil || alreadyBound {
@@ -145,14 +147,15 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 	}
 	defer release()
 	return c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
-		if _, found, err := c.bindingFor(source, secret); err != nil || found {
+		previous, found, err := c.bindingFor(source, secret)
+		if err != nil || (found && !principalBindingNeedsRefresh(previous)) {
 			return err
 		}
 		if err := c.waitProviderRateHold(ctx, source); err != nil {
 			return err
 		}
 		lookupCtx := context.WithValue(ctx, principalLookupKey{}, true)
-		var id string
+		var id, login string
 		if source == "github" {
 			endpoint, err := url.JoinPath(c.GitHubURL, "user")
 			if err != nil {
@@ -163,12 +166,14 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 				return err
 			}
 			var actor struct {
-				ID int64 `json:"id"`
+				ID    int64  `json:"id"`
+				Login string `json:"login"`
 			}
-			if json.Unmarshal(body, &actor) != nil || actor.ID <= 0 {
+			if json.Unmarshal(body, &actor) != nil || actor.ID <= 0 || (actor.Login != "" && !validGitHubLogin(actor.Login)) {
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "identidade GitHub inválida"}
 			}
 			id = strconv.FormatInt(actor.ID, 10)
+			login = actor.Login
 		} else {
 			body, err := c.LinearQuery(lookupCtx, "query PocketCliViewer { viewer { id } }", nil)
 			if err != nil {
@@ -188,7 +193,10 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 		if err != nil {
 			return err
 		}
-		binding := principalBinding{CredentialKey: principalCredentialKey(source, host, secret), Source: source, Host: host, PrincipalID: id, PrincipalKey: principalHash(source, host, id)}
+		if found && previous.PrincipalID != id {
+			return &contract.ErrorResponse{Code: "ERR_PLAN_CHANGED", Message: "identidade da credencial mudou"}
+		}
+		binding := principalBinding{CredentialKey: principalCredentialKey(source, host, secret), Source: source, Host: host, PrincipalID: id, PrincipalKey: principalHash(source, host, id), Login: login, Version: 1}
 		if err := c.mergeLegacyRateHold(ctx, source, secret, binding.PrincipalKey); err != nil {
 			return err
 		}
@@ -205,6 +213,23 @@ func validPrincipalID(id string) bool {
 	}
 	for _, ch := range id {
 		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func principalBindingNeedsRefresh(binding principalBinding) bool {
+	return binding.Source == "github" && binding.Version == 0
+}
+
+func validGitHubLogin(login string) bool {
+	if login == "" || len(login) > 39 || login[0] == '-' || login[len(login)-1] == '-' {
+		return false
+	}
+	for _, ch := range login {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' {
 			continue
 		}
 		return false
@@ -266,14 +291,33 @@ func (c *Client) PrincipalID(ctx context.Context, source string) (string, error)
 	return id, nil
 }
 
+func (c *Client) PrincipalLogin(ctx context.Context, source string) (string, error) {
+	if !c.resolvePrincipals {
+		return "", nil
+	}
+	var login string
+	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
+		binding, found, err := c.bindingFor(source, secret)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("principal não resolvido")
+		}
+		login = binding.Login
+		return nil
+	})
+	return login, err
+}
+
 func (c *Client) PrincipalLookupNeeded(ctx context.Context, source string) (bool, error) {
 	if !c.resolvePrincipals {
 		return false, nil
 	}
 	var needed bool
 	err := c.Secrets.WithSecret(ctx, source, func(secret []byte) error {
-		_, found, err := c.bindingFor(source, secret)
-		needed = !found
+		binding, found, err := c.bindingFor(source, secret)
+		needed = !found || principalBindingNeedsRefresh(binding)
 		return err
 	})
 	return needed, err
