@@ -189,6 +189,23 @@ const realAppJSTemplate = `(() => {
       choice.append(check, document.createTextNode(' ' + label));
       moduleChecks[value] = check; moduleBox.append(choice);
     });
+    const permissions = node('p', 'muted');
+    const updatePermissions = () => {
+      const required = [];
+      if (github.checked) {
+        const githubRead = ['Metadata: read', 'Pull requests: read'];
+        if (moduleChecks.github_issues.checked) githubRead.push('Issues: read');
+        if (moduleChecks.code_history.checked) githubRead.push('Contents: read');
+        if (moduleChecks.ci.checked) githubRead.push('Actions: read', 'Checks: read');
+        if (moduleChecks.deployments.checked) githubRead.push('Deployments: read', 'Commit statuses: read quando necessário');
+        required.push('GitHub: ' + githubRead.join('; '));
+      }
+      if (linear.checked) required.push('Linear: Read, sem Write/Admin/Create');
+      permissions.textContent = required.join(' | ') + (required.length ? '. ' : '') + 'Informe apenas recursos autorizados.';
+    };
+    github.onchange = linear.onchange = updatePermissions;
+    Object.values(moduleChecks).forEach(check => { check.onchange = updatePermissions; });
+    updatePermissions();
     const yaml = node('input'); yaml.type = 'file'; yaml.accept = '.yaml,.yml,text/yaml';
     const feedback = node('section');
     let imported = null, plan = null;
@@ -210,6 +227,7 @@ const realAppJSTemplate = `(() => {
         from.value = imported.period.from_date || ''; to.value = imported.period.to_date || '';
         timezone.value = imported.period.timezone || timezone.value;
         Object.keys(moduleChecks).forEach(key => { moduleChecks[key].checked = !!imported.modules[key]; });
+        updatePermissions();
         feedback.append(node('p', 'muted', 'YAML importado. Revise os campos antes de preparar o plano.'));
       } catch (error) { fail(feedback, error); }
     });
@@ -282,7 +300,7 @@ const realAppJSTemplate = `(() => {
       } catch (error) { feedback.replaceChildren(); fail(feedback, error); }
     }, 'primary');
     form.append(field('Nome', name), field('Escopo', scope), field('Repositórios GitHub', repositories), field('Teams Linear', teams),
-      field('Fontes', sources), node('p', 'muted', 'GitHub: Metadata e Pull requests read; Contents read para histórico Git. Linear: Read. Informe apenas recursos autorizados.'),
+      field('Fontes', sources), permissions,
       field('Token GitHub', githubKey), field('Chave Linear', linearKey), field('Período', period),
       field('Data inicial', from), field('Data final', to), field('Timezone', timezone), field('Módulos', moduleBox),
 	  field('Chamadas de descoberta por fonte', discoveryBudget), node('p', 'muted', '20 por padrão. Aumentar este número aprova mais chamadas externas apenas na descoberta; revise o plano antes da coleta.'),
