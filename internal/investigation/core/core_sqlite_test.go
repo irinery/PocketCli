@@ -22,6 +22,7 @@ import (
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
+	"pocketcli/internal/investigation/rules"
 	"pocketcli/internal/investigation/secrets"
 	"pocketcli/internal/investigation/storage"
 )
@@ -41,17 +42,19 @@ type fakeFinalizer struct {
 }
 
 type fakeGitObserver struct {
-	priors          []gitmirror.RefState
-	result          gitmirror.Observation
-	commits         []gitmirror.Commit
-	commitsByHead   map[string][]gitmirror.Commit
-	changes         map[string][]gitmirror.ChangedFile
-	trees           map[string][]gitmirror.TreeEntry
-	heads           []gitmirror.HeadRef
-	headsIncomplete bool
-	headListCalls   int
-	branchFetches   int
-	branchErrors    map[string]error
+	priors            []gitmirror.RefState
+	result            gitmirror.Observation
+	commits           []gitmirror.Commit
+	commitsByHead     map[string][]gitmirror.Commit
+	changes           map[string][]gitmirror.ChangedFile
+	trees             map[string][]gitmirror.TreeEntry
+	heads             []gitmirror.HeadRef
+	headsIncomplete   bool
+	headListCalls     int
+	branchFetches     int
+	branchErrors      map[string]error
+	revertTargets     map[string]string
+	revertUninspected map[string]bool
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
@@ -90,6 +93,13 @@ func (f *fakeGitObserver) WalkCommits(_ context.Context, head string, visit func
 		}
 	}
 	return true, nil
+}
+
+func (f *fakeGitObserver) DeclaredRevertTarget(_ context.Context, oid string) (string, bool, error) {
+	if f.revertUninspected[oid] {
+		return "", false, nil
+	}
+	return f.revertTargets[oid], true, nil
 }
 
 func (f *fakeGitObserver) EnsureTrees(context.Context, string, []byte, string, string, int64) (int64, error) {
@@ -202,6 +212,10 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 	run = waitRun(t, c, run.ID)
 	if run.State != "report_failed" || run.SnapshotID == "" {
 		t.Fatalf("run=%+v", run)
+	}
+	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.1.0" {
+		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_pull_requests"})
 	if err != nil {
