@@ -19,11 +19,13 @@ func TestDeliveryAncestryChangesFindingOnlyWhenGitProofIsKnown(t *testing.T) {
 	for _, scenario := range []struct {
 		name, relation, coverage string
 		known, contained         bool
+		codeHistory              bool
 		finding                  bool
 	}{
-		{"contained", "contains_merge_commit", "complete", true, true, false},
-		{"not-ancestor", "merge_commit_not_ancestor", "complete", true, false, true},
-		{"unknown", "", "partial", false, false, true},
+		{"contained", "contains_merge_commit", "complete", true, true, true, false},
+		{"not-ancestor", "merge_commit_not_ancestor", "complete", true, false, true, true},
+		{"unknown", "", "partial", false, false, true, false},
+		{"module-not-selected", "", "not_selected", false, false, false, false},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			store, err := storage.Open(t.TempDir())
@@ -39,9 +41,11 @@ func TestDeliveryAncestryChangesFindingOnlyWhenGitProofIsKnown(t *testing.T) {
 				observer.ancestorResults = map[string]bool{merge + ":" + revision: scenario.contained}
 			}
 			c.gitMirror = func(string) (gitObserver, error) { return observer, nil }
-			plan := contract.Plan{ID: "plan-ancestry", InvestigationID: "inv-ancestry", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", Resources: []contract.Resource{{Source: "github", ID: "repo-1", Name: "acme/api"}}, Input: contract.PlanInput{Modules: contract.Modules{CodeHistory: true}}}
-			if err := store.Put("planauth", plan.ID, planAuth{GitHub: "account"}); err != nil {
-				t.Fatal(err)
+			plan := contract.Plan{ID: "plan-ancestry", InvestigationID: "inv-ancestry", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", Resources: []contract.Resource{{Source: "github", ID: "repo-1", Name: "acme/api"}}, Input: contract.PlanInput{Modules: contract.Modules{CodeHistory: scenario.codeHistory}}}
+			if scenario.codeHistory {
+				if err := store.Put("planauth", plan.ID, planAuth{GitHub: "account"}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			d := query.Dataset{
 				Snapshot:     contract.Snapshot{WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, AnalysisReferenceAt: plan.WindowEnd},

@@ -27,9 +27,6 @@ type deliveryAncestryPair struct {
 // mapDeliveryAncestry checks only objects already in the private Git mirror.
 // It never fetches an artifact revision just to force a conclusion.
 func (c *Core) mapDeliveryAncestry(ctx context.Context, plan contract.Plan, d *query.Dataset, run *contract.Run) error {
-	if !plan.Input.Modules.CodeHistory {
-		return nil
-	}
 	repositories := make(map[string]contract.Resource)
 	for _, resource := range plan.Resources {
 		if resource.Source == "github" {
@@ -99,15 +96,21 @@ func (c *Core) mapDeliveryAncestry(ctx context.Context, plan contract.Plan, d *q
 	if len(pairsByRepo) == 0 {
 		return nil
 	}
-	var auth planAuth
-	if err := c.store.Get("planauth", plan.ID, &auth); err != nil || auth.GitHub == "" {
-		return fault("ERR_AUDIT_FAILED", "identidade Git para ancestralidade indisponível")
-	}
 	repoIDs := make([]string, 0, len(pairsByRepo))
 	for id := range pairsByRepo {
 		repoIDs = append(repoIDs, id)
 	}
 	sort.Strings(repoIDs)
+	if !plan.Input.Modules.CodeHistory {
+		for _, repoID := range repoIDs {
+			d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: repoID}, "delivery_ancestry", "not_selected", 0, "histórico Git não selecionado para verificar a revisão do artefato"))
+		}
+		return nil
+	}
+	var auth planAuth
+	if err := c.store.Get("planauth", plan.ID, &auth); err != nil || auth.GitHub == "" {
+		return fault("ERR_AUDIT_FAILED", "identidade Git para ancestralidade indisponível")
+	}
 	for _, repoID := range repoIDs {
 		pairs := pairsByRepo[repoID]
 		sort.Slice(pairs, func(i, j int) bool {
