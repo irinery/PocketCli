@@ -21,6 +21,7 @@ type Dataset struct {
 	Coverage     []contract.Coverage
 	Issues       []Issue
 	PullRequests []PullRequest
+	Attachments  []Attachment
 	Links        []contract.LinkRecord
 	Events       []Event
 	Stages       []contract.StageRecord
@@ -48,3 +49,4 @@ type PullRequest struct {
 	Number                                                                                                                             int
 	ReviewWaitSeconds                                                                                                                  *int64
 }
+type Attachment struct{ IssueID, PullKey, EvidenceID string }

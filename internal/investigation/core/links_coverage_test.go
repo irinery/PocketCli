@@ -50,3 +50,21 @@ func TestMixedSourceLinksDoNotClaimCompleteWithoutLinearFormalCollector(t *testi
 		t.Fatal("issue GitHub com cobertura formal completa perdeu achado elegível")
 	}
 }
+
+func TestExactGitHubPullKeyRejectsAmbiguousAttachmentURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://github.com/acme/api/pull/7.evil",
+		"https://github.com/acme/api/pull/7/commits",
+		"https://github.com.evil.test/acme/api/pull/7",
+		"https://github.com@evil.test/acme/api/pull/7",
+		"https://github.com/acme/api/pull/7?access_token=secret",
+		"https://github.com/acme%2Fapi/pull/7",
+	} {
+		if key, ok := exactGitHubPullKey(raw); ok {
+			t.Fatalf("URL ambígua aceita: %q -> %q", raw, key)
+		}
+	}
+	if key, ok := exactGitHubPullKey("https://github.com/Acme/API/pull/7"); !ok || key != "acme/api#7" {
+		t.Fatalf("PR exato rejeitado: key=%q ok=%v", key, ok)
+	}
+}
