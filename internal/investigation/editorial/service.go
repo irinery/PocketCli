@@ -401,6 +401,18 @@ func (s *Service) Review(id string, expected int, accept bool) (Draft, error) {
 	s.drafts[id] = d
 	return d, nil
 }
+func (s *Service) Draft(id string) (Draft, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.drafts[id]
+	return d, ok
+}
+func (s *Service) PreviewInfo(id string) (Preview, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.previews[id]
+	return p.value, ok
+}
 func (s *Service) Drafts(snapshot string) []Draft {
 	s.mu.Lock()
 	defer s.mu.Unlock()

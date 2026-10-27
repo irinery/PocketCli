@@ -39,12 +39,15 @@ type EditorialService interface {
 	Generate(context.Context, editorial.GenerateInput) (editorial.Draft, error)
 	Review(id string, expected int, accept bool) (editorial.Draft, error)
 	Drafts(snapshot string) []editorial.Draft
+	Draft(string) (editorial.Draft, bool)
+	PreviewInfo(string) (editorial.Preview, bool)
 }
 type AnnotationStore interface {
 	Create(annotations.CreateInput) (annotations.Annotation, error)
 	Update(string, annotations.UpdateInput) (annotations.Annotation, error)
 	Resolve(string, int) (annotations.Annotation, error)
 	List(snapshot, cursor string, limit int) annotations.Page
+	Get(string) (annotations.Annotation, bool)
 }
 type ReportService interface {
 	contract.Finalizer
@@ -57,6 +60,9 @@ type findingLister interface {
 }
 type runStateSetter interface {
 	SetRunState(id, state string, lastErr *contract.ErrorResponse)
+}
+type planLoader interface {
+	LoadPlan(string) (contract.Plan, error)
 }
 
 type session struct {
@@ -309,6 +315,60 @@ func (h *Handler) decode(w http.ResponseWriter, r *http.Request, dst any, max in
 	}
 	return true
 }
+
+func (h *Handler) notInScope(w http.ResponseWriter) {
+	h.writeError(w, http.StatusNotFound, "ERR_NOT_FOUND", "Recurso fora desta investigação.")
+}
+
+func (h *Handler) ownsSnapshot(w http.ResponseWriter, ctx context.Context, id string) bool {
+	if h.options.Demo {
+		return true
+	}
+	snapshot, err := h.core.GetSnapshot(ctx, id)
+	if err != nil {
+		h.fail(w, err)
+		return false
+	}
+	if snapshot.InvestigationID != h.options.InvestigationID {
+		h.notInScope(w)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) ownsPlan(w http.ResponseWriter, id string) bool {
+	if h.options.Demo {
+		return true
+	}
+	loader, ok := h.core.(planLoader)
+	if !ok {
+		h.unavailable(w, "plano")
+		return false
+	}
+	plan, err := loader.LoadPlan(id)
+	if err != nil {
+		h.fail(w, err)
+		return false
+	}
+	if plan.InvestigationID != h.options.InvestigationID {
+		h.notInScope(w)
+		return false
+	}
+	return true
+}
+
+func (h *Handler) ownsRun(w http.ResponseWriter, ctx context.Context, id string) bool {
+	if h.options.Demo {
+		return true
+	}
+	run, err := h.core.GetRun(ctx, id)
+	if err != nil {
+		h.fail(w, err)
+		return false
+	}
+	return h.ownsPlan(w, run.PlanID)
+}
+
 func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, sid string) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if r.Method == http.MethodGet && path == "/capabilities" {
@@ -345,6 +405,13 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		var in contract.PlanInput
 		if !h.decode(w, r, &in, 64*1024) {
 			return
+		}
+		if !h.options.Demo {
+			if in.InvestigationID != "" && in.InvestigationID != h.options.InvestigationID {
+				h.notInScope(w)
+				return
+			}
+			in.InvestigationID = h.options.InvestigationID
 		}
 		out, err := h.core.PreparePlan(r.Context(), in)
 		h.respond(w, out, err)
@@ -387,6 +454,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if !h.decode(w, r, &in, 16*1024) {
 			return
 		}
+		if !h.ownsPlan(w, in.PlanID) {
+			return
+		}
 		out, err := h.core.StartRun(r.Context(), in)
 		if err != nil {
 			h.fail(w, err)
@@ -398,6 +468,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		return
 	}
 	if len(parts) == 2 && parts[0] == "runs" && r.Method == http.MethodGet {
+		if !h.ownsRun(w, r.Context(), parts[1]) {
+			return
+		}
 		out, err := h.core.GetRun(r.Context(), parts[1])
 		if err == nil {
 			h.finalizePublishedRun(r.Context(), &out)
@@ -407,6 +480,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		return
 	}
 	if len(parts) == 3 && parts[0] == "runs" && r.Method == http.MethodPost {
+		if !h.ownsRun(w, r.Context(), parts[1]) {
+			return
+		}
 		var empty map[string]any
 		if !h.decode(w, r, &empty, 1024) {
 			return
@@ -431,21 +507,34 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		return
 	}
 	if len(parts) == 3 && parts[0] == "investigations" && parts[2] == "snapshots" && r.Method == http.MethodGet {
+		if !h.options.Demo && parts[1] != h.options.InvestigationID {
+			h.notInScope(w)
+			return
+		}
 		out, err := h.core.ListSnapshots(r.Context(), parts[1])
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 2 && parts[0] == "snapshots" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		out, err := h.core.GetSnapshot(r.Context(), parts[1])
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 3 && parts[0] == "snapshots" && parts[2] == "queries" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		out, err := h.core.SuggestedQueries(r.Context(), parts[1])
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 3 && parts[0] == "snapshots" && parts[2] == "findings" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		if l, ok := h.core.(findingLister); ok {
 			out, err := l.Findings(parts[1])
 			h.respond(w, out, err)
@@ -463,6 +552,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.writeError(w, 400, "ERR_VALIDATION", "Snapshot do caminho e do corpo divergem.")
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
+			return
+		}
 		if len(in.SQL) > 16*1024 || len(in.Parameters) > 50 || in.MaxRows > 1000 || in.TimeoutMS < 0 || in.TimeoutMS > 30000 {
 			h.writeError(w, 400, "ERR_VALIDATION", "Consulta excede os limites locais.")
 			return
@@ -472,9 +564,13 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "query history")
 			return
 		}
-		if err := h.queryStore.Record(in, out, queryErr); err != nil {
+		execution, err := h.queryStore.Record(in, out, queryErr)
+		if err != nil {
 			h.fail(w, err)
 			return
+		}
+		if queryErr == nil {
+			out.QueryID = execution.QueryID
 		}
 		h.events.publish("query.completed", "", in.SnapshotID, map[bool]string{true: "error", false: "complete"}[queryErr != nil], "Execução SQL local registrada.")
 		h.respond(w, out, queryErr)
@@ -483,6 +579,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	if path == "/queries/history" && r.Method == http.MethodGet {
 		if h.queryStore == nil {
 			h.unavailable(w, "query history")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
 			return
 		}
 		limit := 100
@@ -497,6 +596,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "saved queries")
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
+			return
+		}
 		h.writeJSON(w, 200, h.queryStore.List(r.URL.Query().Get("snapshot_id")))
 		return
 	}
@@ -509,12 +611,15 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if !h.decode(w, r, &in, 16*1024) {
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
+			return
+		}
 		snapshot, err := h.core.GetSnapshot(r.Context(), r.URL.Query().Get("snapshot_id"))
 		if err != nil {
 			h.fail(w, err)
 			return
 		}
-		out, err := h.queryStore.Create(in, snapshot.InvestigationID)
+		out, err := h.queryStore.Create(in, snapshot.InvestigationID, snapshot.ID)
 		h.respond(w, out, err)
 		return
 	}
@@ -522,6 +627,16 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if h.queryStore == nil {
 			h.unavailable(w, "saved queries")
 			return
+		}
+		if !h.options.Demo {
+			q, ok := h.queryStore.GetSaved(parts[2])
+			if !ok {
+				h.notInScope(w)
+				return
+			}
+			if !h.ownsSnapshot(w, r.Context(), q.SnapshotID) {
+				return
+			}
 		}
 		var in queries.PatchInput
 		if !h.decode(w, r, &in, 16*1024) {
@@ -532,16 +647,25 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		return
 	}
 	if len(parts) == 4 && parts[0] == "snapshots" && parts[2] == "findings" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		out, err := h.core.GetFinding(r.Context(), parts[1], parts[3])
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 4 && parts[0] == "snapshots" && parts[2] == "evidence" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		out, err := h.core.GetEvidence(r.Context(), parts[1], parts[3])
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 3 && parts[0] == "snapshots" && parts[2] == "report" && r.Method == http.MethodGet {
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
 		limit := 200
 		if n, e := strconv.Atoi(r.URL.Query().Get("limit")); e == nil && n > 0 {
 			limit = n
@@ -561,6 +685,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		var in contract.FinalizeRequest
 		if !h.decode(w, r, &in, 16*1024) {
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
 			return
 		}
 		out, err := h.reports.Finalize(r.Context(), in)
@@ -585,6 +712,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "PDF")
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
+			return
+		}
 		h.writeJSON(w, 200, h.reports.List(r.URL.Query().Get("snapshot_id")))
 		return
 	}
@@ -594,12 +724,23 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		out, err := h.reports.Get(parts[1])
+		if err == nil && !h.ownsSnapshot(w, r.Context(), out.SnapshotID) {
+			return
+		}
 		h.respond(w, out, err)
 		return
 	}
 	if len(parts) == 3 && parts[0] == "reports" && parts[2] == "download" && r.Method == http.MethodGet {
 		if h.reports == nil {
 			h.unavailable(w, "PDF")
+			return
+		}
+		artifact, err := h.reports.Get(parts[1])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), artifact.SnapshotID) {
 			return
 		}
 		file, err := h.reports.Open(parts[1])
@@ -627,6 +768,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "Claude editorial")
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
+			return
+		}
 		h.writeJSON(w, 200, h.editorial.Drafts(r.URL.Query().Get("snapshot_id")))
 		return
 	}
@@ -637,6 +781,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		var in editorial.Selection
 		if !h.decode(w, r, &in, 64*1024) {
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
 			return
 		}
 		out, err := h.editorial.Preview(r.Context(), in)
@@ -655,6 +802,16 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if !h.decode(w, r, &in, 16*1024) {
 			return
 		}
+		if !h.options.Demo {
+			preview, ok := h.editorial.PreviewInfo(in.PreviewID)
+			if !ok {
+				h.notInScope(w)
+				return
+			}
+			if !h.ownsSnapshot(w, r.Context(), preview.SnapshotID) {
+				return
+			}
+		}
 		out, err := h.editorial.Generate(r.Context(), in)
 		h.respond(w, out, err)
 		if err == nil {
@@ -666,6 +823,16 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if h.editorial == nil {
 			h.unavailable(w, "Claude editorial")
 			return
+		}
+		if !h.options.Demo {
+			draft, ok := h.editorial.Draft(parts[1])
+			if !ok {
+				h.notInScope(w)
+				return
+			}
+			if !h.ownsSnapshot(w, r.Context(), draft.SnapshotID) {
+				return
+			}
 		}
 		var in struct {
 			ExpectedRevision int `json:"expected_revision"`
@@ -685,6 +852,9 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "annotations")
 			return
 		}
+		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
+			return
+		}
 		limit := 100
 		if n, e := strconv.Atoi(r.URL.Query().Get("limit")); e == nil && n > 0 {
 			limit = n
@@ -699,6 +869,13 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		var in annotations.CreateInput
 		if !h.decode(w, r, &in, 16*1024) {
+			return
+		}
+		if !h.options.Demo && in.InvestigationID != h.options.InvestigationID {
+			h.notInScope(w)
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
 			return
 		}
 		if _, err := h.core.GetSnapshot(r.Context(), in.SnapshotID); err != nil {
@@ -721,6 +898,16 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.unavailable(w, "annotations")
 			return
 		}
+		if !h.options.Demo {
+			a, ok := h.annotations.Get(parts[1])
+			if !ok {
+				h.notInScope(w)
+				return
+			}
+			if !h.ownsSnapshot(w, r.Context(), a.SnapshotID) {
+				return
+			}
+		}
 		var in annotations.UpdateInput
 		if !h.decode(w, r, &in, 16*1024) {
 			return
@@ -736,6 +923,16 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if h.annotations == nil {
 			h.unavailable(w, "annotations")
 			return
+		}
+		if !h.options.Demo {
+			a, ok := h.annotations.Get(parts[1])
+			if !ok {
+				h.notInScope(w)
+				return
+			}
+			if !h.ownsSnapshot(w, r.Context(), a.SnapshotID) {
+				return
+			}
 		}
 		var in struct {
 			ExpectedRevision int `json:"expected_revision"`

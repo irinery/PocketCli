@@ -260,6 +260,12 @@ func (s *Store) Resolve(id string, expected int) (Annotation, error) {
 	s.apply(event{Action: "resolve", Annotation: a})
 	return a, nil
 }
+func (s *Store) Get(id string) (Annotation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.rows[id]
+	return a, ok
+}
 func (s *Store) List(snapshot, cursor string, limit int) Page {
 	s.mu.Lock()
 	defer s.mu.Unlock()
