@@ -41,11 +41,14 @@ type fakeFinalizer struct {
 }
 
 type fakeGitObserver struct {
-	priors  []gitmirror.RefState
-	result  gitmirror.Observation
-	commits []gitmirror.Commit
-	changes map[string][]gitmirror.ChangedFile
-	trees   map[string][]gitmirror.TreeEntry
+	priors          []gitmirror.RefState
+	result          gitmirror.Observation
+	commits         []gitmirror.Commit
+	changes         map[string][]gitmirror.ChangedFile
+	trees           map[string][]gitmirror.TreeEntry
+	heads           []gitmirror.HeadRef
+	headsIncomplete bool
+	headListCalls   int
 }
 
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
@@ -80,6 +83,11 @@ func (f *fakeGitObserver) WalkTree(_ context.Context, oid string, visit func(git
 		}
 	}
 	return true, nil
+}
+
+func (f *fakeGitObserver) ListHeads(context.Context, string, []byte, int, int64) ([]gitmirror.HeadRef, bool, int64, error) {
+	f.headListCalls++
+	return append([]gitmirror.HeadRef(nil), f.heads...), !f.headsIncomplete, 0, nil
 }
 
 func (f *fakeFinalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (contract.ReportArtifact, error) {
