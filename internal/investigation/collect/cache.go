@@ -17,6 +17,7 @@ import (
 type CacheStore interface {
 	Get(kind, id string, value any) error
 	Put(kind, id string, value any) error
+	Lock(id string) (func(), error)
 }
 
 const (
