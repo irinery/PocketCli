@@ -298,6 +298,55 @@ func (c *Core) GetRun(_ context.Context, id string) (contract.Run, error) {
 	}
 	return r, nil
 }
+
+// CompleteReport reconciles a successful local PDF retry with a run whose
+// snapshot was already published. It never starts collection or changes the
+// snapshot; later editorial revisions leave completed runs unchanged.
+func (c *Core) CompleteReport(ctx context.Context, artifact contract.ReportArtifact) error {
+	if artifact.Status != "completed" || artifact.ID == "" || artifact.SnapshotID == "" {
+		return fault("ERR_REPORT_INCOMPLETE", "PDF não concluído")
+	}
+	snapshot, err := c.GetSnapshot(ctx, artifact.SnapshotID)
+	if err != nil {
+		return err
+	}
+	var d query.Dataset
+	if err := c.store.Get("datasets", snapshot.ID, &d); err != nil {
+		return fault("ERR_AUDIT_FAILED", "dataset do PDF indisponível")
+	}
+	if artifact.FindingCount != int64(len(d.Findings)) {
+		return fault("ERR_REPORT_INCOMPLETE", "PDF não contém todos os achados")
+	}
+	release, err := c.store.Lock(snapshot.InvestigationID)
+	if err != nil {
+		return fault("ERR_AUDIT_FAILED", "outra escrita da investigação está ativa")
+	}
+	defer release()
+	ids, err := c.store.List("runs")
+	if err != nil {
+		return fault("ERR_AUDIT_FAILED", "runs indisponíveis")
+	}
+	for _, id := range ids {
+		var run contract.Run
+		if err := c.store.Get("runs", id, &run); err != nil {
+			return fault("ERR_AUDIT_FAILED", "run indisponível")
+		}
+		if run.SnapshotID != snapshot.ID || run.State != "report_failed" {
+			continue
+		}
+		if run.Coverage == "complete" {
+			run.State = "completed"
+		} else {
+			run.State = "completed_partial"
+		}
+		run.Stage = "completed"
+		run.LastError = nil
+		if err := c.store.Put("runs", id, run); err != nil {
+			return fault("ERR_AUDIT_FAILED", "falha ao confirmar retry do PDF")
+		}
+	}
+	return nil
+}
 func (c *Core) PauseRun(ctx context.Context, id string) (contract.Run, error) {
 	r, err := c.GetRun(ctx, id)
 	if err != nil {

@@ -4,6 +4,8 @@ Estado em 26/10/2026: implementação parcial do RFC 01. O contrato `investigate
 
 Changelog do contrato compartilhado: nenhuma alteração em relação ao apêndice C do RFC 01.
 
+Retry S08-04: uma exportação manual de PDF concluída pela CLI ou pela UI reconcilia o run em `report_failed` com o mesmo snapshot, sem nova coleta. O Core confere o número de achados antes de registrar `completed`/`completed_partial`; um PDF incompleto deixa o run pendente. Teste local específico: `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run TestReportRetryCompletesRunWithoutRecollecting -count=1 ./internal/investigation/core` (Go, compilador C e SQLite CGO; não usa token, rede, Chromium nem Poppler).
+
 ## Build e testes locais
 
 Pré-requisitos: Go 1.22 ou posterior, `gofmt`, compilador C para CGO, `git`, `sh`; para o PDF automático, Chromium/Google Chrome e `pdfinfo` (Poppler). Não são baixados durante a investigação. No macOS, se o navegador não estiver no `PATH`, configure `POCKETCLI_CHROMIUM` com o caminho absoluto do executável.

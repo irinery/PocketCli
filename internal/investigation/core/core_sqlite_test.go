@@ -522,6 +522,66 @@ func TestFinalizerTransitionsRunToCompleted(t *testing.T) {
 	}
 }
 
+func TestReportRetryCompletesRunWithoutRecollecting(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	transport := &fakeTransport{title: "PR"}
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore, HTTPClient: &http.Client{Transport: transport}, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := c.PreparePlan(context.Background(), contract.PlanInput{SchemaVersion: contract.Version, GitHubEnabled: true, Scope: &contract.Scope{Mode: "selected", Repositories: []string{"acme/api"}}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}, Limits: contract.Limits{GitHubRPH: 3600000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "retry-report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run = waitRun(t, c, run.ID)
+	if run.State != "report_failed" || run.SnapshotID == "" {
+		t.Fatalf("expected published snapshot and failed report: %+v", run)
+	}
+	var d query.Dataset
+	if err := store.Get("datasets", run.SnapshotID, &d); err != nil {
+		t.Fatal(err)
+	}
+	before := transport.requests
+	artifact := contract.ReportArtifact{ID: "report-retry", SnapshotID: run.SnapshotID, Status: "completed", FindingCount: int64(len(d.Findings))}
+	bad := artifact
+	bad.FindingCount++
+	if err := c.CompleteReport(context.Background(), bad); err == nil {
+		t.Fatal("incomplete PDF accepted")
+	}
+	if got, _ := c.GetRun(context.Background(), run.ID); got.State != "report_failed" {
+		t.Fatalf("failed retry changed run: %+v", got)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		err = c.CompleteReport(context.Background(), artifact)
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetRun(context.Background(), run.ID)
+	if err != nil || got.State != "completed" || got.LastError != nil || got.SnapshotID != run.SnapshotID || transport.requests != before {
+		t.Fatalf("retry recollected or did not close run: %+v requests=%d before=%d err=%v", got, transport.requests, before, err)
+	}
+	if err := c.CompleteReport(context.Background(), artifact); err != nil {
+		t.Fatalf("retry is not idempotent: %v", err)
+	}
+}
+
 func TestCancelDuringCollectionDoesNotPublishSnapshot(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

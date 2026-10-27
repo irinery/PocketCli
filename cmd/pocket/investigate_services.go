@@ -168,5 +168,8 @@ func reportInvestigation(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := services.core.CompleteReport(context.Background(), artifact); err != nil {
+		return err
+	}
 	return writeJSON(cmd.OutOrStdout(), artifact)
 }

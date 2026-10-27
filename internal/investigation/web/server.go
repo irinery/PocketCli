@@ -568,6 +568,14 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.fail(w, err)
 			return
 		}
+		if reconciler, ok := h.core.(interface {
+			CompleteReport(context.Context, contract.ReportArtifact) error
+		}); ok {
+			if err := reconciler.CompleteReport(r.Context(), out); err != nil {
+				h.fail(w, err)
+				return
+			}
+		}
 		h.writeJSON(w, http.StatusAccepted, out)
 		h.events.publish("report.state", "", in.SnapshotID, out.Status, "Nova revisão de relatório local gerada.")
 		return
