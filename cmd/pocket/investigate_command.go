@@ -436,10 +436,10 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput) erro
 		githubHint += "; Contents read para leitura Git"
 	}
 	if input.Modules.CI {
-		githubHint += "; Actions read"
+		githubHint += "; Actions read; Checks read"
 	}
 	if input.Modules.Deployments {
-		githubHint += "; Deployments read"
+		githubHint += "; Deployments read; Commit statuses read quando necessário"
 	}
 	for _, source := range []struct {
 		name, env, hint string
