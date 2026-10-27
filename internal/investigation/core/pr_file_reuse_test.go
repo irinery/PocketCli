@@ -25,12 +25,19 @@ func TestRefreshKeepsOldHeadFileMappings(t *testing.T) {
 			{ID: "old-rename", EntityID: "old-file", Type: "file_rename_reported", EventAt: "2026-01-04T00:00:00Z", ObservedAt: "2026-01-10T00:00:00Z", OldValue: "services/api/old.go", NewValue: "services/api/handler.go", EvidenceID: "ev-rename"},
 			{ID: "unrelated-rename", EntityID: "unrelated-file", Type: "file_rename_reported", ObservedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-unrelated-rename"},
 		},
+		Evidence: []contract.Evidence{
+			{ID: "ev-file-component", ObservedAt: "2026-01-10T00:00:00Z", SourceUpdatedAt: "2026-01-01T00:00:00Z"},
+			{ID: "ev-future", ObservedAt: "2026-03-01T00:00:00Z", SourceUpdatedAt: "2026-01-01T00:00:00Z"},
+		},
 	}
 	current := query.Dataset{PullRequests: []query.PullRequest{{ID: "pr-1", HeadSHA: "new-head"}}}
 	referenced := make(map[string]bool)
 	reusePriorFileGraph(&current, prior, "2026-02-01T00:00:00Z", referenced)
 	if len(current.Links) != 2 || current.Links[0].ID != "pr-file" || current.Links[1].ID != "file-component" {
 		t.Fatalf("vínculos históricos não preservados ou fora da janela: %+v", current.Links)
+	}
+	if current.Links[1].ValidFrom != "2026-01-10T00:00:00Z" {
+		t.Fatalf("vínculo herdou data inferida do PR: %+v", current.Links[1])
 	}
 	if len(current.Components) != 2 || current.Components[0].ID != "old-file" || current.Components[1].ID != "old-manifest" {
 		t.Fatalf("componentes históricos não preservados: %+v", current.Components)

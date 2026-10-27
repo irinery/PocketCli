@@ -220,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.16.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.17.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1634,7 +1634,7 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	modules := contract.Modules{CodeHistory: true}
 	r := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
 	prior := contract.Snapshot{ID: "prior-file-snapshot", PlanID: "prior-file-plan", InvestigationID: "file-investigation", Resources: []contract.Resource{r}, Modules: modules, WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", ObservationFinishedAt: "2026-01-09T00:00:00Z"}
-	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}, {ID: "manifest-old", Name: "go.mod", Repository: r.Name, Path: "go.mod", Kind: "go_module"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}, {ID: "link-map-old", SourceID: "file-old", Relation: "maps_to_component", TargetID: "manifest-old", Status: "direct", ValidFrom: "2026-01-03T00:00:00Z", EvidenceID: "ev-map"}}, Events: []query.Event{{ID: "old-rename", EntityID: "file-old", Type: "file_rename_reported", EventAt: "2026-01-03T00:00:00Z", ObservedAt: "2026-01-09T00:00:00Z", OldValue: "old-api.go", NewValue: "api.go", EvidenceID: "ev-file"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-map", Source: "git", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
+	priorData := query.Dataset{PullRequests: []query.PullRequest{{ID: "github-pr-100", Number: 7, Repository: r.Name, State: "open", CreatedAt: "2026-01-02T00:00:00Z", UpdatedAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-pr"}}, Components: []contract.ComponentRecord{{ID: "file-old", Name: "api.go", Repository: r.Name, Path: "api.go", Kind: "file_change"}, {ID: "manifest-old", Name: "go.mod", Repository: r.Name, Path: "go.mod", Kind: "go_module"}}, Links: []contract.LinkRecord{{ID: "link-file-old", SourceID: "github-pr-100", Relation: "modifies_file", TargetID: "file-old", Status: "direct", EvidenceID: "ev-file"}, {ID: "link-map-old", SourceID: "file-old", Relation: "maps_to_component", TargetID: "manifest-old", Status: "direct", ValidFrom: "2026-01-03T00:00:00Z", EvidenceID: "ev-map"}}, Events: []query.Event{{ID: "old-rename", EntityID: "file-old", Type: "file_rename_reported", EventAt: "2026-01-03T00:00:00Z", ObservedAt: "2026-01-09T00:00:00Z", OldValue: "old-api.go", NewValue: "api.go", EvidenceID: "ev-file"}}, Evidence: []contract.Evidence{{ID: "ev-pr", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-file", Source: "github", SourceUpdatedAt: "2026-01-03T00:00:00Z"}, {ID: "ev-map", Source: "git", ObservedAt: "2026-01-09T00:00:00Z", SourceUpdatedAt: "2026-01-03T00:00:00Z"}}}
 	if err := store.Put("snapshots", prior.ID, prior); err != nil {
 		t.Fatal(err)
 	}
@@ -1666,11 +1666,11 @@ func TestRefreshKeepsPreviouslyObservedPRFileLinks(t *testing.T) {
 	}
 	for _, link := range d.Links {
 		linkFound = linkFound || link.ID == "link-file-old"
-		mappingFound = mappingFound || link.ID == "link-map-old"
+		mappingFound = mappingFound || link.ID == "link-map-old" && link.ValidFrom == "2026-01-09T00:00:00Z"
 	}
 	for _, evidence := range d.Evidence {
 		evidenceFound = evidenceFound || evidence.ID == "ev-file" && evidence.SourceUpdatedAt == ""
-		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map" && evidence.SourceUpdatedAt == "2026-01-03T00:00:00Z"
+		mappingEvidenceFound = mappingEvidenceFound || evidence.ID == "ev-map" && evidence.SourceUpdatedAt == ""
 	}
 	for _, event := range d.Events {
 		if event.ID == "old-rename" {
@@ -1745,7 +1745,8 @@ func TestPRHeadFileMappingUsesManifestFromThatCommit(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
-	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}})
+	observedAt := time.Date(2026, time.January, 20, 0, 0, 0, 0, time.UTC)
+	c, err := NewCore(CoreConfig{Store: store, Secrets: ss, HTTPClient: &http.Client{Transport: transport}, Clock: func() time.Time { return observedAt }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1764,6 +1765,9 @@ func TestPRHeadFileMappingUsesManifestFromThatCommit(t *testing.T) {
 	if calls != 2 || len(d.Links) != 3 || d.Links[2].Relation != "maps_to_component" || d.Links[2].SourceID != fileID || d.Links[2].TargetID == "cmp-current" || d.Coverage[0].Status != "complete" {
 		t.Fatalf("mapeamento temporal=%+v calls=%d", d, calls)
 	}
+	if len(d.Evidence) != 1 || d.Evidence[0].SourceUpdatedAt != "" || d.Links[2].ValidFrom != d.Evidence[0].ObservedAt {
+		t.Fatalf("vínculo recebeu data inferida do PR: link=%+v evidências=%+v", d.Links[2], d.Evidence)
+	}
 	linked := false
 	for _, component := range d.Components {
 		if component.ID == d.Links[2].TargetID && component.Path == "services/api/go.mod" {
@@ -1773,8 +1777,12 @@ func TestPRHeadFileMappingUsesManifestFromThatCommit(t *testing.T) {
 	if !linked {
 		t.Fatalf("manifesto do head não encontrado: %+v", d.Components)
 	}
+	observedAt = observedAt.Add(24 * time.Hour)
 	if err := c.mapPRHeadFiles(context.Background(), plan, r, &d, &run); err != nil || calls != 2 || len(d.Links) != 3 {
 		t.Fatalf("cache da árvore não reutilizado: calls=%d links=%+v err=%v", calls, d.Links, err)
+	}
+	if d.Links[2].ValidFrom != d.Evidence[0].ObservedAt || d.Links[2].ValidFrom != "2026-01-20T00:00:00Z" {
+		t.Fatalf("refresh mudou início da observação do vínculo: %+v", d.Links[2])
 	}
 	oldOnly := query.Dataset{PullRequests: d.PullRequests, Components: []contract.ComponentRecord{{ID: oldFileID, Repository: r.Name, Path: "services/api/old.go", Kind: "file_change"}}, Links: []contract.LinkRecord{{ID: "old-file-link", SourceID: "pr-7", Relation: "modifies_file", TargetID: oldFileID}}}
 	if err := c.mapPRHeadFiles(context.Background(), plan, r, &oldOnly, &run); err != nil || len(oldOnly.Links) != 1 || oldOnly.Coverage[0].Status != "partial" {
