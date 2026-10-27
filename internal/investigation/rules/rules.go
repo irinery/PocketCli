@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.12.0"
+const Version = "1.13.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -47,12 +47,8 @@ func Evaluate(d query.Dataset) query.Dataset {
 	for _, p := range d.PullRequests {
 		prByID[p.ID] = p
 	}
-	completeLinks := false
 	completeRuntime := false
 	for _, c := range d.Coverage {
-		if c.Collection == "links" && c.Status == "complete" {
-			completeLinks = true
-		}
 		if c.Collection == "import" && c.Source == "runtime" && c.Status == "complete" {
 			completeRuntime = true
 		}
@@ -77,21 +73,19 @@ func Evaluate(d query.Dataset) query.Dataset {
 		}
 		d.Findings = append(d.Findings, finding("R-OUTCOME-001", "info", issue.ID, title, body, "direct", []string{issue.EvidenceID}, "Classificação da representação atual; não determina quando ou por que essa decisão ocorreu."))
 	}
-	if completeLinks {
-		for _, i := range d.Issues {
-			if i.IsContext || i.EvidenceID == "" {
-				continue
+	for _, i := range d.Issues {
+		if i.IsContext || i.EvidenceID == "" || !completePRLinkCoverage(i, d) {
+			continue
+		}
+		linked := false
+		for _, l := range d.Links {
+			if l.SourceID == i.ID && l.Relation == "references_pr" && l.Status == "direct" {
+				linked = true
+				break
 			}
-			linked := false
-			for _, l := range d.Links {
-				if l.SourceID == i.ID && l.Relation == "references_pr" && l.Status == "direct" {
-					linked = true
-					break
-				}
-			}
-			if !linked {
-				d.Findings = append(d.Findings, finding("R-LINK-001", "medium", i.ID, "Sem vínculo explícito localizado", "Não foi localizado vínculo explícito com PR no conjunto coletado; isso não demonstra ausência de implementação.", "direct", []string{i.EvidenceID}, "Conclusão limitada ao escopo coletado."))
-			}
+		}
+		if !linked {
+			d.Findings = append(d.Findings, finding("R-LINK-001", "medium", i.ID, "Sem vínculo explícito localizado", "Não foi localizado vínculo explícito com PR no conjunto coletado; isso não demonstra ausência de implementação.", "direct", []string{i.EvidenceID}, "Conclusão limitada ao escopo coletado."))
 		}
 	}
 	for _, p := range d.PullRequests {
@@ -331,6 +325,49 @@ func revertLinkCoverage(existing []contract.Coverage, events []query.Event, comm
 		out = append(out, contract.Coverage{Source: "analysis", ResourceID: id, Collection: "revert_links", Status: "partial", Observed: resolved[id], Reason: fmt.Sprintf("%d declarações de revert sem os dois commits observados no período", unresolved[id]), CheckedAt: checkedAt})
 	}
 	return out
+}
+
+func completePRLinkCoverage(issue query.Issue, d query.Dataset) bool {
+	if issue.Source == "github" {
+		repository, _, ok := strings.Cut(issue.Identifier, "#")
+		if !ok || repository == "" {
+			return false
+		}
+		resourceID := ""
+		for _, resource := range d.Snapshot.Resources {
+			if resource.Source == "github" && strings.EqualFold(resource.Name, repository) {
+				resourceID = resource.ID
+				break
+			}
+		}
+		if resourceID == "" {
+			return false
+		}
+		complete := map[string]bool{"issues": false, "pull_requests": false, "formal_links": false}
+		for _, item := range d.Coverage {
+			if item.Source == "github" && item.ResourceID == resourceID {
+				if _, required := complete[item.Collection]; required {
+					if item.Status != "complete" {
+						return false
+					}
+					complete[item.Collection] = true
+				}
+			}
+		}
+		return complete["issues"] && complete["pull_requests"] && complete["formal_links"]
+	}
+	for _, item := range d.Coverage {
+		if item.Collection != "links" || item.Status != "complete" {
+			continue
+		}
+		if issue.Source == "" && item.Source == "analysis" {
+			return true // Contract fixtures without a source use aggregate coverage.
+		}
+		if issue.Source != "" && issue.TeamID != "" && item.Source == issue.Source && item.ResourceID == issue.TeamID {
+			return true
+		}
+	}
+	return false
 }
 
 func finding(rule, severity, subject, title, body, status string, evidence []string, limitations string) contract.Finding {
