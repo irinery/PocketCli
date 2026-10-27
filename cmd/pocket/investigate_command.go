@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -87,7 +88,7 @@ func newInvestigateCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return waitInvestigation(cmd, c, run)
+		return waitInvestigation(cmd, c, run, f.json)
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "resume RUN_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		store := secrets.NewSessionStore()
@@ -113,7 +114,7 @@ func newInvestigateCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return waitInvestigation(cmd, c, run)
+		return waitInvestigation(cmd, c, run, false)
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "refresh INVESTIGATION_ID", Args: cobra.MinimumNArgs(1), RunE: runRefresh})
 	cmd.AddCommand(&cobra.Command{Use: "import-runtime INVESTIGATION_ID FILE", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -285,11 +286,11 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if f.json {
-		if err := printInvestigationOverrides(os.Stderr, overrides); err != nil {
+		if err := writeInvestigationOverridesJSON(os.Stderr, overrides); err != nil {
 			return err
 		}
-		if err := writeJSON(cmd.OutOrStdout(), plan); err != nil {
-			return err
+		if f.prepare {
+			return writeJSON(cmd.OutOrStdout(), plan)
 		}
 	} else {
 		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
@@ -323,7 +324,17 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return waitInvestigation(cmd, c, run)
+	return waitInvestigation(cmd, c, run, f.json)
+}
+
+func writeInvestigationOverridesJSON(out io.Writer, changes []string) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	return json.NewEncoder(out).Encode(struct {
+		Type    string   `json:"type"`
+		Changes []string `json:"changes"`
+	}{Type: "overrides", Changes: changes})
 }
 
 func runRefresh(cmd *cobra.Command, args []string) error {
@@ -354,7 +365,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	input := previous.Input
-	input, _, err = applyInvestigationFlags(input, f)
+	input, overrides, err := applyInvestigationFlags(input, f)
 	if err != nil {
 		return err
 	}
@@ -368,10 +379,16 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if f.json {
-		if err := writeJSON(cmd.OutOrStdout(), plan); err != nil {
+		if err := writeInvestigationOverridesJSON(os.Stderr, overrides); err != nil {
 			return err
 		}
+		if f.prepare {
+			return writeJSON(cmd.OutOrStdout(), plan)
+		}
 	} else {
+		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
+			return err
+		}
 		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano atualizado"); err != nil {
 			return err
 		}
@@ -397,7 +414,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return waitInvestigation(cmd, c, run)
+	return waitInvestigation(cmd, c, run, f.json)
 }
 
 func scopeFilename(name string) string {
@@ -494,9 +511,15 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 	}
 	return nil
 }
-func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run) error {
+func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonMode bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	finish := func(completed contract.Run) error {
+		if jsonMode {
+			return writeJSON(cmd.OutOrStdout(), completed)
+		}
+		return nil
+	}
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	last := ""
@@ -509,7 +532,7 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run) error
 				if readErr == nil {
 					switch current.State {
 					case "completed", "completed_partial":
-						return nil
+						return finish(current)
 					case "report_failed":
 						return fmt.Errorf("ERR_PDF_FAILED: snapshot %s pronto, PDF pendente", current.SnapshotID)
 					}
@@ -533,12 +556,21 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run) error
 				return err
 			}
 			if run.State != last {
-				fmt.Fprintf(cmd.OutOrStdout(), "run=%s state=%s snapshot=%s\n", run.ID, run.State, run.SnapshotID)
+				if jsonMode {
+					if err := json.NewEncoder(os.Stderr).Encode(struct {
+						Type string       `json:"type"`
+						Run  contract.Run `json:"run"`
+					}{Type: "progress", Run: run}); err != nil {
+						return err
+					}
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "run=%s state=%s snapshot=%s\n", run.ID, run.State, run.SnapshotID)
+				}
 				last = run.State
 			}
 			switch run.State {
 			case "completed", "completed_partial":
-				return nil
+				return finish(run)
 			case "report_failed":
 				return fmt.Errorf("ERR_PDF_FAILED: snapshot %s pronto, PDF pendente", run.SnapshotID)
 			case "failed", "cancelled", "paused":

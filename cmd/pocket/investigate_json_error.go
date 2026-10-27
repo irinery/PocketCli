@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -38,7 +39,7 @@ func writeInvestigationJSONError(out io.Writer, err error) error {
 		response.Code = "ERR_VALIDATION"
 		response.Message = "parâmetros inválidos"
 	}
-	return writeJSON(out, response)
+	return json.NewEncoder(out).Encode(response)
 }
 
 func validInvestigationErrorCode(code string) bool {
