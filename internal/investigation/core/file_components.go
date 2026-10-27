@@ -49,6 +49,7 @@ func (c *Core) mapCurrentRefFiles(ctx context.Context, plan contract.Plan, r con
 	}
 	links := append([]contract.LinkRecord(nil), d.Links...)
 	var mapped int64
+	var candidates int64
 	for _, pr := range d.PullRequests {
 		if pr.Repository != r.Name || pr.HeadSHA == "" || pr.HeadSHA != journal.Observation.NewOID {
 			continue
@@ -57,6 +58,7 @@ func (c *Core) mapCurrentRefFiles(ctx context.Context, plan contract.Plan, r con
 			if fileLink.SourceID != pr.ID || fileLink.Relation != "modifies_file" {
 				continue
 			}
+			candidates++
 			file, ok := files[fileLink.TargetID]
 			if !ok || file.ID != prFileComponentID(r.ID, pr.HeadSHA, file.Path) {
 				continue
@@ -107,6 +109,10 @@ func (c *Core) mapCurrentRefFiles(ctx context.Context, plan contract.Plan, r con
 			mapped++
 		}
 	}
-	d.Coverage = append(d.Coverage, c.coverage(resource, "file_components", "partial", mapped, "mapeamento direto só quando PR head coincide com ref observada e há um manifesto de diretório inequívoco"))
+	status, reason := "complete", "arquivos dos PRs na ref atual mapeados em manifestos inequívocos"
+	if mapped != candidates {
+		status, reason = "partial", "um ou mais arquivos dos PRs na ref atual não possuem manifesto de diretório inequívoco"
+	}
+	d.Coverage = append(d.Coverage, c.coverage(resource, "file_components", status, mapped, reason))
 	return nil
 }

@@ -1323,16 +1323,16 @@ func TestFileMapsToComponentOnlyAtExactObservedVersion(t *testing.T) {
 	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Links) != 2 || d.Links[1].Relation != "maps_to_component" || d.Links[1].TargetID != "cmp-api" || d.Links[1].Status != "direct" || len(d.Evidence) != 1 || d.Coverage[0].Status != "partial" {
+	if len(d.Links) != 2 || d.Links[1].Relation != "maps_to_component" || d.Links[1].TargetID != "cmp-api" || d.Links[1].Status != "direct" || len(d.Evidence) != 1 || d.Coverage[0].Status != "complete" {
 		t.Fatalf("mapeamento exato=%+v", d)
 	}
 	other := makeDataset(strings.Repeat("b", 40))
-	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &other); err != nil || len(other.Links) != 1 {
+	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &other); err != nil || len(other.Links) != 1 || other.Coverage[0].Status != "complete" {
 		t.Fatalf("versão diferente mapeada: %+v %v", other, err)
 	}
 	ambiguous := makeDataset(oid)
 	ambiguous.Components = append(ambiguous.Components, contract.ComponentRecord{ID: "cmp-api-container", Repository: r.Name, Path: "services/api/Dockerfile", Kind: "container"})
-	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &ambiguous); err != nil || len(ambiguous.Links) != 1 {
+	if err := c.mapCurrentRefFiles(context.Background(), plan, r, &ambiguous); err != nil || len(ambiguous.Links) != 1 || ambiguous.Coverage[0].Status != "partial" {
 		t.Fatalf("manifestos ambíguos mapeados: %+v %v", ambiguous, err)
 	}
 	forcePushed := makeDataset(oid)
