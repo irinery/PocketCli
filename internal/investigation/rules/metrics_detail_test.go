@@ -102,8 +102,16 @@ func TestUnclassifiedGitHubClosureCannotAnchorThirtyDayRework(t *testing.T) {
 	for _, metric := range out.Metrics {
 		values[metric.ID] = metric.Value.Value
 	}
-	if values["metric-rework-30d-observed"] != "0" || values["metric-rework-no-prior-completion"] != "1" || values["metric-declared-correction-30d-observed"] != "0" || values["metric-declared-correction-no-prior-completion"] != "1" {
+	if values["metric-rework-30d-observed"] != "0" || values["metric-rework-no-prior-completion"] != "0" || values["metric-declared-correction-30d-observed"] != "0" || values["metric-declared-correction-no-prior-completion"] != "1" {
 		t.Fatalf("unclassified closure was treated as delivery: %+v", values)
+	}
+	if out.Issues[0].ReopenCount != 0 {
+		t.Fatalf("fechamento não concluído virou reabertura de entrega: %+v", out.Issues[0])
+	}
+	for _, finding := range out.Findings {
+		if finding.RuleID == "R-REOPEN-001" {
+			t.Fatalf("fechamento não concluído gerou achado de reabertura: %+v", finding)
+		}
 	}
 }
 
