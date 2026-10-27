@@ -16,6 +16,7 @@ const Version = "1.0.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
+	d.Issues = fillEstimateBeforeStart(d)
 	d.Stages = append([]contract.StageRecord{}, d.Stages...)
 	d.Rework = append([]contract.ReworkRecord{}, d.Rework...)
 	issueByID := make(map[string]query.Issue)
@@ -41,6 +42,9 @@ func Evaluate(d query.Dataset) query.Dataset {
 	}
 	if completeLinks {
 		for _, i := range d.Issues {
+			if i.IsContext || i.EvidenceID == "" {
+				continue
+			}
 			linked := false
 			for _, l := range d.Links {
 				if l.SourceID == i.ID && l.Relation == "references_pr" && l.Status == "direct" {
@@ -146,14 +150,14 @@ func isOpen(s string) bool {
 func metrics(d query.Dataset) []contract.Metric {
 	completed := int64(0)
 	for _, i := range d.Issues {
-		if i.CompletedAt != "" && !i.IsContext {
+		if !i.IsContext && observedInWindow(i.CompletedAt, d.Snapshot) {
 			completed++
 		}
 	}
-	out := []contract.Metric{{ID: "metric-completed", Name: "Entregas registradas", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(completed, 10)}, Unit: "items", SampleSize: completed, Definition: "Issues com completed_at e is_context=0", Limitations: []string{"Não é score de produtividade; depende da cobertura."}}}
+	out := []contract.Metric{{ID: "metric-completed", Name: "Entregas registradas", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(completed, 10)}, Unit: "items", SampleSize: completed, Definition: "Issues não contextuais com completed_at na janela selecionada", Limitations: []string{"Não é score de produtividade; depende da cobertura."}}}
 	waits := make([]int64, 0)
 	for _, p := range d.PullRequests {
-		if p.ReviewWaitSeconds != nil {
+		if p.ReviewWaitSeconds != nil && *p.ReviewWaitSeconds >= 0 && p.ReadyAt != "" && observedInWindow(p.FirstHumanReviewAt, d.Snapshot) {
 			waits = append(waits, *p.ReviewWaitSeconds)
 		}
 	}
@@ -171,5 +175,9 @@ func metrics(d query.Dataset) []contract.Metric {
 		}
 		out = append(out, contract.Metric{ID: "metric-review-median", Name: "Espera mediana por revisão", Value: contract.Cell{Kind: "real", Value: strconv.FormatFloat(median, 'f', -1, 64)}, Unit: "seconds", SampleSize: int64(n), Definition: "Mediana convencional de ready_at até primeira revisão humana", Limitations: limitations}, contract.Metric{ID: "metric-review-p85", Name: "Espera p85 por revisão", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(p85, 10)}, Unit: "seconds", SampleSize: int64(n), Definition: "Nearest rank ceil(0.85*n)", Limitations: limitations})
 	}
+	out = append(out, actorMetrics(d)...)
+	out = append(out, estimateMetrics(d)...)
+	out = append(out, reworkMetrics(d)...)
+	out = append(out, openAgingMetrics(d)...)
 	return out
 }

@@ -35,7 +35,7 @@ type linearJournal struct {
 }
 
 func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *contract.Run) (query.Dataset, error) {
-	d := query.Dataset{Components: []contract.ComponentRecord{}, Findings: []contract.Finding{}, Evidence: []contract.Evidence{}, Coverage: []contract.Coverage{}, Issues: []query.Issue{}, PullRequests: []query.PullRequest{}, Links: []contract.LinkRecord{}}
+	d := query.Dataset{Snapshot: contract.Snapshot{WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, AnalysisReferenceAt: plan.WindowEnd}, Components: []contract.ComponentRecord{}, Findings: []contract.Finding{}, Evidence: []contract.Evidence{}, Coverage: []contract.Coverage{}, Issues: []query.Issue{}, PullRequests: []query.PullRequest{}, Links: []contract.LinkRecord{}}
 	var previous contract.Snapshot
 	snapshots, err := c.ListSnapshots(ctx, plan.InvestigationID)
 	if err != nil {

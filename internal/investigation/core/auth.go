@@ -4,13 +4,15 @@ import (
 	"context"
 	"os"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/storage"
 )
 
 type planAuth struct {
-	GitHub string `json:"github,omitempty"`
-	Linear string `json:"linear,omitempty"`
+	GitHub           string `json:"github,omitempty"`
+	Linear           string `json:"linear,omitempty"`
+	GitHubAPIVersion string `json:"github_api_version,omitempty"`
 }
 
 func (c *Core) currentAuth(ctx context.Context, input contract.PlanInput) (planAuth, error) {
@@ -35,6 +37,9 @@ func (c *Core) currentAuth(ctx context.Context, input contract.PlanInput) (planA
 			return planAuth{}, err
 		}
 	}
+	if input.GitHubEnabled {
+		out.GitHubAPIVersion = collect.GitHubAPIVersion()
+	}
 	return out, nil
 }
 
@@ -48,7 +53,7 @@ func (c *Core) checkPlanAuth(ctx context.Context, plan contract.Plan) error {
 		return err
 	}
 	if current != saved {
-		return fault("ERR_PLAN_CHANGED", "credencial diferente da aprovada no plano")
+		return fault("ERR_PLAN_CHANGED", "credencial ou versão da fonte diferente da aprovada no plano")
 	}
 	return nil
 }
