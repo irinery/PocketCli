@@ -23,6 +23,16 @@ var (
 func main() {
 	root := newRootCommand()
 	if err := root.Execute(); err != nil {
+		if investigationJSONRequested(os.Args[1:]) {
+			if writeErr := writeInvestigationJSONError(os.Stderr, err); writeErr == nil {
+				os.Exit(1)
+			}
+		}
+		if len(os.Args) > 1 && os.Args[1] == "investigate" {
+			p := newPalette(os.Stderr)
+			fmt.Fprintln(os.Stderr, p.red("✗")+" "+err.Error())
+			os.Exit(1)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -59,6 +69,7 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(newConnectCommand())
 	rootCmd.AddCommand(newConnectPaneCommand())
 	rootCmd.AddCommand(newExecCommand())
+	rootCmd.AddCommand(newInvestigateCommand())
 
 	return rootCmd
 }

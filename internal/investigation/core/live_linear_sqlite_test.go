@@ -1,0 +1,200 @@
+//go:build investigate_sqlite && cgo
+
+package core
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"pocketcli/internal/investigation/contract"
+	"pocketcli/internal/investigation/report"
+	"pocketcli/internal/investigation/secrets"
+	"pocketcli/internal/investigation/storage"
+)
+
+// Opt-in smoke: one explicitly selected Linear team, read-only and bounded.
+// No personal credential or organization data is used by regular test runs.
+func TestRealLinearToSnapshot(t *testing.T) {
+	team := os.Getenv("POCKETCLI_INVESTIGATE_REAL_LINEAR_TEAM")
+	if team == "" {
+		t.Skip("configure POCKETCLI_INVESTIGATE_REAL_LINEAR_TEAM para smoke real")
+	}
+	key := os.Getenv("POCKETCLI_INVESTIGATE_LINEAR_KEY")
+	if key == "" {
+		t.Fatal("POCKETCLI_INVESTIGATE_LINEAR_KEY ausente")
+	}
+	// 180 requests/h fits only about 12 paced requests in the four-minute
+	// session; a team with more activity may raise it within its Linear quota.
+	rph := 180
+	if value := os.Getenv("POCKETCLI_INVESTIGATE_REAL_LINEAR_RPH"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			t.Fatalf("POCKETCLI_INVESTIGATE_REAL_LINEAR_RPH inválido: %q", value)
+		}
+		rph = parsed
+	}
+	// A run paused by a retryable error resumes from its journals; each extra
+	// session gets another four minutes.
+	sessions := 1
+	if value := os.Getenv("POCKETCLI_INVESTIGATE_REAL_LINEAR_SESSIONS"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			t.Fatalf("POCKETCLI_INVESTIGATE_REAL_LINEAR_SESSIONS inválido: %q", value)
+		}
+		sessions = parsed
+	}
+	// Custom periods are whole days. To observe only the last N hours, use a
+	// single day in the UTC offset whose local midnight was N hours ago.
+	period := contract.Period{Preset: "custom", Timezone: "UTC"}
+	if value := os.Getenv("POCKETCLI_INVESTIGATE_REAL_LINEAR_HOURS"); value != "" {
+		hours, err := strconv.Atoi(value)
+		if err != nil || hours < 1 || hours > 24 {
+			t.Fatalf("POCKETCLI_INVESTIGATE_REAL_LINEAR_HOURS fora de 1..24: %q", value)
+		}
+		offset := hours - time.Now().UTC().Hour()
+		if offset > 14 {
+			offset -= 24
+		} else if offset < -12 {
+			offset += 24
+		}
+		period.Timezone = "UTC"
+		if offset != 0 {
+			// IANA Etc/GMT names invert the sign: Etc/GMT-3 is UTC+3.
+			period.Timezone = fmt.Sprintf("Etc/GMT%+d", -offset)
+		}
+		loc, err := time.LoadLocation(period.Timezone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		today := time.Now().In(loc).Format("2006-01-02")
+		period.FromDate, period.ToDate = today, today
+	} else {
+		now := time.Now().UTC()
+		period.FromDate, period.ToDate = now.AddDate(0, 0, -1).Format("2006-01-02"), now.Format("2006-01-02")
+	}
+	secretStore := secrets.NewSessionStore()
+	defer secretStore.Delete(context.Background(), "linear")
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: key, Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secretStore})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdf, err := report.New(c, filepath.Join(store.Root, "reports"), false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetFinalizer(pdf)
+	plan, err := c.PreparePlan(context.Background(), contract.PlanInput{
+		SchemaVersion: contract.Version,
+		Name:          "read-only Linear smoke",
+		LinearEnabled: true,
+		Scope:         &contract.Scope{Mode: "selected", Teams: []string{team}},
+		Period:        period,
+		Limits: contract.Limits{
+			LinearRPH: rph, MaxSessionMS: 240000,
+			MaxTransferBytes: 16 << 20, MaxLocalBytes: 64 << 20,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("janela do plano: %s — %s (%s)", plan.WindowStart, plan.WindowEnd, period.Timezone)
+	if len(plan.Resources) != 1 || plan.Resources[0].Source != "linear" {
+		t.Fatalf("escopo Linear inesperado: %d recursos", len(plan.Resources))
+	}
+	run, err := c.StartRun(context.Background(), contract.RunRequest{
+		PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "linear-live-one-team",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := 0
+	logged := -1
+	deadline := time.Now().Add(250 * time.Second)
+	for time.Now().Before(deadline) {
+		run, err = c.GetRun(context.Background(), run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if step := run.Progress / 10 * 10; step > logged {
+			t.Logf("progresso %3d%% · %s · %d requests", run.Progress, run.Stage, run.Requests)
+			logged = step
+		}
+		switch run.State {
+		case "completed", "completed_partial":
+			goto published
+		case "paused":
+			if run.LastError != nil && run.LastError.Retryable && resumed+1 < sessions {
+				resumed++
+				t.Logf("sessão %d pausada (requests=%d erro=%s); retomando", resumed, run.Requests, run.LastError.Code)
+				if run, err = c.ResumeRun(context.Background(), run.ID); err != nil {
+					t.Fatal(err)
+				}
+				deadline = time.Now().Add(250 * time.Second)
+				continue
+			}
+			t.Fatalf("run Linear não concluiu: estado=%s sessões=%d requests=%d erro=%+v", run.State, resumed+1, run.Requests, run.LastError)
+		case "failed", "report_failed", "cancelled":
+			t.Fatalf("run Linear não concluiu: estado=%s requests=%d erro=%+v", run.State, run.Requests, run.LastError)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	_, _ = c.CancelRun(context.Background(), run.ID)
+	t.Fatal("sessão do run Linear excedeu 250 segundos")
+
+published:
+	if run.SnapshotID == "" {
+		t.Fatal("snapshot Linear ausente")
+	}
+	d, err := c.dataset(run.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasIssues := false
+	for _, coverage := range d.Coverage {
+		if coverage.Source == "linear" && coverage.ResourceID == plan.Resources[0].ID &&
+			coverage.Collection == "issues" && coverage.Status != "unsupported" && coverage.Status != "unauthorized" && coverage.Status != "unavailable" {
+			hasIssues = true
+		}
+	}
+	if !hasIssues {
+		t.Fatalf("issues Linear não foram observadas: %d entradas de cobertura", len(d.Coverage))
+	}
+	result, err := c.Query(context.Background(), contract.QueryRequest{
+		SnapshotID: run.SnapshotID,
+		SQL:        "SELECT COUNT(*) FROM v_issues WHERE source = 'linear'",
+		MaxRows:    10,
+	})
+	if err != nil || len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0].Kind != "integer" {
+		t.Fatalf("SQL Linear falhou: rows=%d err=%v", len(result.Rows), err)
+	}
+	if pdf != nil {
+		artifacts := pdf.List(run.SnapshotID)
+		if len(artifacts) != 1 || artifacts[0].PageCount < 1 {
+			t.Fatalf("PDF Linear ausente ou vazio: %d artefatos", len(artifacts))
+		}
+		file, err := pdf.Open(artifacts[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var signature [5]byte
+		_, readErr := io.ReadFull(file, signature[:])
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || string(signature[:]) != "%PDF-" {
+			t.Fatalf("assinatura do PDF Linear inválida: read=%v close=%v", readErr, closeErr)
+		}
+	}
+	t.Logf("smoke Linear: sessões=%d requests=%d bytes=%d issues=%s cobertura=%s PDF real=%t", resumed+1, run.Requests, run.Bytes, result.Rows[0][0].Value, run.Coverage, pdf != nil)
+}

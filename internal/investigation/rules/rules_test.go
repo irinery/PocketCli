@@ -1,0 +1,446 @@
+package rules
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+
+	"pocketcli/internal/investigation/contract"
+	"pocketcli/internal/investigation/query"
+)
+
+func TestDeterministicRulesAndUnknownCause(t *testing.T) {
+	before, after := 3.0, 5.0
+	wait := int64(172800)
+	d := query.Dataset{
+		Issues:       []query.Issue{{ID: "iss-1", Identifier: "UNI-1", Source: "linear", TeamID: "team", State: "done", CompletedAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-1"}, {ID: "iss-3", Identifier: "UNI-3", Source: "linear", TeamID: "team", State: "open", EvidenceID: "ev-3"}},
+		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, MergedAt: "2026-01-04T01:00:00Z", EvidenceID: "ev-4", MergeSHA: "new-sha"}},
+		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
+		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-ancestry", SourceID: "art-1", TargetID: "pr-10", Relation: "merge_commit_not_ancestor", Status: "direct", EvidenceID: "ev-9"}},
+		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
+		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-6"}},
+		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ObservedAt: "2026-01-30T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
+	}
+	a := Evaluate(d)
+	b := Evaluate(d)
+	if !reflect.DeepEqual(a.Findings, b.Findings) || !reflect.DeepEqual(a.Metrics, b.Metrics) {
+		t.Fatal("rules are not reproducible")
+	}
+	want := map[string]bool{"R-LINK-001": false, "R-FLOW-001": false, "R-REOPEN-001": false, "R-EST-001": false, "R-DELIVERY-001": false}
+	for _, f := range a.Findings {
+		if _, ok := want[f.RuleID]; ok {
+			want[f.RuleID] = true
+		}
+		if f.RuleID == "R-DELIVERY-001" && !reflect.DeepEqual(f.EvidenceIDs, []string{"ev-4", "ev-8", "ev-9"}) {
+			t.Fatalf("delivery evidence incomplete: %+v", f.EvidenceIDs)
+		}
+		if f.RuleID == "R-FLOW-001" && (len(f.EvidenceIDs) != 2 || f.EvidenceIDs[0] != "ev-ready" || f.EvidenceIDs[1] != "ev-review") {
+			t.Fatalf("review wait evidence incomplete: %+v", f.EvidenceIDs)
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Fatalf("rule %s missing", id)
+		}
+	}
+	if len(a.Rework) != 2 {
+		t.Fatalf("expected reopening and declared correction: %+v", a.Rework)
+	}
+	for _, record := range a.Rework {
+		if record.CauseStatus != "undetermined" {
+			t.Fatal("rework invented a cause")
+		}
+	}
+	if a.Metrics[0].Value.Value != "1" {
+		t.Fatal("completed metric incorrect")
+	}
+}
+
+func TestDisableFindingUsesLatestUnambiguousObservationInWindow(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Coverage: []contract.Coverage{{Source: "runtime", ResourceID: "import-1", Collection: "import", Status: "complete"}},
+		Events: []query.Event{
+			{ID: "a-old", EntityID: "a", Type: "disabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "production", EvidenceID: "ev-a-old"},
+			{ID: "a-new", EntityID: "a", Type: "enabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-a-new"},
+			{ID: "b-old", EntityID: "b", Type: "enabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "production", EvidenceID: "ev-b-old"},
+			{ID: "b-new", EntityID: "b", Type: "disabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-b-new"},
+			{ID: "c-one", EntityID: "c", Type: "disabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production", EvidenceID: "ev-c-one"},
+			{ID: "c-two", EntityID: "c", Type: "enabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production", EvidenceID: "ev-c-two"},
+			{ID: "d-future", EntityID: "d", Type: "disabled", EventAt: "2026-02-02T00:00:00Z", NewValue: "production", EvidenceID: "ev-d"},
+			{ID: "e-no-proof", EntityID: "e", Type: "disabled", EventAt: "2026-01-06T00:00:00Z", NewValue: "production"},
+			{ID: "f-staging", EntityID: "f", Type: "disabled", EventAt: "2026-01-04T00:00:00Z", NewValue: "staging", EvidenceID: "ev-f-staging"},
+			{ID: "f-production", EntityID: "f", Type: "enabled", EventAt: "2026-01-05T00:00:00Z", NewValue: "production", EvidenceID: "ev-f-production"},
+		},
+	}
+	want := map[string]string{"b": "ev-b-new", "f": "ev-f-staging"}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID != "R-DISABLE-001" {
+			continue
+		}
+		if want[finding.SubjectID] == "" || len(finding.EvidenceIDs) != 1 || finding.EvidenceIDs[0] != want[finding.SubjectID] {
+			t.Fatalf("desativação sem estado atual comprovado: %+v", finding)
+		}
+		delete(want, finding.SubjectID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("desativações atuais não publicadas: %+v", want)
+	}
+}
+
+func TestMentionDoesNotBecomeConfirmedPRLinkForMissingLinkRule(t *testing.T) {
+	d := query.Dataset{
+		Issues:   []query.Issue{{ID: "issue-1", EvidenceID: "ev-issue", State: "open"}},
+		Links:    []contract.LinkRecord{{ID: "mention", SourceID: "issue-1", TargetID: "pr-1", Relation: "mentions", Status: "direct", EvidenceID: "ev-mention"}},
+		Coverage: []contract.Coverage{{Source: "analysis", Collection: "links", Status: "complete"}},
+	}
+	found := false
+	for _, finding := range Evaluate(d).Findings {
+		found = found || finding.RuleID == "R-LINK-001"
+	}
+	if !found {
+		t.Fatal("text mention was promoted to a confirmed PR relationship")
+	}
+	d.Links = append(d.Links, contract.LinkRecord{ID: "confirmed", SourceID: "issue-1", TargetID: "pr-1", Relation: "references_pr", Status: "direct", EvidenceID: "ev-confirmed"})
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("confirmed PR relation reported as missing: %+v", finding)
+		}
+	}
+}
+
+func TestMissingPRLinkRequiresCompleteCoverageOfIssuesOwnSourceAndRepository(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{Resources: []contract.Resource{{Source: "github", ID: "repo-a", Name: "acme/a"}, {Source: "github", ID: "repo-b", Name: "acme/b"}}},
+		Issues: []query.Issue{
+			{ID: "github-a", Identifier: "acme/a#1", Source: "github", EvidenceID: "ev-a"},
+			{ID: "github-b", Identifier: "acme/b#2", Source: "github", EvidenceID: "ev-b"},
+			{ID: "linear-c", Identifier: "OPS-3", Source: "linear", TeamID: "team-c", EvidenceID: "ev-c"},
+		},
+		Coverage: []contract.Coverage{
+			{Source: "github", ResourceID: "repo-a", Collection: "issues", Status: "complete"},
+			{Source: "github", ResourceID: "repo-a", Collection: "pull_requests", Status: "complete"},
+			{Source: "github", ResourceID: "repo-a", Collection: "formal_links", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "issues", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "pull_requests", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "formal_links", Status: "partial"},
+			{Source: "linear", ResourceID: "team-c", Collection: "issues", Status: "complete"},
+			{Source: "analysis", Collection: "links", Status: "partial"},
+		},
+	}
+	want := map[string]bool{"github-a": true}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			if !want[finding.SubjectID] {
+				t.Fatalf("lacuna de outra fonte/repo gerou ausência falsa: %+v", finding)
+			}
+			delete(want, finding.SubjectID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("repo completo perdeu achado elegível: %+v", want)
+	}
+	d.Coverage = append(d.Coverage, contract.Coverage{Source: "github", ResourceID: "repo-a", Collection: "formal_links", Status: "partial"})
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("coberturas conflitantes geraram ausência falsa: %+v", finding)
+		}
+	}
+	d.Coverage = d.Coverage[:len(d.Coverage)-1]
+	d.Coverage[2].Status = "partial"
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("vínculo formal parcial gerou ausência falsa: %+v", finding)
+		}
+	}
+}
+
+func TestEventFindingsRequireEvidenceInsideConfirmedWindow(t *testing.T) {
+	before, after := 1.0, 2.0
+	wait := int64(6 * 24 * 60 * 60)
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-11T00:00:00Z"},
+		Events: []query.Event{
+			{ID: "old-reopen", EntityID: "old", Type: "reopened", EventAt: "2025-12-31T00:00:00Z", EvidenceID: "ev-old"},
+			{ID: "unproven-reopen", EntityID: "unproven", Type: "reopened", EventAt: "2026-01-03T00:00:00Z"},
+			{ID: "valid-reopen", EntityID: "valid", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-valid"},
+			{ID: "ready", EntityID: "pr-1", Type: "ready_for_review", EventAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-ready"},
+			{ID: "late-review", EntityID: "pr-1", Type: "human_reviewed", EventAt: "2026-01-11T00:00:00Z", EvidenceID: "ev-review"},
+		},
+		PullRequests: []query.PullRequest{{ID: "pr-1", ReadyAt: "2026-01-05T00:00:00Z", FirstHumanReviewAt: "2026-01-11T00:00:00Z", ReviewWaitSeconds: &wait}},
+		Estimates: []contract.EstimateRecord{
+			{ID: "old-estimate", IssueID: "old", Timing: "after_start", Before: &before, After: &after, EventAt: "2025-12-31T00:00:00Z", EvidenceID: "ev-old-estimate"},
+			{ID: "unproven-estimate", IssueID: "unproven", Timing: "after_start", Before: &before, After: &after, EventAt: "2026-01-04T00:00:00Z"},
+			{ID: "valid-estimate", IssueID: "valid", Timing: "after_start", Before: &before, After: &after, EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-estimate"},
+		},
+	}
+	want := map[string]string{"R-REOPEN-001": "valid", "R-EST-001": "valid"}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-FLOW-001" {
+			t.Fatalf("revisão na fronteira exclusiva gerou achado: %+v", finding)
+		}
+		if subject, relevant := want[finding.RuleID]; relevant {
+			if finding.SubjectID != subject {
+				t.Fatalf("evento fora da janela ou sem evidência gerou achado: %+v", finding)
+			}
+			delete(want, finding.RuleID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("eventos válidos não geraram achados: %+v", want)
+	}
+}
+
+func TestGitHubReopenNeedsCompletedClosureAndCompleteTimeline(t *testing.T) {
+	closeCompleted := query.Event{ID: "close", EntityID: "github-issue-8", Type: "state_changed", OldValue: "open", NewValue: "completed", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-close"}
+	reopened := query.Event{ID: "reopen", EntityID: "github-issue-8", Type: "reopened", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-reopen"}
+	resource := contract.Resource{Source: "github", ID: "repo-1", Name: "acme/api"}
+	base := query.Dataset{
+		Snapshot:     contract.Snapshot{Resources: []contract.Resource{resource}, WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:       []query.Issue{{ID: "github-issue-8", Source: "github", Identifier: "acme/api#8", EvidenceID: "ev-issue"}},
+		PullRequests: []query.PullRequest{{ID: "pr-fix", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr"}},
+		Links:        []contract.LinkRecord{{ID: "link-fix", SourceID: "pr-fix", TargetID: "github-issue-8", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-pr"}},
+		Coverage:     []contract.Coverage{{Source: "github", ResourceID: resource.ID, Collection: "timeline", Status: "complete"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		events    []query.Event
+		status    string
+		confirmed bool
+	}{
+		{"completed", []query.Event{closeCompleted, reopened}, "complete", true},
+		{"unclassified", []query.Event{{ID: "close", EntityID: reopened.EntityID, Type: "state_changed", OldValue: "open", NewValue: "closed_unclassified", EventAt: closeCompleted.EventAt, EvidenceID: "ev-close"}, reopened}, "complete", false},
+		{"missing closure", []query.Event{reopened}, "complete", false},
+		{"partial timeline", []query.Event{closeCompleted, reopened}, "partial", false},
+		{"same timestamp", []query.Event{closeCompleted, {ID: "reopen", EntityID: reopened.EntityID, Type: "reopened", EventAt: closeCompleted.EventAt, EvidenceID: "ev-reopen"}}, "complete", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base
+			d.Events = tc.events
+			d.Coverage = append([]contract.Coverage(nil), base.Coverage...)
+			d.Coverage[0].Status = tc.status
+			out := Evaluate(d)
+			found, correction := false, false
+			for _, finding := range out.Findings {
+				if finding.RuleID == "R-REOPEN-001" {
+					found = true
+					if tc.confirmed && !reflect.DeepEqual(finding.EvidenceIDs, []string{"ev-close", "ev-reopen"}) {
+						t.Fatalf("reabertura sem as duas evidências: %+v", finding)
+					}
+				}
+				correction = correction || finding.RuleID == "R-CORRECTION-001"
+			}
+			if found != tc.confirmed || correction != tc.confirmed || (out.Issues[0].ReopenCount == 1) != tc.confirmed {
+				t.Fatalf("reabertura ou correção indevida: found=%v correction=%v count=%d coverage=%+v", found, correction, out.Issues[0].ReopenCount, out.Coverage)
+			}
+		})
+	}
+}
+
+func TestDeliveryFindingRequiresCorrectionAndLaterArtifactObservation(t *testing.T) {
+	makeDataset := func() query.Dataset {
+		return query.Dataset{
+			Snapshot:     contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", AnalysisReferenceAt: "2026-01-10T00:00:00Z"},
+			Issues:       []query.Issue{{ID: "issue-1", Source: "github", State: "closed", EvidenceID: "ev-issue"}},
+			PullRequests: []query.PullRequest{{ID: "pr-1", MergeSHA: "merge-sha", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr"}},
+			Links:        []contract.LinkRecord{{ID: "modifies", SourceID: "pr-1", Relation: "modifies_component", TargetID: "cmp-1", Status: "direct", EvidenceID: "ev-file"}},
+			Deliveries:   []contract.DeliveryRecord{{ID: "artifact", ComponentID: "cmp-1", RevisionSHA: "other-sha", ObservedAt: "2026-01-06T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-artifact"}},
+		}
+	}
+	findDelivery := func(d query.Dataset) *contract.Finding {
+		for _, f := range Evaluate(d).Findings {
+			if f.RuleID == "R-DELIVERY-001" {
+				return &f
+			}
+		}
+		return nil
+	}
+	if got := findDelivery(makeDataset()); got != nil {
+		t.Fatalf("ordinary PR was called a correction: %+v", got)
+	}
+	linkedReopening := makeDataset()
+	linkedReopening.Links = append(linkedReopening.Links, contract.LinkRecord{ID: "reference", SourceID: "issue-1", Relation: "references_pr", TargetID: "pr-1", Status: "direct", EvidenceID: "ev-reference"})
+	linkedReopening.Events = append(linkedReopening.Events, query.Event{ID: "reopen", EntityID: "issue-1", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-reopen"})
+	if got := findDelivery(linkedReopening); got != nil {
+		t.Fatalf("issue reopening and PR reference were promoted to a correction: %+v", got)
+	}
+	withFix := makeDataset()
+	withFix.Links = append(withFix.Links, contract.LinkRecord{ID: "fix", SourceID: "pr-1", Relation: "declares_fix_of", TargetID: "issue-1", Status: "direct", EvidenceID: "ev-fix"})
+	if got := findDelivery(withFix); got != nil {
+		t.Fatalf("different SHA without Git ancestry proof became a finding: %+v", got)
+	}
+	proof := contract.LinkRecord{ID: "ancestry", SourceID: "artifact", Relation: "merge_commit_not_ancestor", TargetID: "pr-1", Status: "direct", EvidenceID: "ev-ancestry"}
+	withFix.Links = append(withFix.Links, proof)
+	got := findDelivery(withFix)
+	if got == nil || !reflect.DeepEqual(got.EvidenceIDs, []string{"ev-ancestry", "ev-artifact", "ev-file", "ev-fix", "ev-pr"}) {
+		t.Fatalf("explicit correction evidence missing: %+v", got)
+	}
+	beforeMerge := makeDataset()
+	beforeMerge.Links = append(beforeMerge.Links, withFix.Links[1:]...)
+	beforeMerge.Deliveries[0].ObservedAt = "2026-01-04T00:00:00Z"
+	if got := findDelivery(beforeMerge); got != nil {
+		t.Fatalf("older artifact was treated as post-correction: %+v", got)
+	}
+	sameRevision := makeDataset()
+	sameRevision.Links = append(sameRevision.Links, withFix.Links[1:]...)
+	sameRevision.Deliveries[0].RevisionSHA = "merge-sha"
+	if got := findDelivery(sameRevision); got != nil {
+		t.Fatalf("matching artifact was flagged: %+v", got)
+	}
+	sameRevision.Deliveries[0].RevisionSHA = "MERGE-SHA"
+	if got := findDelivery(sameRevision); got != nil {
+		t.Fatalf("matching artifact with uppercase SHA was flagged: %+v", got)
+	}
+	futureArtifact := makeDataset()
+	futureArtifact.Links = append(futureArtifact.Links, withFix.Links[1:]...)
+	futureArtifact.Deliveries[0].ObservedAt = "2026-01-11T00:00:00Z"
+	if got := findDelivery(futureArtifact); got != nil {
+		t.Fatalf("artifact outside the snapshot window was flagged: %+v", got)
+	}
+}
+
+func TestBlockFindingRequiresBothActiveStatesAndDirectEvidence(t *testing.T) {
+	base := query.Dataset{
+		Issues: []query.Issue{
+			{ID: "dependent", State: "unstarted", Outcome: "active", EvidenceID: "ev-dependent"},
+			{ID: "blocker", State: "started", Outcome: "active", EvidenceID: "ev-blocker"},
+		},
+		Links: []contract.LinkRecord{{ID: "link-block", SourceID: "dependent", Relation: "blocked_by", TargetID: "blocker", Status: "direct", EvidenceID: "ev-link"}},
+	}
+	blockFindings := func(d query.Dataset) []contract.Finding {
+		t.Helper()
+		var found []contract.Finding
+		for _, finding := range Evaluate(d).Findings {
+			if finding.RuleID == "R-BLOCK-001" {
+				found = append(found, finding)
+			}
+		}
+		return found
+	}
+	findings := blockFindings(base)
+	if len(findings) != 1 || !reflect.DeepEqual(findings[0].EvidenceIDs, []string{"ev-blocker", "ev-dependent", "ev-link"}) {
+		t.Fatalf("known active dependency lacks direct evidence: %+v", findings)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*query.Dataset)
+	}{
+		{"blocker unknown", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "", "unclassified" }},
+		{"dependent unknown", func(d *query.Dataset) { d.Issues[0].State, d.Issues[0].Outcome = "", "unclassified" }},
+		{"blocker finished", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "completed", "completed" }},
+		{"contradictory blocker state", func(d *query.Dataset) { d.Issues[1].State = "closed" }},
+		{"dependent finished", func(d *query.Dataset) { d.Issues[0].State, d.Issues[0].Outcome = "completed", "completed" }},
+		{"blocker cancelled", func(d *query.Dataset) { d.Issues[1].State, d.Issues[1].Outcome = "canceled", "cancelled" }},
+		{"missing state evidence", func(d *query.Dataset) { d.Issues[1].EvidenceID = "" }},
+		{"missing relation evidence", func(d *query.Dataset) { d.Links[0].EvidenceID = "" }},
+		{"inferred relation", func(d *query.Dataset) { d.Links[0].Status = "inferred" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base
+			d.Issues = append([]query.Issue(nil), base.Issues...)
+			d.Links = append([]contract.LinkRecord(nil), base.Links...)
+			tc.mutate(&d)
+			if got := blockFindings(d); len(got) != 0 {
+				t.Fatalf("unsupported blocker became pending: %+v", got)
+			}
+		})
+	}
+}
+
+func TestDeclaredGitRevertRequiresObservedTargetAndDoesNotClaimPatchEquivalence(t *testing.T) {
+	targetOID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	revertOID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	d := query.Dataset{
+		Events: []query.Event{
+			{ID: "commit-target", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: targetOID, EvidenceID: "ev-target"},
+			{ID: "commit-revert", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: revertOID, EvidenceID: "ev-revert"},
+			{ID: "declared", EntityID: "repo-1", Type: "commit_revert_declared", OldValue: targetOID, NewValue: revertOID, EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-declaration"},
+			{ID: "fix-text", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: "cccccccccccccccccccccccccccccccccccccccc", EvidenceID: "ev-fix"},
+		},
+	}
+	out := Evaluate(d)
+	if len(out.Rework) != 1 || out.Rework[0].Kind != "declared_reversal" || out.Rework[0].SubjectID != "commit-target" || out.Rework[0].CauseStatus != "undetermined" || out.Rework[0].EvidenceID != "ev-declaration" {
+		t.Fatalf("declaration was lost or unrelated commit became rework: %+v", out.Rework)
+	}
+	if len(out.Links) != 1 || out.Links[0].Relation != "declares_revert_of" || out.Links[0].SourceID != "commit-revert" || out.Links[0].TargetID != "commit-target" {
+		t.Fatalf("declared revert relation missing: %+v", out.Links)
+	}
+	metricFound := false
+	for _, metric := range out.Metrics {
+		if metric.ID == metricID("metric-rework", "declared_reversal") {
+			metricFound = true
+			if !strings.Contains(strings.Join(metric.Limitations, " "), "não foi demonstrada") {
+				t.Fatalf("revert metric claims patch equivalence: %+v", metric)
+			}
+		}
+	}
+	if !metricFound {
+		t.Fatal("declared reversal metric missing")
+	}
+	again := Evaluate(out)
+	if len(again.Rework) != 1 || len(again.Links) != 1 {
+		t.Fatalf("rules duplicated reversal on reevaluation: rework=%+v links=%+v", again.Rework, again.Links)
+	}
+	d.Events = d.Events[1:]
+	missing := Evaluate(d)
+	if len(missing.Rework) != 0 || len(missing.Links) != 0 {
+		t.Fatalf("reversal confirmed without observed target commit: rework=%+v links=%+v", missing.Rework, missing.Links)
+	}
+	if len(missing.Coverage) != 1 || missing.Coverage[0].Collection != "revert_links" || missing.Coverage[0].Status != "partial" {
+		t.Fatalf("unresolved revert did not mark analysis partial: %+v", missing.Coverage)
+	}
+}
+
+func TestDeclaredFixAfterObservedReopeningIsSeparatedFromGenericReference(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue-8", EvidenceID: "ev-issue"}},
+		PullRequests: []query.PullRequest{
+			{ID: "pr-fix", MergedAt: "2026-01-20T00:00:00Z", EvidenceID: "ev-pr-fix"},
+			{ID: "pr-generic", MergedAt: "2026-01-21T00:00:00Z", EvidenceID: "ev-pr-generic"},
+			{ID: "pr-before", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr-before"},
+			{ID: "pr-same", MergedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-pr-same"},
+		},
+		Events: []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
+		Links: []contract.LinkRecord{
+			{ID: "fix", SourceID: "pr-fix", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-fix"},
+			{ID: "generic", SourceID: "issue-8", Relation: "references_pr", TargetID: "pr-generic", Status: "direct", EvidenceID: "ev-pr-generic"},
+			{ID: "before", SourceID: "pr-before", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-before"},
+			{ID: "same", SourceID: "pr-same", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-same"},
+		},
+	}
+	out := Evaluate(d)
+	fixes := 0
+	for _, record := range out.Rework {
+		if record.Kind == "declared_correction" {
+			fixes++
+			if record.SubjectID != "issue-8" || record.EventAt != "2026-01-20T00:00:00Z" || record.EvidenceID != "ev-pr-fix" || record.CauseStatus != "undetermined" {
+				t.Fatalf("incorrect correction record: %+v", record)
+			}
+		}
+	}
+	if fixes != 1 {
+		t.Fatalf("generic or earlier PR became correction: %+v", out.Rework)
+	}
+	metricFound, findingFound := false, false
+	for _, metric := range out.Metrics {
+		if metric.ID == metricID("metric-rework", "declared_correction") {
+			metricFound = metric.Value.Value == "1" && strings.Contains(strings.Join(metric.Limitations, " "), "não demonstra efeito")
+		}
+	}
+	for _, finding := range out.Findings {
+		if finding.RuleID == "R-CORRECTION-001" {
+			findingFound = len(finding.EvidenceIDs) == 2 && finding.EvidenceIDs[0] == "ev-pr-fix" && finding.EvidenceIDs[1] == "ev-reopen"
+		}
+	}
+	if !metricFound || !findingFound {
+		t.Fatalf("correction declaration missing metric or two-source finding: metrics=%+v findings=%+v", out.Metrics, out.Findings)
+	}
+	withoutReopen := d
+	withoutReopen.Events = nil
+	for _, record := range Evaluate(withoutReopen).Rework {
+		if record.Kind == "declared_correction" {
+			t.Fatalf("fix declaration became rework without observed reopening: %+v", record)
+		}
+	}
+}
