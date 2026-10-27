@@ -33,6 +33,7 @@ type PreviewOptions struct {
 	Scenario        string
 	DataDir         string
 	QueryHistory    *queries.Store
+	ReportJobs      *ReportJobs
 }
 type EditorialService interface {
 	Models(context.Context) ([]editorial.Model, error)
@@ -107,6 +108,9 @@ func NewHandler(core contract.Core, setup contract.SetupService, credentials con
 	}
 	if options.Port < 0 || options.Port > 65535 {
 		return nil, "", errors.New("invalid port")
+	}
+	if options.ReportJobs == nil {
+		options.ReportJobs = NewReportJobs()
 	}
 	var raw [24]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -476,7 +480,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.fail(w, err)
 			return
 		}
-		h.finalizePublishedRun(r.Context(), &out)
+		h.finalizePublishedRun(&out)
 		h.events.publish("run.state", out.ID, out.SnapshotID, out.State, "Run iniciado no serviço local.")
 		h.writeJSON(w, http.StatusAccepted, out)
 		return
@@ -487,7 +491,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		out, err := h.core.GetRun(r.Context(), parts[1])
 		if err == nil {
-			h.finalizePublishedRun(r.Context(), &out)
+			h.finalizePublishedRun(&out)
 			h.events.publish("run.state", out.ID, out.SnapshotID, out.State, "Progresso do run atualizado.")
 		}
 		h.respond(w, out, err)
@@ -704,7 +708,13 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
 			return
 		}
-		out, err := h.reports.Finalize(r.Context(), in)
+		jobCtx, finish, err := h.beginReport()
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		defer finish()
+		out, err := h.reports.Finalize(jobCtx, in)
 		if err != nil {
 			h.fail(w, err)
 			return
@@ -712,7 +722,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		if reconciler, ok := h.core.(interface {
 			CompleteReport(context.Context, contract.ReportArtifact) error
 		}); ok {
-			if err := reconciler.CompleteReport(r.Context(), out); err != nil {
+			if err := reconciler.CompleteReport(jobCtx, out); err != nil {
 				h.fail(w, err)
 				return
 			}
@@ -964,7 +974,11 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	h.writeError(w, http.StatusNotFound, "ERR_NOT_FOUND", "Rota não encontrada.")
 }
 
-func (h *Handler) finalizePublishedRun(ctx context.Context, run *contract.Run) {
+func (h *Handler) beginReport() (context.Context, func(), error) {
+	return h.options.ReportJobs.Begin()
+}
+
+func (h *Handler) finalizePublishedRun(run *contract.Run) {
 	if run.State != "completed" || run.SnapshotID == "" {
 		return
 	}
@@ -981,7 +995,13 @@ func (h *Handler) finalizePublishedRun(ctx context.Context, run *contract.Run) {
 	if h.reports == nil {
 		err = errors.New("ERR_PDF_DEPENDENCY: renderer local indisponível")
 	} else {
-		_, err = h.reports.Finalize(ctx, contract.FinalizeRequest{SnapshotID: run.SnapshotID})
+		jobCtx, finish, beginErr := h.beginReport()
+		if beginErr != nil {
+			err = beginErr
+		} else {
+			defer finish()
+			_, err = h.reports.Finalize(jobCtx, contract.FinalizeRequest{SnapshotID: run.SnapshotID})
+		}
 	}
 	if err != nil {
 		run.State = "report_failed"
