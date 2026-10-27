@@ -151,6 +151,8 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 }
 
 func reportInvestigation(cmd *cobra.Command, args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	services, err := newInvestigationServices()
 	if err != nil {
 		return err
@@ -158,7 +160,7 @@ func reportInvestigation(cmd *cobra.Command, args []string) error {
 	if services.report == nil {
 		return services.reportError
 	}
-	snapshots, err := services.core.ListSnapshots(context.Background(), args[0])
+	snapshots, err := services.core.ListSnapshots(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -173,18 +175,18 @@ func reportInvestigation(cmd *cobra.Command, args []string) error {
 		i++
 		id = args[i]
 	}
-	snapshot, err := services.core.GetSnapshot(context.Background(), id)
+	snapshot, err := services.core.GetSnapshot(ctx, id)
 	if err != nil {
 		return err
 	}
 	if snapshot.InvestigationID != args[0] {
 		return fmt.Errorf("ERR_FORBIDDEN: snapshot de outra investigação")
 	}
-	artifact, err := services.report.Finalize(context.Background(), contract.FinalizeRequest{SnapshotID: id})
+	artifact, err := services.report.Finalize(ctx, contract.FinalizeRequest{SnapshotID: id})
 	if err != nil {
 		return err
 	}
-	if err := services.core.CompleteReport(context.Background(), artifact); err != nil {
+	if err := services.core.CompleteReport(ctx, artifact); err != nil {
 		return err
 	}
 	return writeJSON(cmd.OutOrStdout(), artifact)

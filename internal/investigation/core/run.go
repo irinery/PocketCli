@@ -374,13 +374,21 @@ func (c *Core) PauseRun(ctx context.Context, id string) (contract.Run, error) {
 	if err != nil {
 		return r, err
 	}
-	if r.State != "collecting" && r.State != "queued" {
-		return r, fault("ERR_VALIDATION", "run não está coletando")
+	switch r.State {
+	case "queued", "collecting", "building":
+		r.State = "paused"
+	case "analysis_ready", "reporting":
+		if r.SnapshotID == "" {
+			return r, fault("ERR_AUDIT_FAILED", "snapshot publicado ausente")
+		}
+		r.State = "report_failed"
+		r.LastError = &contract.ErrorResponse{Code: "ERR_PDF_FAILED", Message: "finalização interrompida; gere o relatório novamente"}
+	default:
+		return r, fault("ERR_VALIDATION", "run não está ativo para pausa")
 	}
 	c.mu.Lock()
 	cancel := c.runs[id]
 	c.mu.Unlock()
-	r.State = "paused"
 	if !c.saveRun(&r) {
 		return r, fault("ERR_AUDIT_FAILED", "falha ao auditar pausa")
 	}
@@ -389,6 +397,27 @@ func (c *Core) PauseRun(ctx context.Context, id string) (contract.Run, error) {
 	}
 	return r, nil
 }
+
+// WaitRunStopped waits for the in-process worker to release its investigation
+// lock after cancellation. The caller supplies its own shutdown deadline.
+func (c *Core) WaitRunStopped(ctx context.Context, id string) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		c.mu.Lock()
+		_, active := c.runs[id]
+		c.mu.Unlock()
+		if !active {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (c *Core) ResumeRun(ctx context.Context, id string) (contract.Run, error) {
 	r, err := c.GetRun(ctx, id)
 	if err != nil {
