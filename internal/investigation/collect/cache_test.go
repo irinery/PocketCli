@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -101,6 +102,35 @@ func TestLegacyCacheEchoIsDiscardedBeforeNetworkOrReuse(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(store.Root, cacheKind, cacheSlot(key)+".json"))
 	if err != nil || strings.Contains(string(content), "topsecret") {
 		t.Fatalf("slot de cache não foi descartado: %s err=%v", content, err)
+	}
+}
+
+func TestLegacyBase64BlobCacheEchoIsDiscarded(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const endpoint = "https://api.github.com/repos/acme/api/git/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	encoded := base64.StdEncoding.EncodeToString([]byte("module example.com/acme/api\n// topsecret\n"))
+	body := []byte(`{"encoding":"base64","content":"` + encoded + `"}`)
+	keyHash := sha256.Sum256([]byte("github:" + endpoint + ":topsecret"))
+	key := hex.EncodeToString(keyHash[:])
+	bodyHash := sha256.Sum256(body)
+	if err := store.Put(cacheKind, cacheSlot(key), persistedETagEntry{Key: key, ETag: `"old"`, Body: body, SHA256: hex.EncodeToString(bodyHash[:])}); err != nil {
+		t.Fatal(err)
+	}
+	client := secretClient(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("cache antigo com blob contendo credencial chegou à rede")
+		return nil, nil
+	})
+	client.SetCacheStore(store)
+	data, _, _, _, err := client.GetGitHubWithBytes(context.Background(), endpoint)
+	if err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") || data != nil {
+		t.Fatalf("cache de blob não foi bloqueado: data=%s err=%v", data, err)
+	}
+	var discarded persistedETagEntry
+	if err := store.Get(cacheKind, cacheSlot(key), &discarded); err != nil || discarded.Key != "" || len(discarded.Body) != 0 {
+		t.Fatalf("cache de blob não foi descartado: %+v err=%v", discarded, err)
 	}
 }
 

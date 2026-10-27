@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -96,14 +97,16 @@ func TestGitHubForbiddenIsNotEmptyList(t *testing.T) {
 }
 
 func TestCredentialEchoCannotReachPersistentCacheOrCaller(t *testing.T) {
+	encodedSecret := base64.StdEncoding.EncodeToString([]byte("module example.com/acme/api\n# topsecret\n"))
 	for _, tc := range []struct {
-		name, body, header string
-		status             int
+		name, body, header, endpoint string
+		status                       int
 	}{
-		{"body", `[{"title":"topsecret"}]`, "", 200},
-		{"escaped JSON", `[{"title":"topse\u0063ret"}]`, "", 200},
-		{"pagination header", `[]`, `<https://api.github.com/user/repos?token=topsecret>; rel="next"`, 200},
-		{"error body", `{"message":"denied topsecret"}`, "", 403},
+		{"body", `[{"title":"topsecret"}]`, "", "", 200},
+		{"escaped JSON", `[{"title":"topse\u0063ret"}]`, "", "", 200},
+		{"pagination header", `[]`, `<https://api.github.com/user/repos?token=topsecret>; rel="next"`, "", 200},
+		{"error body", `{"message":"denied topsecret"}`, "", "", 403},
+		{"base64 Git blob", `{"encoding":"base64","content":"` + encodedSecret + `"}`, "", "https://api.github.com/repos/acme/api/git/blobs/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -120,7 +123,11 @@ func TestCredentialEchoCannotReachPersistentCacheOrCaller(t *testing.T) {
 				return res, nil
 			})
 			client.SetCacheStore(store)
-			data, headers, _, _, err := client.GetGitHubWithBytes(WithRunID(context.Background(), "run-echo"), "https://api.github.com/user/repos")
+			endpoint := tc.endpoint
+			if endpoint == "" {
+				endpoint = "https://api.github.com/user/repos"
+			}
+			data, headers, _, _, err := client.GetGitHubWithBytes(WithRunID(context.Background(), "run-echo"), endpoint)
 			expectedCode := "ERR_UNAVAILABLE"
 			if tc.status == http.StatusForbidden {
 				expectedCode = "ERR_FORBIDDEN"
@@ -139,7 +146,7 @@ func TestCredentialEchoCannotReachPersistentCacheOrCaller(t *testing.T) {
 				if readErr != nil {
 					return readErr
 				}
-				if strings.Contains(string(content), "topsecret") || strings.Contains(string(content), `topse\u0063ret`) {
+				if strings.Contains(string(content), "topsecret") || strings.Contains(string(content), `topse\u0063ret`) || strings.Contains(string(content), encodedSecret) {
 					t.Errorf("credencial persistida em %s", path)
 				}
 				return nil
