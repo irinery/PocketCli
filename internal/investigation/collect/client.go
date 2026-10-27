@@ -144,6 +144,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				req.Header.Set("Authorization", string(secret))
 				req.Header.Set("Content-Type", "application/json")
 			}
+			if err := claimDiscoveryRequest(ctx, source); err != nil {
+				return err
+			}
 			c.next[source] = time.Now().Add(c.spacing[source])
 			if err := c.saveRateHold(source, secret, c.spacing[source]); err != nil {
 				return err

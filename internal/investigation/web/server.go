@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"pocketcli/internal/investigation/annotations"
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/editorial"
 	"pocketcli/internal/investigation/queries"
@@ -413,7 +414,20 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			}
 			in.InvestigationID = h.options.InvestigationID
 		}
-		out, err := h.core.PreparePlan(r.Context(), in)
+		ctx := r.Context()
+		if values, ok := r.URL.Query()["discovery_budget"]; ok {
+			if len(values) != 1 {
+				h.writeError(w, http.StatusBadRequest, "ERR_VALIDATION", "Informe um orçamento de descoberta por fonte.")
+				return
+			}
+			budget, err := strconv.Atoi(values[0])
+			if err != nil || budget < 1 {
+				h.writeError(w, http.StatusBadRequest, "ERR_VALIDATION", "Orçamento de descoberta fora do intervalo permitido.")
+				return
+			}
+			ctx = collect.WithDiscoveryBudget(ctx, budget)
+		}
+		out, err := h.core.PreparePlan(ctx, in)
 		h.respond(w, out, err)
 		return
 	}

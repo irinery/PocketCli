@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/core"
 	"pocketcli/internal/investigation/query"
@@ -139,6 +141,7 @@ type investigationFlags struct {
 	scope, period, from, to, timezone, confirm, investigation string
 	repos, teams                                              []string
 	noGitHub, noLinear, json, prepare                         bool
+	discoveryBudget                                           int
 }
 
 func parseInvestigationFlags(args []string) (investigationFlags, error) {
@@ -186,6 +189,12 @@ func parseInvestigationFlags(args []string) (investigationFlags, error) {
 			f.confirm = value
 		case "--investigation":
 			f.investigation = value
+		case "--discovery-budget":
+			budget, err := strconv.Atoi(value)
+			if err != nil || budget < 1 {
+				return f, fmt.Errorf("--discovery-budget deve ser um inteiro positivo")
+			}
+			f.discoveryBudget = budget
 		case "--repo":
 			f.repos = append(f.repos, value)
 		case "--team":
@@ -269,7 +278,7 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	if err := loadCredentials(store, input); err != nil {
 		return err
 	}
-	plan, err := c.PreparePlan(context.Background(), input)
+	plan, err := c.PreparePlan(discoveryContext(f), input)
 	if err != nil {
 		return err
 	}
@@ -371,7 +380,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 	if err := loadCredentials(store, input); err != nil {
 		return err
 	}
-	plan, err := c.PreparePlan(context.Background(), input)
+	plan, err := c.PreparePlan(discoveryContext(f), input)
 	if err != nil {
 		return err
 	}
@@ -418,6 +427,14 @@ func scopeFilename(name string) string {
 	}
 	return name
 }
+func discoveryContext(f investigationFlags) context.Context {
+	ctx := context.Background()
+	if f.discoveryBudget > 0 {
+		return collect.WithDiscoveryBudget(ctx, f.discoveryBudget)
+	}
+	return ctx
+}
+
 func promptLine(label string) (string, error) {
 	fmt.Fprint(os.Stderr, label)
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')

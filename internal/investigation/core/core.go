@@ -133,6 +133,17 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}
 	input.Scope.Repositories = dedupe(input.Scope.Repositories)
 	input.Scope.Teams = dedupe(input.Scope.Teams)
+	discoveryLimit := collect.DiscoveryBudget(ctx)
+	if discoveryLimit == 0 {
+		discoveryLimit = collect.DefaultDiscoveryBudget
+	}
+	if discoveryLimit < 1 {
+		return out, fault("ERR_VALIDATION", "orçamento de descoberta deve ser positivo")
+	}
+	if input.GitHubEnabled && len(input.Scope.Repositories) > discoveryLimit {
+		return out, fault("ERR_RESOURCE_EXHAUSTED", "repositórios selecionados excedem orçamento de descoberta; aprove mais chamadas")
+	}
+	ctx = collect.WithDiscoveryBudget(ctx, discoveryLimit)
 	if !input.GitHubEnabled && !input.LinearEnabled && !input.Modules.RuntimeImport {
 		return out, fault("ERR_VALIDATION", "selecione uma fonte")
 	}
@@ -190,7 +201,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				resources = append(resources, r)
 			}
 		} else {
-			items, _, err := c.collector.GitHubList(ctx, "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member", 20)
+			items, _, err := c.collector.GitHubList(ctx, "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member", discoveryLimit)
 			if err != nil {
 				return out, err
 			}
@@ -226,7 +237,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 		foundTeams := make(map[string]string)
 		cursor := ""
 		complete := false
-		for page := 0; page < 20; page++ {
+		for page := 0; page < discoveryLimit; page++ {
 			vars := map[string]string{}
 			if cursor != "" {
 				vars["after"] = cursor
@@ -302,6 +313,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}{canonicalInput, auth, resources, period.WindowStart, period.WindowEnd})
 	id := planID
 	warnings := []string{}
+	if discoveryLimit > collect.DefaultDiscoveryBudget {
+		warnings = append(warnings, fmt.Sprintf("orçamento de descoberta aprovado: até %d chamadas por fonte", discoveryLimit))
+	}
 	if input.Modules.CodeHistory {
 		warnings = append(warnings, "coleta Git de refs e manifestos ativa; histórico de arquivos ainda tem cobertura parcial")
 	}

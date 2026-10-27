@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"pocketcli/internal/investigation/annotations"
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/editorial"
 	"pocketcli/internal/investigation/queries"
@@ -20,6 +21,7 @@ import (
 type scopeCore struct {
 	contract.Core
 	queries, starts, plans int
+	discoveryBudget        int
 	planInput              contract.PlanInput
 }
 
@@ -43,8 +45,9 @@ func (c *scopeCore) StartRun(context.Context, contract.RunRequest) (contract.Run
 	c.starts++
 	return contract.Run{}, nil
 }
-func (c *scopeCore) PreparePlan(_ context.Context, in contract.PlanInput) (contract.Plan, error) {
+func (c *scopeCore) PreparePlan(ctx context.Context, in contract.PlanInput) (contract.Plan, error) {
 	c.plans++
+	c.discoveryBudget = collect.DiscoveryBudget(ctx)
 	c.planInput = in
 	return contract.Plan{}, nil
 }
@@ -152,6 +155,12 @@ func TestRealServerRejectsOtherInvestigationBeforeReadingOrWriting(t *testing.T)
 	}
 	if own := call(http.MethodPost, "/plans", `{}`); own.Code != http.StatusOK || core.planInput.InvestigationID != "investigation-demo" {
 		t.Fatalf("plan was not bound to this investigation: status=%d input=%+v", own.Code, core.planInput)
+	}
+	if approved := call(http.MethodPost, "/plans?discovery_budget=21", `{}`); approved.Code != http.StatusOK || core.discoveryBudget != 21 {
+		t.Fatalf("approved discovery budget not passed: status=%d budget=%d", approved.Code, core.discoveryBudget)
+	}
+	if invalid := call(http.MethodPost, "/plans?discovery_budget=0", `{}`); invalid.Code != http.StatusBadRequest || core.plans != 2 {
+		t.Fatalf("invalid discovery budget reached core: status=%d calls=%d", invalid.Code, core.plans)
 	}
 	core.plans = 0
 	queryResponse := call(http.MethodPost, "/snapshots/snap-demo-001/query", `{"snapshot_id":"snap-demo-001","sql":"SELECT 1"}`)
