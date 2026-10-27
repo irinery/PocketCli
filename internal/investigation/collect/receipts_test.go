@@ -85,6 +85,33 @@ func TestRequestReceiptsPersist200And304WithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestGitHubGraphQLReceiptDoesNotClaimRESTVersion(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := secretClient(t, func(r *http.Request) (*http.Response, error) {
+		if r.Method != "POST" || r.URL.Path != "/graphql" || r.Header.Get("X-GitHub-Api-Version") != "" || r.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("GraphQL request headers: method=%s path=%s version=%q content-type=%q", r.Method, r.URL.Path, r.Header.Get("X-GitHub-Api-Version"), r.Header.Get("Content-Type"))
+		}
+		res := response(200, `{"data":{"viewer":{"login":"ok"}}}`)
+		res.Header.Set("X-Github-Api-Version-Selected", "2026-03-10")
+		return res, nil
+	})
+	client.SetCacheStore(store)
+	if _, _, err := client.GitHubQueryWithBytes(WithRunID(context.Background(), "run-graphql-receipt"), "query Read { viewer { login } }", map[string]any{"owner": "topsecret"}); err != nil {
+		t.Fatal(err)
+	}
+	receipts := receiptsFor(t, store, "run-graphql-receipt")
+	if len(receipts) != 1 || receipts[0].Endpoint != "/graphql" || receipts[0].RequestedAPIVersion != "" || receipts[0].SelectedAPIVersion != "" || receipts[0].Method != "POST" {
+		t.Fatalf("GraphQL receipt: %+v", receipts)
+	}
+	content, err := os.ReadFile(filepath.Join(store.Root, requestReceiptKind, receipts[0].ID+".json"))
+	if err != nil || strings.Contains(string(content), "topsecret") {
+		t.Fatalf("GraphQL receipt leaked request: %s err=%v", content, err)
+	}
+}
+
 func TestRequestReceiptPersistsEachRetryAndForbiddenWithoutBody(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

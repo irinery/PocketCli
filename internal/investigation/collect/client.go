@@ -162,9 +162,10 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			if source == "github" {
 				req.Header.Set("Authorization", "Bearer "+string(secret))
 				req.Header.Set("Accept", "application/vnd.github+json")
-				req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
-				if method == "POST" {
+				if isGitHubGraphQLRequest(method, endpoint) {
 					req.Header.Set("Content-Type", "application/json")
+				} else {
+					req.Header.Set("X-GitHub-Api-Version", githubAPIVersion)
 				}
 				if cached.ETag != "" && !skipConditional {
 					req.Header.Set("If-None-Match", cached.ETag)
