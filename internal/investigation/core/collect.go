@@ -75,6 +75,7 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				}
 			}
 			reusePriorFileGraph(&d, prior, plan.WindowEnd, referenced)
+			reusePriorPRCommitGraph(&d, prior, plan.WindowEnd, referenced)
 			for _, evidence := range prior.Evidence {
 				if referenced[evidence.ID] || timestampInWindow(plan.WindowStart, plan.WindowEnd, evidence.SourceUpdatedAt) {
 					d.Evidence = append(d.Evidence, evidence)
@@ -115,6 +116,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 					return d, err
 				}
 				if err := c.collectPRFiles(ctx, plan, r, &d, run); err != nil {
+					return d, err
+				}
+				if err := c.collectPRCommits(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
 				if err := c.mapCurrentRefFiles(ctx, plan, r, &d); err != nil {
