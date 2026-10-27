@@ -32,7 +32,7 @@ if [ -n "${REAL_GO_BINARY}" ] && [ -x "${REAL_GO_BINARY}" ]; then
 		printf 'FAIL investigate --json aceitou flag inválida\n' >&2
 		exit 1
 	fi
-	if [ -s "${WORKDIR}/json.out" ] || ! grep -F '"ok": false' "${WORKDIR}/json.err" >/dev/null || ! grep -F '"code": "ERR_VALIDATION"' "${WORKDIR}/json.err" >/dev/null; then
+	if [ -s "${WORKDIR}/json.out" ] || ! grep -F '"ok":false' "${WORKDIR}/json.err" >/dev/null || ! grep -F '"code":"ERR_VALIDATION"' "${WORKDIR}/json.err" >/dev/null; then
 		printf 'FAIL investigate --json não retornou erro estruturado no stderr\n' >&2
 		exit 1
 	fi
