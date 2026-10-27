@@ -19,3 +19,17 @@ func TestParseManifestWithoutExecutingContent(t *testing.T) {
 		t.Fatalf("openapi=%+v err=%v", openAPI, err)
 	}
 }
+
+func TestComposeDependenciesRequireExplicitLocalService(t *testing.T) {
+	content := []byte("services:\n  api:\n    depends_on:\n      - db\n  worker:\n    depends_on:\n      db:\n        condition: service_healthy\n      external_service:\n        condition: service_started\n  db:\n    image: postgres:18\n")
+	facts, err := parseManifest("compose", content)
+	if err != nil || len(facts.Dependencies) != 2 || facts.Dependencies[0] != (manifestDependency{Service: "api", DependsOn: "db"}) || facts.Dependencies[1] != (manifestDependency{Service: "worker", DependsOn: "db"}) || len(facts.UnresolvedDependencies) != 1 || facts.UnresolvedDependencies[0] != "worker->external_service" {
+		t.Fatalf("dependências Compose: %+v err=%v", facts, err)
+	}
+	if _, err := parseManifest("compose", []byte("services:\n  api:\n    image: one\n    image: two\n")); err == nil {
+		t.Fatal("chave Compose duplicada aceita")
+	}
+	if _, err := parseManifest("compose", []byte("services:\n  api:\n    depends_on: [api]\n")); err == nil {
+		t.Fatal("autodependência Compose aceita")
+	}
+}

@@ -187,11 +187,25 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 			d.Components[componentIndex].Name = c.safeTitle(ctx, facts.Name)
 		}
 		upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(componentID + ":" + entry.SHA))[:24], EntityID: componentID, Type: "manifest_content_observed", EventAt: observedAt, ObservedAt: blobEvidence.ObservedAt, NewValue: entry.SHA, EvidenceID: blobEvidence.ID})
+		serviceIDs := make(map[string]string, len(facts.Services))
 		for _, service := range facts.Services {
 			serviceID := "cmp-" + storage.Hash([]byte(componentID + ":service:" + service))[:24]
+			serviceIDs[service] = serviceID
 			d.Components = append(d.Components, contract.ComponentRecord{ID: serviceID, Name: service, Repository: r.Name, Path: entry.Path + "#" + service, Kind: "compose_service", ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
 			serviceLinkID := "lnk-" + storage.Hash([]byte(componentID + ":" + serviceID + ":" + blobEvidence.ID))[:24]
 			d.Links = append(d.Links, contract.LinkRecord{ID: serviceLinkID, SourceID: componentID, Relation: "declares_service", TargetID: serviceID, Status: "direct", EvidenceID: blobEvidence.ID})
+		}
+		for _, dependency := range facts.Dependencies {
+			sourceID, sourceExists := serviceIDs[dependency.Service]
+			targetID, targetExists := serviceIDs[dependency.DependsOn]
+			if !sourceExists || !targetExists {
+				return fault("ERR_AUDIT_FAILED", "dependência Compose sem componente verificado")
+			}
+			linkID := "lnk-" + storage.Hash([]byte(sourceID + ":depends_on:" + targetID + ":" + blobEvidence.ID))[:24]
+			d.Links = append(d.Links, contract.LinkRecord{ID: linkID, SourceID: sourceID, Relation: "depends_on", TargetID: targetID, Status: "direct", EvidenceID: blobEvidence.ID})
+		}
+		if len(facts.UnresolvedDependencies) > 0 {
+			contentStatus, contentReason = "partial", "dependência Compose sem destino no manifesto observado"
 		}
 	}
 	d.Coverage = append(d.Coverage, c.coverage(resource, "manifests", status, observed, reason))
