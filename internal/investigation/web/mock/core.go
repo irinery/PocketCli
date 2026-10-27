@@ -66,9 +66,15 @@ func NewScenario(scenario string) *Core {
 		c.snapshot.Coverage[2].Observed = 1
 		c.snapshot.Coverage[2].Reason = "Cobertura incompleta na fixture"
 	case "rate_limited":
+		// C.4 has no rate_limited coverage state: the collection stays partial
+		// and the reason carries the error code, as in the real core.
 		c.snapshot.Status = "partial"
-		c.snapshot.Coverage[0].Status = "rate_limited"
-		c.snapshot.Coverage[0].Reason = "Limite de requisições da fixture"
+		c.snapshot.Coverage[0].Status = "partial"
+		c.snapshot.Coverage[0].Reason = "ERR_RATE_LIMITED: limite de requisições da fixture; coleta pausada sob orçamento"
+	case "rewritten_refs":
+		// S05-04: a non-ancestor ref is a divergence, not a proven rebase.
+		c.snapshot.Status = "partial"
+		c.snapshot.Coverage = append(c.snapshot.Coverage, contract.Coverage{Source: "github", ResourceID: "demo/api", Collection: "code_history", Status: "partial", Observed: 2, Reason: "refs/heads/main divergiu entre rodadas (ref_diverged): o OID anterior não é ancestral do novo. Isso não comprova rebase; o snapshot anterior foi preservado e as relações afetadas foram reavaliadas.", CheckedAt: now})
 	case "unauthorized":
 		c.snapshot.Status = "partial"
 		c.snapshot.Coverage[0].Status = "unauthorized"

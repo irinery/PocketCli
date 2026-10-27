@@ -39,17 +39,11 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chromium := os.Getenv("POCKETCLI_CHROMIUM")
-	var firstPDF *report.Finalizer
-	if chromium == "" {
-		c.SetFinalizer(&fakeFinalizer{core: c})
-	} else {
-		firstPDF, err = report.New(c, filepath.Join(store.Root, "reports"), chromium, false, nil, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c.SetFinalizer(firstPDF)
+	firstPDF, err := report.New(c, filepath.Join(store.Root, "reports"), false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	c.SetFinalizer(firstPDF)
 	now := time.Now().UTC()
 	input := contract.PlanInput{
 		SchemaVersion: contract.Version,
@@ -144,16 +138,11 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var secondPDF *report.Finalizer
-	if chromium == "" {
-		secondCore.SetFinalizer(&fakeFinalizer{core: secondCore})
-	} else {
-		secondPDF, err = report.New(secondCore, filepath.Join(store.Root, "reports"), chromium, false, nil, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		secondCore.SetFinalizer(secondPDF)
+	secondPDF, err := report.New(secondCore, filepath.Join(store.Root, "reports"), false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	secondCore.SetFinalizer(secondPDF)
 	input.InvestigationID = plan.InvestigationID
 	secondPlan, err := secondCore.PreparePlan(context.Background(), input)
 	if err != nil {

@@ -37,7 +37,8 @@ const realAppJSTemplate = `(() => {
   const $ = selector => document.querySelector(selector);
   const main = $('#main');
   const detail = $('#detail');
-  let csrf = '', snapshot = null, snapshots = [], findings = [], queries = [], activeView = 'overview';
+  const contractVersion = 'investigate.v1';
+  let csrf = '', capabilities = null, snapshot = null, snapshots = [], findings = [], queries = [], activeView = 'overview';
 
   const node = (tag, className, value) => {
     const item = document.createElement(tag);
@@ -94,12 +95,13 @@ const realAppJSTemplate = `(() => {
   const segment = value => encodeURIComponent(value);
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {});
+    headers.set('X-Investigate-Contract', contractVersion);
     if (options.body) headers.set('Content-Type', 'application/json');
     if (!['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) headers.set('X-CSRF-Token', csrf);
     const response = await fetch('/api/v1' + path, {...options, headers, credentials: 'same-origin'});
     if (response.status === 204) return null;
     const body = await response.json();
-    if (!response.ok) throw new Error(body.message || body.code || 'Falha local');
+    if (!response.ok) throw new Error(body.code === 'ERR_CONTRACT_MISMATCH' ? 'ERR_CONTRACT_MISMATCH: ' + body.message : (body.message || body.code || 'Falha local'));
     return body;
   }
   const write = (path, body, method = 'POST') => api(path, {method, body: JSON.stringify(body)});
@@ -126,6 +128,12 @@ const realAppJSTemplate = `(() => {
   async function init() {
     try {
       csrf = (await api('/session')).csrf_token;
+      capabilities = await api('/capabilities');
+      if (!capabilities || capabilities.contract !== contractVersion) {
+        main.replaceChildren(heading('Contrato incompatível', 'Nenhum dado foi interpretado.'));
+        fail(main, new Error('ERR_CONTRACT_MISMATCH: esta interface usa ' + contractVersion + ' e o servidor informou ' + String(capabilities && capabilities.contract) + '. Recarregue a página servida por este processo.'));
+        return;
+      }
       snapshots = await api('/investigations/' + segment(investigationId) + '/snapshots') || [];
       if (!snapshots.length) {
         $('#snapshot-label').textContent = investigationId;
@@ -273,6 +281,7 @@ const realAppJSTemplate = `(() => {
         feedback.append(node('p', 'muted', 'Custo e duração: a estimar. Limites efetivos estão no plano abaixo.'));
         feedback.append(table(['Fonte', 'Recurso', 'Acesso'], (plan.resources || []).map(item => [item.source, item.name, item.access])));
         (plan.warnings || []).forEach(warning => feedback.append(node('p', 'callout', warning)));
+        if (capabilities && !capabilities.pdf_available) feedback.append(node('p', 'callout', 'PDF automático indisponível: ' + (capabilities.pdf_unavailable_reason || 'renderizador não configurado') + '. A coleta pode continuar, mas o run termina em report_failed até gerar o PDF; nada é instalado automaticamente.'));
         const summary = node('pre', 'code', JSON.stringify(plan.input, null, 2)); feedback.append(summary);
         const consentLabel = node('label'), consent = node('input'); consent.type = 'checkbox';
         consentLabel.append(consent, document.createTextNode(' Confirmei escopo, período, limites e hash deste plano.'));
@@ -547,6 +556,10 @@ const realAppJSTemplate = `(() => {
   }
   async function claude() {
     main.replaceChildren(heading('Claude', 'Redação opcional dos achados selecionados.'));
+    if (capabilities && !capabilities.claude_available) {
+      main.append(node('p', 'callout', 'ERR_LLM_DISABLED: Claude editorial desativado nesta sessão. Análise, SQL, comentários e PDF continuam disponíveis sem Claude.'));
+      return;
+    }
     const credential = card('Credencial da sessão');
     const key = node('input'); key.type = 'password'; key.autocomplete = 'off';
     credential.append(field('Chave Anthropic', key), button('Guardar nesta sessão', async () => {

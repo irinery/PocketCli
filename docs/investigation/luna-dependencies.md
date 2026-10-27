@@ -6,7 +6,7 @@ O preview não usa Node, CDN, GitHub ou Linear; não chama Claude automaticament
 
 ## Executar
 
-Pré-requisitos: Go 1.22 ou superior. Para PDF, instale Chromium/Google Chrome e Poppler (`pdfinfo`) pelo gerenciador de pacotes da máquina. O PocketCli não baixa nem instala browser automaticamente.
+Pré-requisitos: Go 1.22 ou superior. O PDF é gerado dentro da aplicação; não é preciso instalar browser nem Poppler.
 
 ```sh
 go run -buildvcs=false ./cmd/investigate-preview
@@ -20,9 +20,9 @@ O mock implementa o contrato `investigate.v1` e as dez consultas de catálogo. O
 
 ## Dependências para PDF
 
-O renderer usa Chromium headless instalado localmente, com sandbox habilitado, perfil temporário privado e sem dependências externas no HTML. `pdfinfo` valida a existência de páginas antes de publicar o arquivo. Se qualquer binário estiver ausente ou o renderer falhar, o snapshot continua acessível e a interface apresenta o PDF como indisponível. Não existe fallback que omita a sandbox nem instalação em runtime.
+O renderer roda no próprio processo, só com a biblioteca padrão do Go: monta páginas A4 com as fontes Type 1 padrão (WinAnsi) e conta as páginas que gerou. Se o diretório de relatórios estiver inutilizável ou a geração falhar, o snapshot continua acessível e a interface apresenta o PDF como indisponível.
 
-Poppler também pode ser usado na validação manual de PDFs com `pdfinfo` e `pdftotext`. O preview não precisa de Poppler para navegar no HTML, executar queries catalogadas ou registrar comentários.
+Poppler (`pdfinfo`, `pdftotext`) continua útil só para inspecionar manualmente um PDF gerado; nenhum fluxo do produto ou teste depende dele.
 
 ## Persistência do preview
 

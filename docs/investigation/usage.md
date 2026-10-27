@@ -23,7 +23,7 @@ O preview não coleta dados do GitHub/Linear nem lê o checkout. Para dados reai
 
 ## Experimentar ao vivo: preview local
 
-Requer Go 1.22+. Para testar geração de PDF, também instale Chromium/Chrome e Poppler (`pdfinfo`). Navegar na interface e testar os outros recursos não requer esses binários.
+Requer Go 1.22+. O PDF é gerado pela própria aplicação, sem browser ou Poppler.
 
 Na raiz do repositório:
 
@@ -107,7 +107,7 @@ Para acompanhar achados e evidências numa UI local em tempo real, abra a invest
 
 O servidor real usa loopback e mostra um código de desbloqueio no terminal. Na UI, selecione/configure escopo, consulte cobertura, navegue no mapa paginado e nos achados, rode SQL local protegido, registre comentários e revisões e exporte o PDF. Também dá para preparar outra coleta pelo terminal e atualizar a UI após novo snapshot. Veja sintaxe adicional em `pocket investigate refresh --help`, `serve --help` e `report --help`.
 
-Se a coleta publicar um snapshot mas o PDF falhar, o run fica em `report_failed`. Instale/configure Chromium e `pdfinfo`, depois use `pocket investigate report INVESTIGATION_ID --snapshot SNAPSHOT_ID` ou gere o relatório na UI. O retry é local: não consulta GitHub/Linear novamente. Depois de validar todos os achados do PDF, o run passa para `completed` ou `completed_partial`; se a exportação falhar, continua `report_failed` e o snapshot segue consultável.
+Se a coleta publicar um snapshot mas o PDF falhar, o run fica em `report_failed`. Corrija a causa informada (por exemplo, permissão do diretório de relatórios), depois use `pocket investigate report INVESTIGATION_ID --snapshot SNAPSHOT_ID` ou gere o relatório na UI. O retry é local: não consulta GitHub/Linear novamente. Depois de validar todos os achados do PDF, o run passa para `completed` ou `completed_partial`; se a exportação falhar, continua `report_failed` e o snapshot segue consultável.
 
 Para configurar escopo YAML, `--scope` aceita arquivo local (ou `-` para stdin), até 256 KiB e schema versionado. Exemplo mínimo:
 

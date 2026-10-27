@@ -72,7 +72,7 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 	if err != nil {
 		return nil, err
 	}
-	finalizer, reportErr := report.New(c, filepath.Join(store.Root, "reports"), os.Getenv("POCKETCLI_CHROMIUM"), false, notes, edit, queryHistory)
+	finalizer, reportErr := report.New(c, filepath.Join(store.Root, "reports"), false, notes, edit, queryHistory)
 	var cached web.ReportService
 	if reportErr == nil {
 		cached = &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory}
@@ -131,7 +131,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 		}
 	}
 	jobs := web.NewReportJobs()
-	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs})
+	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError)})
 	if err != nil {
 		return err
 	}
@@ -240,4 +240,11 @@ func reportInvestigation(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return writeJSON(cmd.OutOrStdout(), artifact)
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

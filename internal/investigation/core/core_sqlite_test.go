@@ -220,7 +220,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.17.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != MappingVersion {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -287,7 +287,7 @@ func TestUnchangedRefreshReusesObjectsAcrossCoreRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mu sync.Mutex
-	var objectDownloads atomic.Int32
+	var objectDownloads, openListings atomic.Int32
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -303,7 +303,11 @@ func TestUnchangedRefreshReusesObjectsAcrossCoreRestart(t *testing.T) {
 			body = `{"id":42,"full_name":"acme/api"}`
 		case "/repos/acme/api/pulls":
 			body = `[{"id":100,"number":7,"title":"PR estável","state":"open","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-03T00:00:00Z","head":{"sha":"abc"}}]`
-			objectDownloads.Add(1)
+			if r.URL.Query().Get("state") == "open" {
+				openListings.Add(1)
+			} else {
+				objectDownloads.Add(1)
+			}
 		}
 		res := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 		res.Header.Set("ETag", `"stable"`)
@@ -331,8 +335,8 @@ func TestUnchangedRefreshReusesObjectsAcrossCoreRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstRun = waitRun(t, firstCore, firstRun.ID)
-	if firstRun.SnapshotID == "" || firstRun.State != "report_failed" || objectDownloads.Load() != 1 {
-		t.Fatalf("primeira rodada: %+v downloads=%d", firstRun, objectDownloads.Load())
+	if firstRun.SnapshotID == "" || firstRun.State != "report_failed" || objectDownloads.Load() != 1 || openListings.Load() != 1 {
+		t.Fatalf("primeira rodada: %+v downloads=%d abertos=%d", firstRun, objectDownloads.Load(), openListings.Load())
 	}
 	firstStats, err := firstCore.RunStats(context.Background(), firstRun.ID)
 	if err != nil {
@@ -362,8 +366,8 @@ func TestUnchangedRefreshReusesObjectsAcrossCoreRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondRun.SnapshotID == "" || secondStats.ReuseCounter <= firstStats.ReuseCounter || objectDownloads.Load() != 1 || len(afterObjects) != len(beforeObjects) {
-		t.Fatalf("refresh sem reuso: run=%+v stats=%+v->%+v downloads=%d objects=%d->%d", secondRun, firstStats, secondStats, objectDownloads.Load(), len(beforeObjects), len(afterObjects))
+	if secondRun.SnapshotID == "" || secondStats.ReuseCounter <= firstStats.ReuseCounter || objectDownloads.Load() != 1 || openListings.Load() != 1 || len(afterObjects) != len(beforeObjects) {
+		t.Fatalf("refresh sem reuso: run=%+v stats=%+v->%+v downloads=%d abertos=%d objects=%d->%d", secondRun, firstStats, secondStats, objectDownloads.Load(), openListings.Load(), len(beforeObjects), len(afterObjects))
 	}
 	if _, err := secondCore.GetSnapshot(context.Background(), firstRun.SnapshotID); err != nil {
 		t.Fatalf("snapshot anterior indisponível: %v", err)
@@ -840,6 +844,8 @@ func TestGitHubJournalResumesFromCommittedPage(t *testing.T) {
 	pageOne, pageTwo := 0, 0
 	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
 		switch {
+		case r.URL.Path == "/repos/acme/api/pulls" && r.URL.Query().Get("state") == "open":
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[]`))}, nil
 		case r.URL.Path == "/repos/acme/api/pulls" && r.URL.Query().Get("page") == "":
 			pageOne++
 			res := &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`[{"id":1,"number":1,"title":"first","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}]`))}

@@ -3,13 +3,14 @@ package main
 import (
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestInvestigationDoctorReportsInvalidChromiumBeforeCollection(t *testing.T) {
-	t.Setenv("POCKETCLI_CHROMIUM", filepath.Join(t.TempDir(), "missing-chromium"))
+// The PDF is rendered in-process: doctor reports it available with no browser
+// or Poppler on PATH.
+func TestInvestigationDoctorReportsInProcessPDFWithoutExternalTools(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 	withArgs(t, []string{"pocket", "doctor"})
 	read, write, err := os.Pipe()
 	if err != nil {
@@ -24,7 +25,7 @@ func TestInvestigationDoctorReportsInvalidChromiumBeforeCollection(t *testing.T)
 	}
 	output, err := io.ReadAll(read)
 	read.Close()
-	if err != nil || runErr != nil || !strings.Contains(string(output), "PDF indisponível") || !strings.Contains(string(output), "executável Chromium configurado") {
-		t.Fatalf("doctor não identificou dependência inválida: output=%q run=%v read=%v", output, runErr, err)
+	if err != nil || runErr != nil || !strings.Contains(string(output), "PDF disponível (renderizador interno)") {
+		t.Fatalf("doctor não reportou o PDF interno: output=%q run=%v read=%v", output, runErr, err)
 	}
 }

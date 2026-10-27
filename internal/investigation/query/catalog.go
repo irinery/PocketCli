@@ -2,7 +2,8 @@ package query
 
 import "pocketcli/internal/investigation/contract"
 
-const CatalogVersion = "1.0.0"
+// CatalogVersion 1.1.0 adds Q11 (time per stage). Q01-Q10 keep the C.8 text.
+const CatalogVersion = "1.1.0"
 
 func Catalog() []contract.SuggestedQuery {
 	return []contract.SuggestedQuery{
@@ -16,5 +17,6 @@ func Catalog() []contract.SuggestedQuery {
 		{ID: "Q08", Title: "Timeline", Description: "Escolha o ID do alvo antes de executar a consulta.", SQL: `SELECT event_id, event_type, event_at, observed_at, old_value, new_value FROM v_events WHERE entity_id = :subject_id ORDER BY event_at, observed_at, event_id`, Parameters: []contract.Parameter{{Name: "subject_id", Value: contract.Cell{Kind: "text", Value: ""}}}},
 		{ID: "Q09", Title: "Volume observado por responsável", Description: "Não é score de produtividade", SQL: `SELECT assignee_id, COUNT(*) AS completed_items FROM v_issues WHERE completed_at IS NOT NULL AND is_context = 0 GROUP BY assignee_id ORDER BY completed_items DESC, assignee_id`},
 		{ID: "Q10", Title: "Retrabalho registrado", SQL: `SELECT occurrence_id, subject_id, kind, evidence_status, cause_status FROM v_rework ORDER BY event_at, occurrence_id`},
+		{ID: "Q11", Title: "Permanência por etapa", Description: "Intervalos por etapa: espera de revisão de PR e estados do workflow Linear (prefixo linear:). Média só orienta; mediana e p85 com amostra mínima de 10 estão em v_metrics. Duração ausente indica transição faltante ou saída fora da janela, não tempo zero.", SQL: `SELECT stage, COUNT(*) AS intervals, SUM(duration_valid) AS valid_durations, SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) AS open_at_window_end, AVG(CASE WHEN duration_valid = 1 THEN elapsed_seconds END) / 3600.0 AS avg_valid_hours, MAX(CASE WHEN duration_valid = 1 THEN elapsed_seconds END) / 3600.0 AS max_valid_hours FROM v_stage_times GROUP BY stage ORDER BY stage`},
 	}
 }
