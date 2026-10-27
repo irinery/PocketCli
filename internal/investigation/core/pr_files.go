@@ -77,7 +77,9 @@ func (c *Core) collectPRFiles(ctx context.Context, plan contract.Plan, r contrac
 				continue
 			}
 			locator := fmt.Sprintf("%s:pr:%d:file:%s", r.Name, pr.Number, item.Filename)
-			e, err := c.evidence("github", locator, pr.UpdatedAt, raw)
+			// The file entry has no updated_at of its own. PR.updated_at can
+			// change because of unrelated activity on the pull request.
+			e, err := c.evidence("github", locator, "", raw)
 			if err != nil {
 				return err
 			}

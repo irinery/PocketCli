@@ -99,7 +99,22 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			}
 			reusePriorFileGraph(&d, prior, plan.WindowEnd, referenced)
 			reusePriorPRCommitGraph(&d, prior, plan.WindowEnd, referenced)
+			prIDs := make(map[string]bool, len(prior.PullRequests))
+			for _, pr := range prior.PullRequests {
+				prIDs[pr.ID] = true
+			}
+			prFileEvidenceIDs := make(map[string]bool)
+			for _, link := range prior.Links {
+				if link.Relation == "modifies_file" && prIDs[link.SourceID] {
+					prFileEvidenceIDs[link.EvidenceID] = true
+				}
+			}
 			for _, evidence := range prior.Evidence {
+				if prFileEvidenceIDs[evidence.ID] {
+					// Old mappings copied PR.updated_at onto individual file
+					// evidence even though the files API has no such field.
+					evidence.SourceUpdatedAt = ""
+				}
 				if referenced[evidence.ID] || timestampInWindow(plan.WindowStart, plan.WindowEnd, evidence.SourceUpdatedAt) {
 					d.Evidence = append(d.Evidence, evidence)
 				}
