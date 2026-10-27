@@ -119,6 +119,11 @@ func New(reader contract.ReportReader, dir, chromium string, demo bool, annotati
 	if chromium == "" {
 		return nil, errors.New("ERR_PDF_DEPENDENCY: instale Chromium ou Google Chrome localmente")
 	}
+	resolvedChromium, err := exec.LookPath(chromium)
+	if err != nil {
+		return nil, errors.New("ERR_PDF_DEPENDENCY: executável Chromium configurado não encontrado ou sem permissão")
+	}
+	chromium = resolvedChromium
 	if pdfinfo == "" {
 		return nil, errors.New("ERR_PDF_DEPENDENCY: instale Poppler para validar páginas (pdfinfo)")
 	}

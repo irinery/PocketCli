@@ -32,6 +32,8 @@ Fila de PDFs S08: a composição limita a tentativa inteira a 120 segundos, incl
 
 Pré-requisitos: Go 1.22 ou posterior, `gofmt`, compilador C para CGO, `git`, `sh`; para o PDF automático, Chromium/Google Chrome e `pdfinfo` (Poppler). Não são baixados durante a investigação. No macOS, se o navegador não estiver no `PATH`, configure `POCKETCLI_CHROMIUM` com o caminho absoluto do executável.
 
+`pocket investigate doctor` verifica o motor SQLite e as dependências locais do PDF. Um `POCKETCLI_CHROMIUM` configurado para caminho inexistente ou não executável é informado antes da coleta. Valide com `go test -buildvcs=false -run TestInvestigationDoctorReportsInvalidChromiumBeforeCollection -count=1 ./cmd/pocket` (Go 1.22+, diretório temporário, sem credenciais, rede, Chromium ou Poppler).
+
 ```sh
 gofmt -w cmd/pocket/investigate_command.go cmd/pocket/investigate_services.go internal/investigation/core internal/investigation/collect internal/investigation/gitmirror internal/investigation/storage internal/investigation/query internal/investigation/rules internal/investigation/secrets internal/investigation/web
 go test -buildvcs=false ./internal/investigation/web
