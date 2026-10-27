@@ -56,7 +56,7 @@ func (c *Client) recordRequest(ctx context.Context, source, method, endpoint str
 		DurationMS: duration, Status: status, RecordCount: recordCount,
 		WireBytes: wireBytes, CacheHit: cacheHit,
 	}
-	if source == "github" {
+	if source == "github" && !isGitHubGraphQLRequest(method, endpoint) {
 		receipt.RequestedAPIVersion = githubAPIVersion
 		if len(selectedVersion) == 10 {
 			if parsed, err := time.Parse("2006-01-02", selectedVersion); err == nil && parsed.Format("2006-01-02") == selectedVersion {
@@ -78,6 +78,9 @@ func logicalEndpoint(source, endpoint string) string {
 	if err != nil {
 		return "/unknown"
 	}
+	if source == "github" && strings.HasSuffix(u.Path, "/graphql") {
+		return "/graphql"
+	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		return "/"
@@ -96,6 +99,14 @@ func logicalEndpoint(source, endpoint string) string {
 		}
 	}
 	return "/" + strings.Join(parts, "/")
+}
+
+func isGitHubGraphQLRequest(method, endpoint string) bool {
+	if method != "POST" {
+		return false
+	}
+	u, err := url.Parse(endpoint)
+	return err == nil && strings.HasSuffix(u.Path, "/graphql")
 }
 
 func responseRecordCount(body []byte) int {
