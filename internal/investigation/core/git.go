@@ -23,6 +23,7 @@ type gitObserver interface {
 	ChangedFiles(context.Context, string, int) ([]gitmirror.ChangedFile, bool, error)
 	WalkTree(context.Context, string, func(gitmirror.TreeEntry) (bool, error)) (bool, error)
 	ListHeads(context.Context, string, []byte, int, int64) ([]gitmirror.HeadRef, bool, int64, error)
+	IsAncestor(context.Context, string, string) (bool, bool, error)
 }
 
 type gitMirrorFactory func(string) (gitObserver, error)

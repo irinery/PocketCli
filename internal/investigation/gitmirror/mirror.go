@@ -50,6 +50,36 @@ type Commit struct {
 	CommittedAt string
 }
 
+// IsAncestor checks only commits already present in the private mirror. A
+// missing object or a negative result from a shallow graph is inconclusive.
+func (m *Mirror) IsAncestor(ctx context.Context, ancestor, descendant string) (isAncestor, known bool, err error) {
+	if !oidPattern.MatchString(ancestor) || !oidPattern.MatchString(descendant) {
+		return false, false, ErrCorrupt
+	}
+	for _, oid := range []string{ancestor, descendant} {
+		_, status := m.commandStatus(ctx, "", nil, "cat-file", "-e", oid+"^{commit}")
+		if err := ctx.Err(); err != nil {
+			return false, false, err
+		}
+		if status != 0 {
+			return false, false, nil
+		}
+	}
+	_, status := m.commandStatus(ctx, "", nil, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err := ctx.Err(); err != nil {
+		return false, false, err
+	}
+	switch status {
+	case 0:
+		return true, true, nil
+	case 1:
+		if !m.shallow(ctx) {
+			return false, true, nil
+		}
+	}
+	return false, false, nil
+}
+
 // WalkCommits streams the graph reachable from a fixed OID without loading
 // trees or blobs. Returning false from visit leaves the remaining graph for a
 // later refresh. The git process is stopped before the function returns.
