@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -72,6 +73,34 @@ func TestGitHub304ReusesPersistedRepresentationWithoutTransferBytes(t *testing.T
 	}
 	if err := store.Get(runStatsKind, "run-refresh", &stats); err != nil || stats.ReuseCounter != 3 {
 		t.Fatalf("contador persistido após objeto Git: %+v err=%v", stats, err)
+	}
+}
+
+func TestLegacyCacheEchoIsDiscardedBeforeNetworkOrReuse(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const endpoint = "https://api.github.com/user/repos"
+	body := []byte(`[{"title":"topsecret"}]`)
+	keyHash := sha256.Sum256([]byte("github:" + endpoint + ":topsecret"))
+	key := hex.EncodeToString(keyHash[:])
+	bodyHash := sha256.Sum256(body)
+	if err := store.Put(cacheKind, cacheSlot(key), persistedETagEntry{Key: key, ETag: `"old"`, Body: body, SHA256: hex.EncodeToString(bodyHash[:])}); err != nil {
+		t.Fatal(err)
+	}
+	client := secretClient(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("cache com credencial não deveria chegar à rede")
+		return nil, nil
+	})
+	client.SetCacheStore(store)
+	data, _, _, _, err := client.GetGitHubWithBytes(context.Background(), endpoint)
+	if err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") || data != nil || strings.Contains(err.Error(), "topsecret") {
+		t.Fatalf("cache legado não foi bloqueado: data=%s err=%v", data, err)
+	}
+	content, err := os.ReadFile(filepath.Join(store.Root, cacheKind, cacheSlot(key)+".json"))
+	if err != nil || strings.Contains(string(content), "topsecret") {
+		t.Fatalf("slot de cache não foi descartado: %s err=%v", content, err)
 	}
 }
 

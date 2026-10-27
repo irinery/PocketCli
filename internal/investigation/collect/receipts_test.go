@@ -121,7 +121,7 @@ func TestRequestReceiptPersistsEachRetryAndForbiddenWithoutBody(t *testing.T) {
 	client := secretClient(t, func(*http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
-			res := response(503, `{"message":"topsecret"}`)
+			res := response(503, `{"message":"temporarily unavailable"}`)
 			res.Header.Set("Retry-After", "0")
 			return res, nil
 		}
@@ -140,7 +140,11 @@ func TestRequestReceiptPersistsEachRetryAndForbiddenWithoutBody(t *testing.T) {
 	seen := map[int]bool{}
 	for _, receipt := range receipts {
 		seen[receipt.Status] = true
-		if receipt.RecordCount != 0 || receipt.WireBytes != int64(len(`{"message":"topsecret"}`)) || receipt.CacheHit || time.Since(receipt.StartedAt) > time.Minute {
+		wantBytes := len(`{"message":"topsecret"}`)
+		if receipt.Status == 503 {
+			wantBytes = len(`{"message":"temporarily unavailable"}`)
+		}
+		if receipt.RecordCount != 0 || receipt.WireBytes != int64(wantBytes) || receipt.CacheHit || time.Since(receipt.StartedAt) > time.Minute {
 			t.Fatalf("recibo de falha: %+v", receipt)
 		}
 		content, err := os.ReadFile(filepath.Join(store.Root, requestReceiptKind, receipt.ID+".json"))

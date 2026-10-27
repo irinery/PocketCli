@@ -197,7 +197,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 	if _, err := secrets.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"}); err != nil {
 		t.Fatal(err)
 	}
-	transport := &fakeTransport{title: "Original test-secret"}
+	transport := &fakeTransport{title: "Original PR"}
 	c, err := NewCore(CoreConfig{Store: store, Secrets: secrets, HTTPClient: &http.Client{Transport: transport}, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
@@ -258,7 +258,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if old.Rows[0][0].Value != "Original [REDACTED]" {
+	if old.Rows[0][0].Value != "Original PR" {
 		t.Fatalf("old=%+v", old)
 	}
 	newResult, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run2.SnapshotID, SQL: "SELECT title FROM v_pull_requests"})
