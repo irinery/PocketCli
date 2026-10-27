@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.15.0"
+const Version = "1.16.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -520,6 +520,7 @@ func metrics(d query.Dataset) []contract.Metric {
 	out = append(out, reworkWindowMetrics(d)...)
 	out = append(out, cycleTimeMetrics(d)...)
 	out = append(out, openAgingMetrics(d)...)
+	out = append(out, linearStageMetrics(d)...)
 	return out
 }
 

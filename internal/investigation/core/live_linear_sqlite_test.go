@@ -40,17 +40,11 @@ func TestRealLinearToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chromium := os.Getenv("POCKETCLI_CHROMIUM")
-	var pdf *report.Finalizer
-	if chromium == "" {
-		c.SetFinalizer(&fakeFinalizer{core: c})
-	} else {
-		pdf, err = report.New(c, filepath.Join(store.Root, "reports"), chromium, false, nil, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c.SetFinalizer(pdf)
+	pdf, err := report.New(c, filepath.Join(store.Root, "reports"), false, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	c.SetFinalizer(pdf)
 	now := time.Now().UTC()
 	plan, err := c.PreparePlan(context.Background(), contract.PlanInput{
 		SchemaVersion: contract.Version,

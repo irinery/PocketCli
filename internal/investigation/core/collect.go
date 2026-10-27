@@ -103,6 +103,7 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			for _, pr := range prior.PullRequests {
 				prIDs[pr.ID] = true
 			}
+			retainLinearStages(&d, prior.Stages, plan.WindowStart, plan.WindowEnd, referenced)
 			prFileEvidenceIDs := make(map[string]bool)
 			prMappingEvidenceIDs := make(map[string]bool)
 			prFileIDs := make(map[string]bool)
@@ -267,55 +268,89 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				}
 			}
 		}
-		journalID := storage.Hash([]byte(plan.ID + ":" + r.ID + ":" + col.name))
-		journal := githubJournal{PlanID: plan.ID, ResourceID: r.ID, Collection: col.name, Items: []json.RawMessage{}}
-		if err := c.store.Get("journals", journalID, &journal); err == nil {
-			if journal.PlanID != plan.ID || journal.ResourceID != r.ID || journal.Collection != col.name {
-				return fault("ERR_AUDIT_FAILED", "journal de coleta incompatível")
-			}
-		} else if !os.IsNotExist(err) {
-			return fault("ERR_AUDIT_FAILED", "journal de coleta corrompido")
-		}
-		err = nil
-		if !journal.Complete && journal.Pages < 20 {
-			path := col.path
-			if journal.Cursor != "" {
-				path = journal.Cursor
-			}
-			successful := 0
-			var count int
-			count, err = c.collector.GitHubWalk(ctx, path, 20-journal.Pages, cutoff, func(page []json.RawMessage, next string, responseBytes int64) error {
-				successful++
-				journal.Items = append(journal.Items, page...)
-				journal.Pages++
-				journal.Cursor = next
-				journal.Complete = next == ""
-				if e := c.store.Put("journals", journalID, journal); e != nil {
-					return fault("ERR_AUDIT_FAILED", "falha ao persistir página")
-				}
-				if e := c.saveSourceCheckpoint(&cursor, plan.ID, next); e != nil {
-					return e
-				}
-				run.Requests++
-				run.Bytes += responseBytes
-				if !c.saveRun(run) {
-					return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
-				}
-				if run.Bytes > plan.Input.Limits.MaxTransferBytes {
-					return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência atingido")
-				}
-				return nil
-			})
-			if count > successful {
-				run.Requests += int64(count - successful)
-				if !c.saveRun(run) {
-					return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
-				}
+		// Without a usable delta, the list used to be walked to the start of
+		// the repository even for a 30-day window. A bounded window instead
+		// needs (a) every currently open item, because open items count as
+		// active regardless of their last update, and (b) every item updated
+		// since the window start. The open walk runs first: any state change
+		// between the two walks bumps updated_at, so the item reappears at the
+		// top of the bounded walk. An unbounded window keeps the full walk.
+		windowBounded := false
+		openPath := ""
+		if cutoff == "" && plan.WindowStart != "" {
+			windowBounded = true
+			cutoff = plan.WindowStart
+			if plan.Input.Period.Preset != "custom" {
+				openPath = strings.Replace(col.path, "state=all", "state=open", 1)
 			}
 		}
-		if !journal.Complete && err == nil {
-			err = fault("ERR_RESOURCE_EXHAUSTED", "paginação GitHub excedeu limite")
+		walk := func(name, firstPath, walkCutoff string, saveCheckpoint bool) (githubJournal, error) {
+			journalID := storage.Hash([]byte(plan.ID + ":" + r.ID + ":" + name))
+			journal := githubJournal{PlanID: plan.ID, ResourceID: r.ID, Collection: name, Items: []json.RawMessage{}}
+			if err := c.store.Get("journals", journalID, &journal); err == nil {
+				if journal.PlanID != plan.ID || journal.ResourceID != r.ID || journal.Collection != name {
+					return journal, fault("ERR_AUDIT_FAILED", "journal de coleta incompatível")
+				}
+			} else if !os.IsNotExist(err) {
+				return journal, fault("ERR_AUDIT_FAILED", "journal de coleta corrompido")
+			}
+			var err error
+			if !journal.Complete && journal.Pages < 20 {
+				path := firstPath
+				if journal.Cursor != "" {
+					path = journal.Cursor
+				}
+				successful := 0
+				var count int
+				count, err = c.collector.GitHubWalk(ctx, path, 20-journal.Pages, walkCutoff, func(page []json.RawMessage, next string, responseBytes int64) error {
+					successful++
+					journal.Items = append(journal.Items, page...)
+					journal.Pages++
+					journal.Cursor = next
+					journal.Complete = next == ""
+					if e := c.store.Put("journals", journalID, journal); e != nil {
+						return fault("ERR_AUDIT_FAILED", "falha ao persistir página")
+					}
+					if saveCheckpoint {
+						if e := c.saveSourceCheckpoint(&cursor, plan.ID, next); e != nil {
+							return e
+						}
+					}
+					run.Requests++
+					run.Bytes += responseBytes
+					if !c.saveRun(run) {
+						return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
+					}
+					if run.Bytes > plan.Input.Limits.MaxTransferBytes {
+						return fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência atingido")
+					}
+					return nil
+				})
+				if count > successful {
+					run.Requests += int64(count - successful)
+					if !c.saveRun(run) {
+						return journal, fault("ERR_AUDIT_FAILED", "falha ao auditar request")
+					}
+				}
+			}
+			if !journal.Complete && err == nil {
+				err = fault("ERR_RESOURCE_EXHAUSTED", "paginação GitHub excedeu limite")
+			}
+			return journal, err
 		}
+		var openJournal githubJournal
+		var openErr error
+		if openPath != "" {
+			openJournal, openErr = walk(col.name+":open", openPath, "", false)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var walkErr *contract.ErrorResponse
+			if errors.As(openErr, &walkErr) && (walkErr.Code == "ERR_AUDIT_FAILED" || walkErr.Code == "ERR_RESOURCE_EXHAUSTED") {
+				return openErr
+			}
+		}
+		journal, err := walk(col.name, col.path, cutoff, true)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -323,7 +358,30 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 		if errors.As(err, &collectionErr) && (collectionErr.Code == "ERR_AUDIT_FAILED" || collectionErr.Code == "ERR_RESOURCE_EXHAUSTED") {
 			return err
 		}
-		items := journal.Items
+		if err == nil {
+			err = openErr
+		}
+		// The bounded walk is newer than the open walk; keep its version of
+		// an item seen in both and count each item once.
+		items := append([]json.RawMessage{}, journal.Items...)
+		seenItems := make(map[int64]bool, len(items))
+		for _, raw := range items {
+			var key struct {
+				ID int64 `json:"id"`
+			}
+			if json.Unmarshal(raw, &key) == nil && key.ID != 0 {
+				seenItems[key.ID] = true
+			}
+		}
+		for _, raw := range openJournal.Items {
+			var key struct {
+				ID int64 `json:"id"`
+			}
+			if json.Unmarshal(raw, &key) == nil && key.ID != 0 && seenItems[key.ID] {
+				continue
+			}
+			items = append(items, raw)
+		}
 		status := "complete"
 		reason := ""
 		if err != nil {
@@ -336,9 +394,10 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			if len(items) == 0 && status == "partial" {
 				status = "unavailable"
 			}
-		} else if cutoff != "" || journal.Pages > 1 {
+		} else if (cutoff != "" && !windowBounded) || journal.Pages > 1 || openJournal.Pages > 1 {
 			// GitHub list pagination has no snapshot isolation. An item moved
 			// between pages can be missed even when each response succeeds.
+			// A delta also relies on retained items instead of a fresh list.
 			status = "partial"
 			reason = "lista paginada ou delta sem snapshot estável; reconciliação pendente"
 		}
@@ -883,6 +942,10 @@ func linearIssueOutcome(stateType, stateName string) string {
 		return "duplicate"
 	}
 	switch kind {
+	case "duplicate":
+		// Linear workspaces such as Somos UNI expose a dedicated state type
+		// for duplicates; the type is authoritative even if the name changes.
+		return "duplicate"
 	case "completed":
 		return "completed"
 	case "canceled", "cancelled":

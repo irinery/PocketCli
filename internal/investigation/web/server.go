@@ -34,7 +34,17 @@ type PreviewOptions struct {
 	DataDir         string
 	QueryHistory    *queries.Store
 	ReportJobs      *ReportJobs
+	// PDFUnavailableReason is the sanitized dependency error from the
+	// composition (for example an unwritable report directory). It is shown in
+	// /capabilities before collection; it never contains credentials.
+	PDFUnavailableReason string
 }
+
+// ContractHeader carries the contract version the browser assets were built
+// for. A request that declares a different version is rejected before any
+// handler interprets its DTOs (RFC 01 S01-05, RFC 02 L01-05).
+const ContractHeader = "X-Investigate-Contract"
+
 type EditorialService interface {
 	Models(context.Context) ([]editorial.Model, error)
 	Preview(context.Context, editorial.Selection) (editorial.Preview, error)
@@ -210,6 +220,10 @@ func (h *Handler) authenticated(r *http.Request) (string, bool) {
 }
 func (h *Handler) api(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	if declared := r.Header.Get(ContractHeader); declared != "" && declared != contract.Version {
+		h.writeError(w, http.StatusConflict, "ERR_CONTRACT_MISMATCH", "Interface local usa contrato "+contractLabel(declared)+"; o servidor exige "+contract.Version+". Recarregue a página servida por este processo.")
+		return
+	}
 	if path == "/session/unlock" && r.Method == http.MethodPost {
 		if !h.sameOrigin(r) {
 			h.writeError(w, http.StatusForbidden, "ERR_ORIGIN", "Origem local inválida.")
@@ -377,7 +391,15 @@ func (h *Handler) ownsRun(w http.ResponseWriter, ctx context.Context, id string)
 func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, sid string) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if r.Method == http.MethodGet && path == "/capabilities" {
-		h.writeJSON(w, 200, map[string]any{"contract": contract.Version, "demo": h.options.Demo, "modules": []string{"github_issues", "code_history"}, "pdf_available": h.reports != nil, "claude_available": h.editorial != nil})
+		capabilities := map[string]any{"contract": contract.Version, "demo": h.options.Demo, "modules": []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"}, "pdf_available": h.reports != nil, "claude_available": h.editorial != nil}
+		if h.reports == nil {
+			reason := strings.TrimSpace(h.options.PDFUnavailableReason)
+			if reason == "" {
+				reason = "ERR_PDF_DEPENDENCY: renderizador PDF não configurado"
+			}
+			capabilities["pdf_unavailable_reason"] = reason
+		}
+		h.writeJSON(w, 200, capabilities)
 		return
 	}
 	if r.Method == http.MethodPost && path == "/setup/parse" {
@@ -698,7 +720,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if path == "/reports" && r.Method == http.MethodPost {
 		if h.reports == nil {
-			h.unavailable(w, "PDF (Chromium/pdfinfo)")
+			h.unavailable(w, "PDF")
 			return
 		}
 		var in contract.FinalizeRequest
@@ -780,7 +802,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if len(parts) == 2 && parts[0] == "editorial" && parts[1] == "models" && r.Method == http.MethodGet {
 		if h.editorial == nil {
-			h.unavailable(w, "Claude editorial")
+			h.llmDisabled(w)
 			return
 		}
 		out, err := h.editorial.Models(r.Context())
@@ -789,7 +811,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if len(parts) == 2 && parts[0] == "editorial" && parts[1] == "drafts" && r.Method == http.MethodGet {
 		if h.editorial == nil {
-			h.unavailable(w, "Claude editorial")
+			h.llmDisabled(w)
 			return
 		}
 		if !h.ownsSnapshot(w, r.Context(), r.URL.Query().Get("snapshot_id")) {
@@ -800,7 +822,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if path == "/editorial/preview" && r.Method == http.MethodPost {
 		if h.editorial == nil {
-			h.unavailable(w, "Claude editorial")
+			h.llmDisabled(w)
 			return
 		}
 		var in editorial.Selection
@@ -819,7 +841,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if path == "/editorial/generate" && r.Method == http.MethodPost {
 		if h.editorial == nil {
-			h.unavailable(w, "Claude editorial")
+			h.llmDisabled(w)
 			return
 		}
 		var in editorial.GenerateInput
@@ -845,7 +867,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	}
 	if len(parts) == 3 && parts[0] == "editorial" && (parts[2] == "accept" || parts[2] == "reject") && r.Method == http.MethodPost {
 		if h.editorial == nil {
-			h.unavailable(w, "Claude editorial")
+			h.llmDisabled(w)
 			return
 		}
 		if !h.options.Demo {
@@ -1071,6 +1093,12 @@ func (h *Handler) validateAnnotationTarget(ctx context.Context, in annotations.C
 	}
 	return nil
 }
+
+// llmDisabled answers editorial routes when no editorial service is composed.
+// Analysis, SQL, comments and PDF stay available (RFC C.1 R12).
+func (h *Handler) llmDisabled(w http.ResponseWriter) {
+	h.writeError(w, http.StatusServiceUnavailable, "ERR_LLM_DISABLED", "Claude editorial desativado nesta sessão; análise, SQL, comentários e PDF continuam disponíveis.")
+}
 func (h *Handler) unavailable(w http.ResponseWriter, name string) {
 	h.writeError(w, 501, "ERR_UNAVAILABLE", name+" indisponível nesta sessão.")
 }
@@ -1148,4 +1176,20 @@ func Listen(ctx context.Context, h http.Handler, options PreviewOptions) (net.Li
 }
 func CodeMessage(address, code string) string {
 	return fmt.Sprintf("Abra %s e digite o código de desbloqueio: %s", address, code)
+}
+
+// contractLabel bounds the echoed header so an unexpected client value cannot
+// inflate or inject content into the sanitized error message.
+func contractLabel(value string) string {
+	const max = 40
+	clean := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, value)
+	if len(clean) > max {
+		clean = clean[:max] + "…"
+	}
+	return strconv.Quote(clean)
 }

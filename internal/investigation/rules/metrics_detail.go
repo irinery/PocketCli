@@ -619,3 +619,82 @@ func openAgingMetrics(d query.Dataset) []contract.Metric {
 		{ID: "metric-open-aging-p85", Name: "Idade p85 de itens abertos", Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(p85, 10)}, Unit: "seconds", SampleSize: int64(n), Definition: "Nearest rank ceil(0.85*n) da idade dos itens abertos", Limitations: limits},
 	}
 }
+
+// linearStagePrefix mirrors core.LinearStagePrefix; rules cannot import core.
+const linearStagePrefix = "linear:"
+
+// linearStageMetrics measures time spent per Linear workflow stage and team.
+// Only intervals whose exit was observed inside the window with a consistent
+// transition carry a duration; quantiles need at least ten of them. Intervals
+// still open at the window end are counted separately, without a duration.
+func linearStageMetrics(d query.Dataset) []contract.Metric {
+	teams := make(map[string]string, len(d.Issues))
+	for _, issue := range d.Issues {
+		if issue.Source == "linear" && issue.TeamID != "" {
+			teams[issue.ID] = issue.TeamID
+		}
+	}
+	type cohort struct {
+		team, stage  string
+		closed, open int64
+		values       []int64
+	}
+	groups := make(map[string]*cohort)
+	for _, stage := range d.Stages {
+		if !strings.HasPrefix(stage.Stage, linearStagePrefix) {
+			continue
+		}
+		team := teams[stage.SubjectID]
+		if team == "" {
+			continue
+		}
+		name := strings.TrimPrefix(stage.Stage, linearStagePrefix)
+		key := team + "\x00" + name
+		group := groups[key]
+		if group == nil {
+			group = &cohort{team: team, stage: name}
+			groups[key] = group
+		}
+		switch {
+		case stage.EndedAt == "":
+			group.open++
+		case observedInWindow(stage.EndedAt, d.Snapshot):
+			group.closed++
+			if stage.DurationValid && stage.ElapsedSeconds != nil && *stage.ElapsedSeconds >= 0 {
+				group.values = append(group.values, *stage.ElapsedSeconds)
+			}
+		}
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]contract.Metric, 0, 3*len(keys))
+	for _, key := range keys {
+		group := groups[key]
+		label := "etapa \"" + group.stage + "\" do team " + group.team
+		values := append([]int64(nil), group.values...)
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		n := len(values)
+		median, p85 := contract.Cell{Kind: "null"}, contract.Cell{Kind: "null"}
+		limits := []string{"Segundos decorridos no estado do Linear, não horas trabalhadas; não identifica causa nem responsável pela espera.", "Somente históricos completos; saída por transição de outro estado indica transição ausente e não gera duração."}
+		if n < 10 {
+			limits = append(limits, "Amostra insuficiente: comparação insuficiente entre grupos; quantis não calculados.")
+		} else {
+			value := float64(values[n/2])
+			if n%2 == 0 {
+				value = (float64(values[n/2-1]) + float64(values[n/2])) / 2
+			}
+			median = contract.Cell{Kind: "real", Value: strconv.FormatFloat(value, 'f', -1, 64)}
+			p85 = contract.Cell{Kind: "integer", Value: strconv.FormatInt(values[int(math.Ceil(0.85*float64(n)))-1], 10)}
+		}
+		count, closed := int64(n), group.closed
+		out = append(out,
+			contract.Metric{ID: metricID("metric-stage-median-team", key), Name: "Permanência mediana na " + label, Value: median, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Mediana convencional entre a entrada no estado e a transição seguinte que sai dele, para saídas observadas na janela.", Limitations: limits},
+			contract.Metric{ID: metricID("metric-stage-p85-team", key), Name: "Permanência p85 na " + label, Value: p85, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Nearest rank ceil(0.85*n) da permanência no estado, para saídas observadas na janela.", Limitations: limits},
+			integerMetric(metricID("metric-stage-open-team", key), "Itens ainda na "+label+" ao fim da janela", group.open, group.open, nil, "Intervalos iniciados antes do fim da janela sem transição de saída observada até o fim da janela.", "Contagem de permanência em aberto; não mede atraso nem prioridade."),
+		)
+	}
+	return out
+}

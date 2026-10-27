@@ -1,8 +1,7 @@
 package report
 
 import (
-	"bytes"
-	"html/template"
+	"context"
 	"strings"
 	"testing"
 
@@ -15,23 +14,19 @@ func TestPartialCoverageAppearsOnCoverAndKeepsEveryReason(t *testing.T) {
 		{Source: "linear", ResourceID: "team-1", Collection: "issues", Status: "unauthorized", Reason: "Leitura negada para o time"},
 	}}
 	doc := model{Snapshot: snapshot, CoverageStatus: coverageLabel(snapshot.Coverage)}
-	tmpl, err := template.New("report").Funcs(template.FuncMap{"recordID": recordID, "intPtr": formatIntPtr, "floatPtr": formatFloatPtr}).Parse(reportTemplate)
+	layout, err := layoutReport(context.Background(), doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output bytes.Buffer
-	if err := tmpl.Execute(&output, doc); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
+	text := layout.text()
 	for _, want := range []string{
-		"<b>Cobertura:</b> parcial",
-		"<h2>2. Cobertura — parcial</h2>",
+		"Cobertura: parcial",
+		"2. Cobertura — parcial",
 		"Fila de revisões ainda pendente",
 		"Leitura negada para o time",
 	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("PDF HTML omitiu %q", want)
+		if !strings.Contains(text, want) {
+			t.Fatalf("PDF omitiu %q", want)
 		}
 	}
 	if got := coverageLabel([]contract.Coverage{{Status: "complete"}, {Status: "not_selected"}}); got != "completa" {
@@ -46,16 +41,12 @@ func TestNullMetricInReportShowsUncalculatedValueAndSample(t *testing.T) {
 	eligible := int64(4)
 	metric := contract.Metric{ID: "cycle-small", Name: "Tempo de ciclo mediano", Value: contract.Cell{Kind: "null"}, Unit: "seconds", SampleSize: 3, EligibleSize: &eligible, Limitations: []string{"comparação insuficiente"}}
 	doc := model{Records: []contract.ReportRecord{{Kind: "metric", Metric: &metric}}}
-	tmpl, err := template.New("report").Funcs(template.FuncMap{"recordID": recordID, "intPtr": formatIntPtr, "floatPtr": formatFloatPtr}).Parse(reportTemplate)
+	layout, err := layoutReport(context.Background(), doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output bytes.Buffer
-	if err := tmpl.Execute(&output, doc); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
-	if !strings.Contains(html, "Tempo de ciclo mediano = não calculado · amostra 3 / 4") || !strings.Contains(html, "comparação insuficiente") {
-		t.Fatalf("amostra pequena não ficou explícita no PDF HTML: %s", html)
+	text := layout.text()
+	if !strings.Contains(text, "Tempo de ciclo mediano = não calculado · amostra 3 / 4") || !strings.Contains(text, "comparação insuficiente") {
+		t.Fatalf("amostra pequena não ficou explícita no PDF: %s", text)
 	}
 }

@@ -80,7 +80,7 @@ func TestReadOnlyAndFixture(t *testing.T) {
 	if err != nil || large.Rows[0][0].Value != "9007199254740993" {
 		t.Fatalf("large integer=%+v err=%v", large, err)
 	}
-	want := map[string]int{"Q01": 2, "Q02": 2, "Q03": 1, "Q04": 1, "Q05": 1, "Q06": 1, "Q07": 7, "Q08": 0, "Q09": 2, "Q10": 1}
+	want := map[string]int{"Q01": 2, "Q02": 2, "Q03": 1, "Q04": 1, "Q05": 1, "Q06": 1, "Q07": 7, "Q08": 0, "Q09": 2, "Q10": 1, "Q11": 1}
 	for _, suggestion := range Catalog() {
 		result, err := q.Execute(context.Background(), "snap-demo-001", contract.QueryRequest{SnapshotID: "snap-demo-001", SQL: suggestion.SQL, Parameters: suggestion.Parameters})
 		if err != nil {

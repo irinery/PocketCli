@@ -42,10 +42,10 @@ func newInvestigateCommand() *cobra.Command {
 		} else {
 			fmt.Fprintln(cmd.OutOrStdout(), "investigate: Viewer; compile Agent com CGO_ENABLED=1 e -tags investigate_sqlite")
 		}
-		if _, err := report.New(c, filepath.Join(root, "reports"), os.Getenv("POCKETCLI_CHROMIUM"), false, nil, nil, nil); err != nil {
+		if _, err := report.New(c, filepath.Join(root, "reports"), false, nil, nil, nil); err != nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "investigate: PDF indisponível: %v\n", err)
 		} else {
-			fmt.Fprintln(cmd.OutOrStdout(), "investigate: PDF disponível (Chromium e pdfinfo)")
+			fmt.Fprintln(cmd.OutOrStdout(), "investigate: PDF disponível (renderizador interno)")
 		}
 		return nil
 	}})
@@ -219,10 +219,11 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	}
 	store := secrets.NewSessionStore()
 	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "investigation", GitHubEnabled: !f.noGitHub, LinearEnabled: !f.noLinear, Scope: &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}, Modules: contract.Modules{GitHubIssues: !f.noGitHub, CodeHistory: !f.noGitHub}, Period: contract.Period{Timezone: "America/Sao_Paulo"}}
-	c, err := newInvestigationCore(store)
+	services, err := newInvestigationServicesWithSecrets(store)
 	if err != nil {
 		return err
 	}
+	c := services.core
 	if !c.SQLAvailable() {
 		return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "motor completo indisponível; compile com CGO_ENABLED=1 e -tags investigate_sqlite"}
 	}
@@ -289,6 +290,9 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		if err := writeInvestigationOverridesJSON(os.Stderr, overrides); err != nil {
 			return err
 		}
+		if err := writeInvestigationPDFWarningJSON(os.Stderr, services.reportError); err != nil {
+			return err
+		}
 		if f.prepare {
 			return writeJSON(cmd.OutOrStdout(), plan)
 		}
@@ -296,7 +300,7 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
 			return err
 		}
-		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano"); err != nil {
+		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano", services.reportError); err != nil {
 			return err
 		}
 	}
@@ -346,10 +350,11 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("refresh não aceita --scope; use seletores explícitos")
 	}
 	store := secrets.NewSessionStore()
-	c, err := newInvestigationCore(store)
+	services, err := newInvestigationServicesWithSecrets(store)
 	if err != nil {
 		return err
 	}
+	c := services.core
 	if !c.SQLAvailable() {
 		return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "motor completo indisponível; compile com CGO_ENABLED=1 e -tags investigate_sqlite"}
 	}
@@ -382,6 +387,9 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		if err := writeInvestigationOverridesJSON(os.Stderr, overrides); err != nil {
 			return err
 		}
+		if err := writeInvestigationPDFWarningJSON(os.Stderr, services.reportError); err != nil {
+			return err
+		}
 		if f.prepare {
 			return writeJSON(cmd.OutOrStdout(), plan)
 		}
@@ -389,7 +397,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
 			return err
 		}
-		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano atualizado"); err != nil {
+		if err := printInvestigationPlanSummary(cmd.OutOrStdout(), plan, "Plano atualizado", services.reportError); err != nil {
 			return err
 		}
 	}
@@ -435,7 +443,28 @@ func promptLine(label string) (string, error) {
 	return promptLineFrom(os.Stdin, os.Stderr, label)
 }
 
-func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title string) error {
+// investigationPDFStatus describes the automatic PDF dependency check shown
+// before collection. An unavailable renderer never blocks the collection, but
+// the run ends in report_failed until a PDF is produced (RFC 02 L03-10).
+func investigationPDFStatus(reportErr error) string {
+	if reportErr == nil {
+		return "PDF automático: disponível (renderizador interno)"
+	}
+	return "PDF automático: indisponível — " + reportErr.Error() + ". A coleta pode continuar, mas o run termina em report_failed até gerar o PDF; nada é instalado automaticamente"
+}
+
+func writeInvestigationPDFWarningJSON(out io.Writer, reportErr error) error {
+	if reportErr == nil {
+		return nil
+	}
+	return json.NewEncoder(out).Encode(struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{Type: "warning", Code: "ERR_PDF_DEPENDENCY", Message: investigationPDFStatus(reportErr)})
+}
+
+func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title string, reportErr error) error {
 	dataDir, err := pocketpath.DataDir()
 	if err != nil {
 		return err
@@ -466,7 +495,8 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 			return err
 		}
 	}
-	return nil
+	_, err = fmt.Fprintln(out, investigationPDFStatus(reportErr))
+	return err
 }
 func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allowPrompt bool) error {
 	githubEnabled, linearEnabled := input.GitHubEnabled, input.LinearEnabled

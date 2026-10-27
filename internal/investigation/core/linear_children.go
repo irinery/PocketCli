@@ -141,6 +141,11 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 				lastComplete = issue.ID
 			}
 			observed += int64(len(items))
+			if collection.name == "history" && complete && err == nil {
+				if err := c.projectLinearStages(plan, issue, items, d); err != nil {
+					return err
+				}
+			}
 			for _, raw := range items {
 				if collection.name == "history" {
 					if err := c.projectLinearHistory(plan, issue, raw, d, run); err != nil {

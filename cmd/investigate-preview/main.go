@@ -23,7 +23,7 @@ import (
 func main() {
 	bind := flag.String("bind", "127.0.0.1", "endereço loopback local")
 	port := flag.Int("port", 0, "porta HTTP; 0 escolhe uma porta livre")
-	scenario := flag.String("scenario", "complete", "complete|empty|partial|unauthorized|rate_limited|offline|pdf_unavailable|large_report")
+	scenario := flag.String("scenario", "complete", "complete|empty|partial|unauthorized|rate_limited|offline|pdf_unavailable|large_report|rewritten_refs|llm_disabled|llm_invalid_output")
 	dataDir := flag.String("data-dir", "", "diretório local reservado para dados do preview")
 	flag.Parse()
 	if *dataDir == "" {
@@ -47,17 +47,35 @@ func main() {
 	core := mock.NewScenario(*scenario)
 	credentialStore := credentials.NewMemoryStore()
 	defer credentialStore.Clear()
-	editorialService, err := editorial.New(core, annotationStore, credentialStore, filepath.Join(*dataDir, "editorial"))
-	if err != nil {
-		log.Fatal(err)
+	// Interfaces stay nil (not typed-nil pointers) when no service exists.
+	var editorialService web.EditorialService
+	var editorialReader report.EditorialReader
+	switch *scenario {
+	case "llm_disabled":
+		// No editorial service: every other screen must keep working (R12).
+	case "llm_invalid_output":
+		service, err := editorial.NewWithDemoProvider(core, annotationStore, credentialStore, filepath.Join(*dataDir, "editorial"), "invalid_output")
+		if err != nil {
+			log.Fatal(err)
+		}
+		editorialService, editorialReader = service, service
+	default:
+		service, err := editorial.New(core, annotationStore, credentialStore, filepath.Join(*dataDir, "editorial"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		editorialService, editorialReader = service, service
 	}
 	var reports web.ReportService
 	if *scenario != "pdf_unavailable" {
-		if f, e := report.New(core, filepath.Join(*dataDir, "reports"), "", true, annotationStore, editorialService, queryStore); e == nil {
+		if f, e := report.New(core, filepath.Join(*dataDir, "reports"), true, annotationStore, editorialReader, queryStore); e == nil {
 			reports = f
 		} else {
 			log.Printf("PDF pendente: %v", e)
+			options.PDFUnavailableReason = e.Error()
 		}
+	} else {
+		options.PDFUnavailableReason = "ERR_PDF_DEPENDENCY: cenário pdf_unavailable (DEMO)"
 	}
 	handler, code, err := web.NewHandler(core, mock.Setup{}, credentialStore, editorialService, annotationStore, reports, options)
 	if err != nil {

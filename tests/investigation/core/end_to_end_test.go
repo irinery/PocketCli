@@ -1,3 +1,5 @@
+//go:build investigate_sqlite && cgo
+
 package core_test
 
 import (
@@ -7,7 +9,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -29,12 +30,8 @@ func (d deniedExternalTransport) RoundTrip(*http.Request) (*http.Response, error
 	return nil, errors.New("external network disabled for offline smoke")
 }
 
-// Opt-in offline product flow: typed import -> plan confirmation -> snapshot -> SQL -> real PDF.
+// Offline product flow: typed import -> plan confirmation -> snapshot -> SQL -> in-process PDF.
 func TestOfflineRuntimeToPDF(t *testing.T) {
-	chromium := os.Getenv("POCKETCLI_CHROMIUM")
-	if chromium == "" {
-		t.Skip("defina POCKETCLI_CHROMIUM para validar o fluxo PDF")
-	}
 	for _, name := range []string{"POCKETCLI_INVESTIGATE_GITHUB_TOKEN", "POCKETCLI_INVESTIGATE_LINEAR_KEY", "ANTHROPIC_API_KEY"} {
 		t.Setenv(name, "")
 	}
@@ -57,7 +54,15 @@ func TestOfflineRuntimeToPDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalizer, err := report.New(c, filepath.Join(root, "reports"), chromium, false, nil, nil, nil)
+	// A failed or timed-out assertion must not leave a run worker behind after the test.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := c.StopActiveRuns(ctx); err != nil {
+			t.Errorf("encerramento do Core: %v", err)
+		}
+	})
+	finalizer, err := report.New(c, filepath.Join(root, "reports"), false, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
