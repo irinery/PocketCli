@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"pocketcli/internal/investigation/annotations"
@@ -140,14 +142,35 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 	server := &http.Server{Handler: handler}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go func() { <-ctx.Done(); _ = server.Shutdown(context.Background()) }()
 	fmt.Fprintf(cmd.OutOrStdout(), "http://%s/\n", listener.Addr().String())
 	fmt.Fprintf(os.Stderr, "Código local de desbloqueio: %s\n", code)
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
-		return nil
+	return serveInvestigationHTTP(ctx, server, listener, 5*time.Second)
+}
+
+func serveInvestigationHTTP(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration) error {
+	shutdownSignal, cancelSignal := context.WithCancel(ctx)
+	defer cancelSignal()
+	shutdownDone := make(chan error, 1)
+	go func() {
+		<-shutdownSignal.Done()
+		deadline, cancel := context.WithTimeout(context.Background(), grace)
+		defer cancel()
+		err := server.Shutdown(deadline)
+		if err != nil {
+			_ = server.Close() // Cancels active requests, including a PDF render.
+		}
+		shutdownDone <- err
+	}()
+	serveErr := server.Serve(listener)
+	cancelSignal()
+	shutdownErr := <-shutdownDone
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
 	}
-	return err
+	if shutdownErr != nil {
+		return fmt.Errorf("ERR_TIMEOUT: encerramento do servidor local excedeu o prazo: %w", shutdownErr)
+	}
+	return nil
 }
 
 func reportInvestigation(cmd *cobra.Command, args []string) error {
