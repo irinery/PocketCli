@@ -45,8 +45,19 @@ func observedInWindow(at string, snapshot contract.Snapshot) bool {
 
 func actorMetrics(d query.Dataset) []contract.Metric {
 	issueByID := make(map[string]query.Issue, len(d.Issues))
+	assigned := make(map[string]int64)
+	completedEligible, assigneeUnknown := int64(0), int64(0)
 	for _, issue := range d.Issues {
 		issueByID[issue.ID] = issue
+		if issue.IsContext || !observedInWindow(issue.CompletedAt, d.Snapshot) {
+			continue
+		}
+		completedEligible++
+		if issue.AssigneeID == "" {
+			assigneeUnknown++
+		} else {
+			assigned[issue.AssigneeID]++
+		}
 	}
 	closures := make(map[string]int64)
 	reviews := make(map[string]map[string]bool)
@@ -82,12 +93,15 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 	for actor := range merged {
 		actors[actor] = true
 	}
+	for actor := range assigned {
+		actors[actor] = true
+	}
 	ids := make([]string, 0, len(actors))
 	for actor := range actors {
 		ids = append(ids, actor)
 	}
 	sort.Strings(ids)
-	out := make([]contract.Metric, 0, len(ids)*3)
+	out := make([]contract.Metric, 0, len(ids)*4+1)
 	for _, actor := range ids {
 		label := strings.TrimSpace(actor)
 		if len(label) > 128 {
@@ -97,6 +111,9 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 		if closures[actor] > 0 {
 			out = append(out, integerMetric(metricID("metric-closures-actor", actor), "Conclusões registradas por "+label, closures[actor], closures[actor], nil, "Transições de estado para concluído registradas com este ator na janela; quem registrou não necessariamente resolveu", limit))
 		}
+		if assigned[actor] > 0 {
+			out = append(out, integerMetric(metricID("metric-completed-assignee", actor), "Issues concluídas com responsável observado "+label, assigned[actor], assigned[actor], &completedEligible, "Issues não contextuais com completed_at na janela e assignee_id observado no snapshot", "Responsável do snapshot pode ser diferente do responsável no encerramento; não atribui execução, autoria ou produtividade."))
+		}
 		if merged[actor] > 0 {
 			out = append(out, integerMetric(metricID("metric-merged-prs-author", actor), "PRs mesclados de "+label, merged[actor], merged[actor], nil, "PRs com autor informado e merged_at na janela", limit))
 		}
@@ -104,6 +121,9 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 			count := int64(len(reviews[actor]))
 			out = append(out, integerMetric(metricID("metric-reviewed-prs-actor", actor), "PRs revisados por "+label, count, count, nil, "PRs distintos com evento de revisão humana deste ator na janela", limit))
 		}
+	}
+	if assigneeUnknown > 0 {
+		out = append(out, integerMetric("metric-completed-assignee-unknown", "Issues concluídas sem responsável conhecido", assigneeUnknown, assigneeUnknown, &completedEligible, "Issues não contextuais com completed_at na janela e assignee_id ausente no snapshot", "Ausência de responsável não identifica quem executou o trabalho."))
 	}
 	return out
 }
@@ -269,6 +289,51 @@ func reworkMetrics(d query.Dataset) []contract.Metric {
 		out = append(out, integerMetric(metricID("metric-rework", kind), "Retrabalho observado: "+kind, count, count, nil, "Ocorrências com evidência direta deste tipo na janela", "Contagem de ocorrências; não atribui causa, pessoa culpada ou taxa por entrega."))
 	}
 	out = append(out, integerMetric("metric-rework-undetermined-cause", "Retrabalho sem causa determinada", unknownCause, unknownCause, nil, "Ocorrências de retrabalho direto cuja causa permanece indeterminada", "Ausência de causa documentada não identifica responsável."))
+	return out
+}
+
+func cycleTimeMetrics(d query.Dataset) []contract.Metric {
+	cohorts := make(map[string][]int64)
+	eligible := make(map[string]int64)
+	for _, issue := range d.Issues {
+		if issue.IsContext || issue.TeamID == "" || !observedInWindow(issue.CompletedAt, d.Snapshot) {
+			continue
+		}
+		eligible[issue.TeamID]++
+		if issue.DurationValid && issue.CycleSeconds != nil && *issue.CycleSeconds >= 0 {
+			cohorts[issue.TeamID] = append(cohorts[issue.TeamID], *issue.CycleSeconds)
+		}
+	}
+	ids := make([]string, 0, len(cohorts))
+	for teamID := range cohorts {
+		ids = append(ids, teamID)
+	}
+	sort.Strings(ids)
+	out := make([]contract.Metric, 0, 2*len(ids))
+	for _, teamID := range ids {
+		values := cohorts[teamID]
+		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+		n := len(values)
+		median := float64(values[n/2])
+		if n%2 == 0 {
+			median = (float64(values[n/2-1]) + float64(values[n/2])) / 2
+		}
+		p85 := values[int(math.Ceil(0.85*float64(n)))-1]
+		label := strings.TrimSpace(teamID)
+		if len(label) > 128 {
+			label = label[:128]
+		}
+		limits := []string{"Segundos decorridos entre started_at e completed_at; não mede horas trabalhadas nem produtividade."}
+		if n < 10 {
+			limits = append(limits, "Amostra insuficiente para comparação entre grupos.")
+		}
+		count := int64(n)
+		eligibleCount := eligible[teamID]
+		out = append(out,
+			contract.Metric{ID: metricID("metric-cycle-median-team", teamID), Name: "Tempo de ciclo mediano no team " + label, Value: contract.Cell{Kind: "real", Value: strconv.FormatFloat(median, 'f', -1, 64)}, Unit: "seconds", SampleSize: count, EligibleSize: &eligibleCount, Definition: "Mediana convencional de cycle_seconds válido para issues concluídas na janela deste team", Limitations: limits},
+			contract.Metric{ID: metricID("metric-cycle-p85-team", teamID), Name: "Tempo de ciclo p85 no team " + label, Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(p85, 10)}, Unit: "seconds", SampleSize: count, EligibleSize: &eligibleCount, Definition: "Nearest rank ceil(0.85*n) de cycle_seconds válido para issues concluídas na janela deste team", Limitations: limits},
+		)
+	}
 	return out
 }
 

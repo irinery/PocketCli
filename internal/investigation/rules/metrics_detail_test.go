@@ -147,3 +147,55 @@ func TestReopenedIssueStaysInOpenAging(t *testing.T) {
 		t.Fatalf("reopened issue omitted from open aging: %+v", metrics)
 	}
 }
+
+func TestObservedAssigneeAndClosureActorRemainSeparate(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues: []query.Issue{
+			{ID: "assigned", AssigneeID: "assignee-1", State: "done", CompletedAt: "2026-01-10T00:00:00Z"},
+			{ID: "unassigned", State: "done", CompletedAt: "2026-01-11T00:00:00Z"},
+			{ID: "old", AssigneeID: "assignee-1", State: "done", CompletedAt: "2025-12-10T00:00:00Z"},
+		},
+		Events: []query.Event{{ID: "closure", EntityID: "assigned", Type: "state_changed", OldValue: "started", NewValue: "done", ActorID: "recorder-1", EventAt: "2026-01-10T00:00:00Z"}},
+	}
+	got := map[string]contract.Metric{}
+	for _, metric := range actorMetrics(d) {
+		got[metric.ID] = metric
+	}
+	for id, value := range map[string]string{
+		metricID("metric-closures-actor", "recorder-1"):     "1",
+		metricID("metric-completed-assignee", "assignee-1"): "1",
+		"metric-completed-assignee-unknown":                 "1",
+	} {
+		if metric, ok := got[id]; !ok || metric.Value.Value != value {
+			t.Fatalf("metric %s=%+v want %s", id, metric, value)
+		}
+	}
+	if got[metricID("metric-completed-assignee", "assignee-1")].EligibleSize == nil || *got[metricID("metric-completed-assignee", "assignee-1")].EligibleSize != 2 {
+		t.Fatal("assignee metric lost completed-issue denominator")
+	}
+}
+
+func TestCycleTimeMetricsUseOnlyValidCompletedIssuesInTeam(t *testing.T) {
+	a, b, c, invalid := int64(100), int64(300), int64(500), int64(900)
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues: []query.Issue{
+			{ID: "a", TeamID: "team-a", CompletedAt: "2026-01-04T00:00:00Z", DurationValid: true, CycleSeconds: &a},
+			{ID: "b", TeamID: "team-a", CompletedAt: "2026-01-05T00:00:00Z", DurationValid: true, CycleSeconds: &b},
+			{ID: "c", TeamID: "team-a", CompletedAt: "2026-01-06T00:00:00Z", DurationValid: true, CycleSeconds: &c},
+			{ID: "no-start", TeamID: "team-a", CompletedAt: "2026-01-06T00:00:00Z", CycleSeconds: &invalid},
+			{ID: "old", TeamID: "team-a", CompletedAt: "2025-12-06T00:00:00Z", DurationValid: true, CycleSeconds: &invalid},
+			{ID: "open", TeamID: "team-a", DurationValid: true, CycleSeconds: &invalid},
+		},
+	}
+	metrics := cycleTimeMetrics(d)
+	if len(metrics) != 2 || metrics[0].Value.Value != "300" || metrics[1].Value.Value != "500" {
+		t.Fatalf("cycle median/p85 include wrong issue: %+v", metrics)
+	}
+	for _, metric := range metrics {
+		if metric.SampleSize != 3 || metric.EligibleSize == nil || *metric.EligibleSize != 4 || !strings.Contains(strings.Join(metric.Limitations, " "), "Amostra insuficiente") {
+			t.Fatalf("cycle cohort or sample disclosure missing: %+v", metric)
+		}
+	}
+}
