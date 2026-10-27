@@ -948,7 +948,7 @@ func TestLinearJournalResumesFromCommittedCursor(t *testing.T) {
 	if err := c.collectTeam(context.Background(), plan, resource, first, &run); err != nil {
 		t.Fatal(err)
 	}
-	if firstCalls != 1 || secondCalls != 1 || len(first.Issues) != 1 || first.Coverage[0].Status != "partial" {
+	if firstCalls != 1 || secondCalls != 1 || len(first.Issues) != 1 || first.Coverage[0].Status != "unauthorized" {
 		t.Fatalf("first pass calls=%d,%d issues=%d coverage=%+v", firstCalls, secondCalls, len(first.Issues), first.Coverage)
 	}
 	second := &query.Dataset{}
