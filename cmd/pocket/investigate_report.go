@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"pocketcli/internal/investigation/annotations"
 	"pocketcli/internal/investigation/contract"
@@ -31,8 +34,15 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 	if in.SnapshotID == "" {
 		return empty, &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: "snapshot_id obrigatório"}
 	}
-	r.mu.Lock()
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	if err := lockReportCache(ctx, &r.mu); err != nil {
+		return empty, pdfAttemptError(err)
+	}
 	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return empty, pdfAttemptError(err)
+	}
 	lock, err := r.store.Lock("report-" + in.SnapshotID)
 	if err != nil {
 		return empty, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "outra geração de PDF está ativa"}
@@ -68,14 +78,45 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 	} else if !os.IsNotExist(err) {
 		return empty, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "índice do PDF corrompido"}
 	}
+	if err := ctx.Err(); err != nil {
+		return empty, pdfAttemptError(err)
+	}
 	artifact, err := r.inner.Finalize(ctx, in)
 	if err != nil || artifact.Status != "completed" {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return artifact, pdfAttemptError(ctx.Err())
+		}
 		return artifact, err
 	}
 	if err := r.store.Put("reportkeys", key, reportKey{ArtifactID: artifact.ID}); err != nil {
 		return empty, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao confirmar PDF"}
 	}
 	return artifact, nil
+}
+
+func pdfAttemptError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("ERR_TIMEOUT: orçamento de 120 segundos para o PDF esgotado: %w", err)
+	}
+	return err
+}
+
+func lockReportCache(ctx context.Context, mu *sync.Mutex) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if mu.TryLock() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (r *reportCache) Get(id string) (contract.ReportArtifact, error) { return r.inner.Get(id) }
