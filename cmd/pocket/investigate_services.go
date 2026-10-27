@@ -84,6 +84,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	port := 0
+	selectedSnapshot := ""
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--snapshot" {
 			i++
@@ -97,6 +98,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 			if snapshot.InvestigationID != args[0] {
 				return fmt.Errorf("ERR_FORBIDDEN: snapshot de outra investigação")
 			}
+			selectedSnapshot = snapshot.ID
 		} else if args[i] == "--port" {
 			i++
 			if i >= len(args) {
@@ -110,7 +112,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("flag inválida: %s", args[i])
 		}
 	}
-	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries})
+	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries})
 	if err != nil {
 		return err
 	}
