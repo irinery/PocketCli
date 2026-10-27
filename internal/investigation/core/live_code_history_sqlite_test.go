@@ -45,8 +45,8 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 		Scope:         &contract.Scope{Mode: "selected", Repositories: []string{repo}},
 		Period: contract.Period{Preset: "custom", FromDate: now.AddDate(0, 0, -1).Format("2006-01-02"),
 			ToDate: now.Format("2006-01-02"), Timezone: "UTC"},
-		Modules: contract.Modules{CodeHistory: true},
-		Limits: contract.Limits{GitHubRPH: 1200, MaxSessionMS: 180000,
+		Modules: contract.Modules{GitHubIssues: true, CodeHistory: true},
+		Limits: contract.Limits{GitHubRPH: 3600, MaxSessionMS: 240000,
 			MaxTransferBytes: 128 << 20, MaxLocalBytes: 256 << 20},
 	}
 	plan, err := c.PreparePlan(context.Background(), input)
@@ -60,7 +60,7 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(190 * time.Second)
+	deadline := time.Now().Add(250 * time.Second)
 	for time.Now().Before(deadline) {
 		run, err = c.GetRun(context.Background(), run.ID)
 		if err != nil {
@@ -75,7 +75,7 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	_, _ = c.CancelRun(context.Background(), run.ID)
-	t.Fatal("run excedeu 190 segundos")
+	t.Fatal("run excedeu 250 segundos")
 
 completed:
 	if run.SnapshotID == "" {
@@ -85,14 +85,20 @@ completed:
 	if err != nil {
 		t.Fatal(err)
 	}
-	hasRef := false
+	hasRef, hasIssues, hasFormalLinks := false, false, false
 	for _, coverage := range d.Coverage {
 		if coverage.Source == "git" && coverage.Collection == "git_refs" && coverage.Status != "unsupported" {
 			hasRef = true
 		}
+		if coverage.Source == "github" && coverage.Collection == "issues" && coverage.Status != "unsupported" {
+			hasIssues = true
+		}
+		if coverage.Source == "github" && coverage.Collection == "formal_links" && coverage.Status != "unsupported" {
+			hasFormalLinks = true
+		}
 	}
-	if !hasRef {
-		t.Fatalf("ref Git não observada: %d coberturas", len(d.Coverage))
+	if !hasRef || !hasIssues || !hasFormalLinks {
+		t.Fatalf("histórico Git, issues ou vínculos formais não observados: ref=%t issues=%t formal_links=%t coberturas=%d", hasRef, hasIssues, hasFormalLinks, len(d.Coverage))
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_coverage WHERE source = 'git'", MaxRows: 10})
 	if err != nil || len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0].Kind != "integer" {
