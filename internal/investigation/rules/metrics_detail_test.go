@@ -273,3 +273,33 @@ func TestReworkWindowDoesNotOrderSameTimestampEvents(t *testing.T) {
 	}
 	t.Fatalf("same-timestamp events were ordered without evidence: %+v", metrics)
 }
+
+func TestDeclaredCorrectionThirtyDayWindowKeepsUnknownAnchor(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-03-10T00:00:00Z", AnalysisReferenceAt: "2026-03-10T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "within"}, {ID: "later"}, {ID: "unknown"}},
+		Events: []query.Event{
+			{ID: "done-1", EntityID: "within", Type: "state_changed", OldValue: "open", NewValue: "closed", EventAt: "2026-01-02T00:00:00Z"},
+			{ID: "done-2", EntityID: "later", Type: "state_changed", OldValue: "open", NewValue: "closed", EventAt: "2026-01-03T00:00:00Z"},
+		},
+		Rework: []contract.ReworkRecord{
+			{ID: "fix-1", SubjectID: "within", Kind: "declared_correction", EvidenceStatus: "direct", EventAt: "2026-01-20T00:00:00Z"},
+			{ID: "fix-2", SubjectID: "later", Kind: "declared_correction", EvidenceStatus: "direct", EventAt: "2026-02-10T00:00:00Z"},
+			{ID: "fix-3", SubjectID: "unknown", Kind: "declared_correction", EvidenceStatus: "direct", EventAt: "2026-02-10T00:00:00Z"},
+		},
+	}
+	got := map[string]contract.Metric{}
+	for _, metric := range reworkWindowMetrics(d) {
+		got[metric.ID] = metric
+	}
+	for id, value := range map[string]string{
+		"metric-declared-correction-30d-observed":        "1",
+		"metric-declared-correction-after-30d-observed":  "1",
+		"metric-declared-correction-no-prior-completion": "1",
+	} {
+		metric, ok := got[id]
+		if !ok || metric.Value.Value != value || metric.EligibleSize == nil || *metric.EligibleSize != 3 {
+			t.Fatalf("correction metric %s=%+v want %s of 3", id, metric, value)
+		}
+	}
+}

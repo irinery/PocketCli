@@ -94,3 +94,57 @@ func TestDeclaredGitRevertRequiresObservedTargetAndDoesNotClaimPatchEquivalence(
 		t.Fatalf("unresolved revert did not mark analysis partial: %+v", missing.Coverage)
 	}
 }
+
+func TestDeclaredFixAfterObservedReopeningIsSeparatedFromGenericReference(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue-8", EvidenceID: "ev-issue"}},
+		PullRequests: []query.PullRequest{
+			{ID: "pr-fix", MergedAt: "2026-01-20T00:00:00Z", EvidenceID: "ev-pr-fix"},
+			{ID: "pr-generic", MergedAt: "2026-01-21T00:00:00Z", EvidenceID: "ev-pr-generic"},
+			{ID: "pr-before", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr-before"},
+			{ID: "pr-same", MergedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-pr-same"},
+		},
+		Events: []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
+		Links: []contract.LinkRecord{
+			{ID: "fix", SourceID: "pr-fix", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-fix"},
+			{ID: "generic", SourceID: "issue-8", Relation: "references_pr", TargetID: "pr-generic", Status: "direct", EvidenceID: "ev-pr-generic"},
+			{ID: "before", SourceID: "pr-before", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-before"},
+			{ID: "same", SourceID: "pr-same", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-same"},
+		},
+	}
+	out := Evaluate(d)
+	fixes := 0
+	for _, record := range out.Rework {
+		if record.Kind == "declared_correction" {
+			fixes++
+			if record.SubjectID != "issue-8" || record.EventAt != "2026-01-20T00:00:00Z" || record.EvidenceID != "ev-pr-fix" || record.CauseStatus != "undetermined" {
+				t.Fatalf("incorrect correction record: %+v", record)
+			}
+		}
+	}
+	if fixes != 1 {
+		t.Fatalf("generic or earlier PR became correction: %+v", out.Rework)
+	}
+	metricFound, findingFound := false, false
+	for _, metric := range out.Metrics {
+		if metric.ID == metricID("metric-rework", "declared_correction") {
+			metricFound = metric.Value.Value == "1" && strings.Contains(strings.Join(metric.Limitations, " "), "não demonstra efeito")
+		}
+	}
+	for _, finding := range out.Findings {
+		if finding.RuleID == "R-CORRECTION-001" {
+			findingFound = len(finding.EvidenceIDs) == 2 && finding.EvidenceIDs[0] == "ev-pr-fix" && finding.EvidenceIDs[1] == "ev-reopen"
+		}
+	}
+	if !metricFound || !findingFound {
+		t.Fatalf("correction declaration missing metric or two-source finding: metrics=%+v findings=%+v", out.Metrics, out.Findings)
+	}
+	withoutReopen := d
+	withoutReopen.Events = nil
+	for _, record := range Evaluate(withoutReopen).Rework {
+		if record.Kind == "declared_correction" {
+			t.Fatalf("fix declaration became rework without observed reopening: %+v", record)
+		}
+	}
+}

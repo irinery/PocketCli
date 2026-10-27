@@ -6,13 +6,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/query"
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -28,9 +29,13 @@ func Evaluate(d query.Dataset) query.Dataset {
 		linkIDs[link.ID] = true
 	}
 	commitEvents := make(map[string]query.Event)
+	reopenEvents := make(map[string][]query.Event)
 	for _, event := range d.Events {
 		if event.Type == "commit_reachable_observed" && event.EvidenceID != "" {
 			commitEvents[event.EntityID+"\x00"+event.NewValue] = event
+		}
+		if event.ID != "" && event.EvidenceID != "" && observedInWindow(event.EventAt, d.Snapshot) && (event.Type == "reopened" || (isDone(event.OldValue) && isOpen(event.NewValue))) {
+			reopenEvents[event.EntityID] = append(reopenEvents[event.EntityID], event)
 		}
 	}
 	d.Coverage = revertLinkCoverage(d.Coverage, d.Events, commitEvents, d.Snapshot.AnalysisReferenceAt)
@@ -134,6 +139,31 @@ func Evaluate(d query.Dataset) query.Dataset {
 		}
 	}
 	for _, l := range d.Links {
+		if l.Relation == "declares_fix_of" && l.Status == "direct" && l.EvidenceID != "" {
+			issue, issueFound := issueByID[l.TargetID]
+			pr, prFound := prByID[l.SourceID]
+			if issueFound && prFound && !issue.IsContext && observedInWindow(pr.MergedAt, d.Snapshot) {
+				mergedAt, err := time.Parse(time.RFC3339, pr.MergedAt)
+				if err == nil {
+					var latest query.Event
+					var latestAt time.Time
+					for _, event := range reopenEvents[issue.ID] {
+						at, err := time.Parse(time.RFC3339, event.EventAt)
+						if err == nil && at.Before(mergedAt) && (latest.ID == "" || at.After(latestAt) || (at.Equal(latestAt) && event.ID < latest.ID)) {
+							latest, latestAt = event, at
+						}
+					}
+					if latest.ID != "" {
+						id := "rework-" + storage.Hash([]byte(l.ID + ":declared_correction:" + latest.ID + ":" + pr.MergedAt))[:20]
+						if !reworkIDs[id] {
+							d.Rework = append(d.Rework, contract.ReworkRecord{ID: id, SubjectID: issue.ID, Kind: "declared_correction", EvidenceStatus: "direct", EventAt: pr.MergedAt, CauseStatus: "undetermined", EvidenceID: l.EvidenceID})
+							reworkIDs[id] = true
+						}
+						d.Findings = append(d.Findings, finding("R-CORRECTION-001", "info", issue.ID, "Correção declarada após reabertura", "Um PR mesclado declarou Fixes para uma issue com reabertura anterior observada.", "direct", []string{l.EvidenceID, latest.EvidenceID}, "A declaração e a ordem dos registros não comprovam efeito do patch, defeito ou causa."))
+					}
+				}
+			}
+		}
 		if l.Relation == "blocked_by" && l.Status == "direct" {
 			target, ok := issueByID[l.TargetID]
 			if ok && !isDone(target.State) {

@@ -273,7 +273,7 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 	if json.Unmarshal(raw, &entry) != nil {
 		return fmt.Errorf("evento inválido")
 	}
-	if entry.Event != "ready_for_review" && entry.Event != "reopened" {
+	if entry.Event != "ready_for_review" && entry.Event != "reopened" && !(entry.Event == "closed" && !target.IsPR) {
 		return nil
 	}
 	if entry.CreatedAt == "" {
@@ -295,7 +295,11 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 	if entry.Actor.ID > 0 {
 		actor = fmt.Sprintf("github-%d", entry.Actor.ID)
 	}
-	upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, EvidenceID: e.ID})
+	event := query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, EvidenceID: e.ID}
+	if entry.Event == "closed" {
+		event.Type, event.OldValue, event.NewValue = "state_changed", "open", "closed"
+	}
+	upsertEvent(d, event)
 	if target.IsPR && entry.Event == "ready_for_review" {
 		p := &d.PullRequests[target.Index]
 		if p.ReadyAt == "" || entry.CreatedAt < p.ReadyAt {

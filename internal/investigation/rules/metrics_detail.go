@@ -293,6 +293,10 @@ func reworkMetrics(d query.Dataset) []contract.Metric {
 			name = "Reversões declaradas em commits"
 			definition = "Commits com trailer exato de git revert apontando para commit também observado no mesmo repositório"
 			limitation = "O trailer declara a reversão; a equivalência inversa do patch não foi demonstrada e não identifica culpa ou causa."
+		} else if kind == "declared_correction" {
+			name = "Correções declaradas após reabertura"
+			definition = "PRs mesclados com Fixes #N explícito para issue com reabertura observada antes do merge"
+			limitation = "A declaração não demonstra efeito do patch, defeito, produtividade ou causa; o histórico da issue pode estar incompleto."
 		}
 		out = append(out, integerMetric(metricID("metric-rework", kind), name, count, count, nil, definition, limitation))
 	}
@@ -338,10 +342,11 @@ func reworkWindowMetrics(d query.Dataset) []contract.Metric {
 	for id := range completions {
 		sort.Slice(completions[id], func(i, j int) bool { return completions[id][i].Before(completions[id][j]) })
 	}
+	type windowCounts struct{ direct, within, afterThirtyDays, noPrior int64 }
+	reopen, correction := windowCounts{}, windowCounts{}
 	seenRework := make(map[string]bool)
-	var directRework, within, afterThirtyDays, noPrior int64
 	for _, record := range d.Rework {
-		if record.ID == "" || seenRework[record.ID] || record.Kind != "reopening" || record.EvidenceStatus != "direct" || !issues[record.SubjectID] || !observedInWindow(record.EventAt, d.Snapshot) {
+		if record.ID == "" || seenRework[record.ID] || (record.Kind != "reopening" && record.Kind != "declared_correction") || record.EvidenceStatus != "direct" || !issues[record.SubjectID] || !observedInWindow(record.EventAt, d.Snapshot) {
 			continue
 		}
 		at, err := time.Parse(time.RFC3339, record.EventAt)
@@ -349,7 +354,11 @@ func reworkWindowMetrics(d query.Dataset) []contract.Metric {
 			continue
 		}
 		seenRework[record.ID] = true
-		directRework++
+		counts := &reopen
+		if record.Kind == "declared_correction" {
+			counts = &correction
+		}
+		counts.direct++
 		var prior time.Time
 		for _, completed := range completions[record.SubjectID] {
 			if !completed.Before(at) {
@@ -358,23 +367,31 @@ func reworkWindowMetrics(d query.Dataset) []contract.Metric {
 			prior = completed
 		}
 		if prior.IsZero() {
-			noPrior++
+			counts.noPrior++
 		} else if at.Sub(prior) <= 30*24*time.Hour {
-			within++
+			counts.within++
 		} else {
-			afterThirtyDays++
+			counts.afterThirtyDays++
 		}
 	}
-	if observedCompletions == 0 && directRework == 0 {
+	if observedCompletions == 0 && reopen.direct == 0 && correction.direct == 0 {
 		return nil
 	}
-	return []contract.Metric{
-		integerMetric("metric-rework-30d-observed", "Reaberturas observadas até 30 dias após conclusão", within, within, &directRework, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, até 30 dias UTC depois", "Contagem de ocorrências, não taxa por entrega; histórico parcial pode ocultar transições e zero não comprova ausência."),
-		integerMetric("metric-rework-after-30d-observed", "Reaberturas observadas após 30 dias da conclusão", afterThirtyDays, afterThirtyDays, &directRework, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, mais de 30 dias UTC depois", "Contagem de ocorrências fora da janela padrão; histórico parcial pode ocultar transições intermediárias."),
+	out := []contract.Metric{
+		integerMetric("metric-rework-30d-observed", "Reaberturas observadas até 30 dias após conclusão", reopen.within, reopen.within, &reopen.direct, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, até 30 dias UTC depois", "Contagem de ocorrências, não taxa por entrega; histórico parcial pode ocultar transições e zero não comprova ausência."),
+		integerMetric("metric-rework-after-30d-observed", "Reaberturas observadas após 30 dias da conclusão", reopen.afterThirtyDays, reopen.afterThirtyDays, &reopen.direct, "Reaberturas diretas com transição de conclusão anterior observada no mesmo item, mais de 30 dias UTC depois", "Contagem de ocorrências fora da janela padrão; histórico parcial pode ocultar transições intermediárias."),
 		integerMetric("metric-rework-30d-elapsed-windows", "Janelas de 30 dias já decorridas", elapsed, elapsed, &observedCompletions, "Transições de conclusão observadas na janela cujo prazo de 30 dias já decorreu no analysis_reference_at", "Prazo decorrido não comprova cobertura completa da fonte nem ausência de reabertura."),
 		integerMetric("metric-rework-30d-incomplete-windows", "Janelas de 30 dias ainda incompletas", incomplete, incomplete, &observedCompletions, "Transições de conclusão observadas com menos de 30 dias até analysis_reference_at", "Essas entregas ainda não tiveram a janela temporal completa de observação."),
-		integerMetric("metric-rework-no-prior-completion", "Reaberturas sem conclusão anterior observada", noPrior, noPrior, &directRework, "Reaberturas diretas cujo item não tem transição anterior de conclusão observada na janela", "Histórico anterior ou cobertura parcial podem explicar a ausência da transição; não atribui causa."),
+		integerMetric("metric-rework-no-prior-completion", "Reaberturas sem conclusão anterior observada", reopen.noPrior, reopen.noPrior, &reopen.direct, "Reaberturas diretas cujo item não tem transição anterior de conclusão observada na janela", "Histórico anterior ou cobertura parcial podem explicar a ausência da transição; não atribui causa."),
 	}
+	if correction.direct > 0 {
+		out = append(out,
+			integerMetric("metric-declared-correction-30d-observed", "Correções declaradas até 30 dias após conclusão", correction.within, correction.within, &correction.direct, "PRs com Fixes explícito, após reabertura e até 30 dias UTC da última conclusão observada da issue", "Declaração não comprova efeito do patch; histórico incompleto pode ocultar outra conclusão."),
+			integerMetric("metric-declared-correction-after-30d-observed", "Correções declaradas após 30 dias da conclusão", correction.afterThirtyDays, correction.afterThirtyDays, &correction.direct, "PRs com Fixes explícito, após reabertura e mais de 30 dias UTC da última conclusão observada", "Contagem fora da janela padrão, sem atribuição de causa ou culpa."),
+			integerMetric("metric-declared-correction-no-prior-completion", "Correções declaradas sem conclusão anterior observada", correction.noPrior, correction.noPrior, &correction.direct, "PRs com Fixes explícito após reabertura, mas sem transição anterior de conclusão observada na janela", "A ausência da âncora pode resultar do período ou cobertura parcial; não afirmar prazo de 30 dias."),
+		)
+	}
+	return out
 }
 
 func cycleTimeMetrics(d query.Dataset) []contract.Metric {

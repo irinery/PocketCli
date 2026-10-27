@@ -300,6 +300,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				State     string  `json:"state"`
 				CreatedAt string  `json:"created_at"`
 				UpdatedAt string  `json:"updated_at"`
+				ClosedAt  *string `json:"closed_at"`
 				MergedAt  *string `json:"merged_at"`
 				Draft     bool    `json:"draft"`
 				User      struct {
@@ -338,6 +339,9 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				upsertPR(d, p)
 			} else {
 				i := query.Issue{ID: fmt.Sprintf("github-issue-%d", obj.ID), Identifier: fmt.Sprintf("%s#%d", r.Name, obj.Number), Source: "github", Title: c.safeTitle(ctx, obj.Title), State: obj.State, CreatedAt: obj.CreatedAt, UpdatedAt: obj.UpdatedAt, EvidenceID: e.ID, IsContext: contextOnly(plan.WindowStart, obj.CreatedAt, obj.UpdatedAt)}
+				if obj.State == "closed" && obj.ClosedAt != nil {
+					i.CompletedAt = *obj.ClosedAt
+				}
 				upsertIssue(d, i)
 			}
 			run.Items++

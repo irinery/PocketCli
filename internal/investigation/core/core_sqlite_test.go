@@ -214,7 +214,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.1.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.2.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_pull_requests"})
@@ -1859,6 +1859,68 @@ func TestIssueCommentCreatesDirectPRLink(t *testing.T) {
 	}
 	if len(d.Links) != 1 || d.Links[0].EvidenceID != "ev-comment" || d.Links[0].SourceID != "issue-8" || d.Links[0].TargetID != "pr-7" {
 		t.Fatalf("comment link=%+v", d.Links)
+	}
+}
+
+func TestFixesKeywordCreatesDeclaredFixLinkOnlyForExactIssue(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, raw := range map[string]string{
+		"ev-issue":   `{"body":"Issue details"}`,
+		"ev-fixes":   `{"body":"Fixes #8"}`,
+		"ev-closes":  `{"body":"Closes #8"}`,
+		"ev-vague":   `{"body":"fix the issue and touch the same file"}`,
+		"ev-foreign": `{"body":"Fixes #80"}`,
+	} {
+		if err := store.Put("objects", id, json.RawMessage(raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue-8", Identifier: "acme/api#8", Source: "github", EvidenceID: "ev-issue"}},
+		PullRequests: []query.PullRequest{
+			{ID: "pr-fixes", Repository: "acme/api", Number: 7, MergedAt: "2026-01-20T00:00:00Z", EvidenceID: "ev-fixes"},
+			{ID: "pr-closes", Repository: "acme/api", Number: 9, MergedAt: "2026-01-21T00:00:00Z", EvidenceID: "ev-closes"},
+			{ID: "pr-vague", Repository: "acme/api", Number: 10, MergedAt: "2026-01-22T00:00:00Z", EvidenceID: "ev-vague"},
+			{ID: "pr-foreign", Repository: "acme/api", Number: 11, MergedAt: "2026-01-23T00:00:00Z", EvidenceID: "ev-foreign"},
+		},
+		Events:   []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
+		Coverage: []contract.Coverage{{Source: "github", Collection: "pull_requests", Status: "complete"}, {Source: "github", Collection: "issues", Status: "complete"}},
+	}
+	if err := c.linkDataset(contract.Plan{InvestigationID: "inv-fixes"}, &d); err != nil {
+		t.Fatal(err)
+	}
+	declared, generic := 0, 0
+	for _, link := range d.Links {
+		if link.Relation == "declares_fix_of" {
+			declared++
+			if link.SourceID != "pr-fixes" || link.TargetID != "issue-8" || link.EvidenceID != "ev-fixes" {
+				t.Fatalf("wrong fix declaration: %+v", link)
+			}
+		}
+		if link.Relation == "references_pr" {
+			generic++
+		}
+	}
+	if declared != 1 || generic != 2 {
+		t.Fatalf("fix declaration confused with generic reference: links=%+v", d.Links)
+	}
+	analyzed := rules.Evaluate(d)
+	corrections := 0
+	for _, record := range analyzed.Rework {
+		if record.Kind == "declared_correction" {
+			corrections++
+		}
+	}
+	if corrections != 1 {
+		t.Fatalf("explicit Fixes link did not reach rework analysis: %+v", analyzed.Rework)
 	}
 }
 

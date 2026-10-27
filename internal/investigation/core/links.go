@@ -16,6 +16,7 @@ var pullURL = regexp.MustCompile(`(?i)https://github\.com/([A-Za-z0-9-]+)/([A-Za
 var issueURL = regexp.MustCompile(`(?i)https://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)\b`)
 var linearIdentifier = regexp.MustCompile(`\b[A-Z][A-Z0-9]{1,15}-[1-9][0-9]{0,8}\b`)
 var closingReference = regexp.MustCompile(`(?i)\b(?:fixes|closes|resolves)\s+#([1-9][0-9]*)\b`)
+var fixingReference = regexp.MustCompile(`(?i)\bfixes\s+#([1-9][0-9]*)\b`)
 var pullReference = regexp.MustCompile(`(?i)\b(?:PR|pull request)\s*#([1-9][0-9]*)\b`)
 var apiIssueURL = regexp.MustCompile(`(?i)^https://api\.github\.com/repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)$`)
 var apiPullURL = regexp.MustCompile(`(?i)^https://api\.github\.com/repos/([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+)/pulls/([1-9][0-9]*)$`)
@@ -30,6 +31,9 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		prs[strings.ToLower(fmt.Sprintf("%s#%d", pr.Repository, pr.Number))] = pr
 	}
 	linked := make(map[string]bool)
+	for _, link := range d.Links {
+		linked[link.ID] = true
+	}
 	add := func(issue query.Issue, pr query.PullRequest, evidenceID string) {
 		if issue.ID == "" || pr.ID == "" || evidenceID == "" {
 			return
@@ -41,6 +45,18 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		}
 		linked[id] = true
 		d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: issue.ID, Relation: "references_pr", TargetID: pr.ID, Status: "direct", EvidenceID: evidenceID})
+	}
+	addDeclaredFix := func(issue query.Issue, pr query.PullRequest) {
+		if issue.ID == "" || pr.ID == "" || pr.EvidenceID == "" {
+			return
+		}
+		seed := pr.ID + ":declares_fix_of:" + issue.ID + ":" + pr.EvidenceID
+		id := "link-" + storage.Hash([]byte(seed))[:24]
+		if linked[id] {
+			return
+		}
+		linked[id] = true
+		d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: pr.ID, Relation: "declares_fix_of", TargetID: issue.ID, Status: "direct", EvidenceID: pr.EvidenceID})
 	}
 	for _, issue := range d.Issues {
 		body, err := c.sourceBody(issue.EvidenceID)
@@ -84,6 +100,11 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 			}
 			if issue, ok := issues[strings.ToLower(pr.Repository+"#"+match[1])]; ok {
 				add(issue, pr, pr.EvidenceID)
+			}
+		}
+		for _, match := range fixingReference.FindAllStringSubmatch(body, -1) {
+			if issue, ok := issues[strings.ToLower(pr.Repository+"#"+match[1])]; ok {
+				addDeclaredFix(issue, pr)
 			}
 		}
 	}
