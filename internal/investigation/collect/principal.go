@@ -27,6 +27,8 @@ type principalBinding struct {
 	PrincipalID   string `json:"principal_id"`
 	PrincipalKey  string `json:"principal_key"`
 	Login         string `json:"login,omitempty"`
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	WorkspaceKey  string `json:"workspace_key,omitempty"`
 	Version       int    `json:"version,omitempty"`
 }
 
@@ -80,10 +82,29 @@ func (c *Client) bindingFor(source string, secret []byte) (principalBinding, boo
 	if errors.Is(err, os.ErrNotExist) {
 		return principalBinding{}, false, nil
 	}
-	if err != nil || binding.CredentialKey != key || binding.Source != source || binding.Host != host || !validPrincipalID(binding.PrincipalID) || binding.PrincipalKey != principalHash(source, host, binding.PrincipalID) || binding.Version < 0 || binding.Version > 1 || (binding.Login != "" && (source != "github" || !validGitHubLogin(binding.Login))) {
+	if err != nil || binding.CredentialKey != key || binding.Source != source || binding.Host != host || !validPrincipalID(binding.PrincipalID) || binding.PrincipalKey != principalHash(source, host, binding.PrincipalID) || !validBindingDetails(binding) {
 		return principalBinding{}, false, &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "identidade da fonte corrompida"}
 	}
 	return binding, true, nil
+}
+
+func validBindingDetails(binding principalBinding) bool {
+	switch binding.Source {
+	case "github":
+		return binding.Version >= 0 && binding.Version <= 1 &&
+			(binding.Login == "" || validGitHubLogin(binding.Login)) &&
+			binding.WorkspaceID == "" && binding.WorkspaceKey == ""
+	case "linear":
+		if binding.Version < 0 || binding.Version > 2 || binding.Login != "" {
+			return false
+		}
+		if binding.Version < 2 {
+			return binding.WorkspaceID == "" && binding.WorkspaceKey == ""
+		}
+		return validPrincipalID(binding.WorkspaceID) && validWorkspaceKey(binding.WorkspaceKey)
+	default:
+		return false
+	}
 }
 
 func (c *Client) principalRateKey(source string, secret []byte) (string, error) {
@@ -155,7 +176,7 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 			return err
 		}
 		lookupCtx := context.WithValue(ctx, principalLookupKey{}, true)
-		var id, login string
+		var id, login, workspaceID, workspaceKey string
 		if source == "github" {
 			endpoint, err := url.JoinPath(c.GitHubURL, "user")
 			if err != nil {
@@ -175,7 +196,7 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 			id = strconv.FormatInt(actor.ID, 10)
 			login = actor.Login
 		} else {
-			body, err := c.LinearQuery(lookupCtx, "query PocketCliViewer { viewer { id } }", nil)
+			body, err := c.LinearQuery(lookupCtx, "query PocketCliViewer { viewer { id } organization { id urlKey } }", nil)
 			if err != nil {
 				return err
 			}
@@ -183,11 +204,17 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 				Viewer struct {
 					ID string `json:"id"`
 				} `json:"viewer"`
+				Organization struct {
+					ID     string `json:"id"`
+					URLKey string `json:"urlKey"`
+				} `json:"organization"`
 			}
-			if json.Unmarshal(body, &actor) != nil || !validPrincipalID(actor.Viewer.ID) {
+			if json.Unmarshal(body, &actor) != nil || !validPrincipalID(actor.Viewer.ID) || !validPrincipalID(actor.Organization.ID) || !validWorkspaceKey(actor.Organization.URLKey) {
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "identidade Linear inválida"}
 			}
 			id = actor.Viewer.ID
+			workspaceID = actor.Organization.ID
+			workspaceKey = actor.Organization.URLKey
 		}
 		host, err := c.providerHost(source)
 		if err != nil {
@@ -196,7 +223,14 @@ func (c *Client) ensurePrincipal(ctx context.Context, source string) error {
 		if found && previous.PrincipalID != id {
 			return &contract.ErrorResponse{Code: "ERR_PLAN_CHANGED", Message: "identidade da credencial mudou"}
 		}
-		binding := principalBinding{CredentialKey: principalCredentialKey(source, host, secret), Source: source, Host: host, PrincipalID: id, PrincipalKey: principalHash(source, host, id), Login: login, Version: 1}
+		if found && previous.WorkspaceID != "" && previous.WorkspaceID != workspaceID {
+			return &contract.ErrorResponse{Code: "ERR_PLAN_CHANGED", Message: "workspace da credencial mudou"}
+		}
+		version := 1
+		if source == "linear" {
+			version = 2
+		}
+		binding := principalBinding{CredentialKey: principalCredentialKey(source, host, secret), Source: source, Host: host, PrincipalID: id, PrincipalKey: principalHash(source, host, id), Login: login, WorkspaceID: workspaceID, WorkspaceKey: workspaceKey, Version: version}
 		if err := c.mergeLegacyRateHold(ctx, source, secret, binding.PrincipalKey); err != nil {
 			return err
 		}
@@ -221,7 +255,7 @@ func validPrincipalID(id string) bool {
 }
 
 func principalBindingNeedsRefresh(binding principalBinding) bool {
-	return binding.Source == "github" && binding.Version == 0
+	return (binding.Source == "github" && binding.Version == 0) || (binding.Source == "linear" && binding.Version < 2)
 }
 
 func validGitHubLogin(login string) bool {
@@ -230,6 +264,19 @@ func validGitHubLogin(login string) bool {
 	}
 	for _, ch := range login {
 		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validWorkspaceKey(key string) bool {
+	if key == "" || len(key) > 120 {
+		return false
+	}
+	for _, ch := range key {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' {
 			continue
 		}
 		return false
@@ -308,6 +355,25 @@ func (c *Client) PrincipalLogin(ctx context.Context, source string) (string, err
 		return nil
 	})
 	return login, err
+}
+
+func (c *Client) PrincipalWorkspace(ctx context.Context) (string, string, error) {
+	if !c.resolvePrincipals {
+		return "", "", nil
+	}
+	var id, key string
+	err := c.Secrets.WithSecret(ctx, "linear", func(secret []byte) error {
+		binding, found, err := c.bindingFor("linear", secret)
+		if err != nil {
+			return err
+		}
+		if !found || principalBindingNeedsRefresh(binding) {
+			return fmt.Errorf("workspace não resolvido")
+		}
+		id, key = binding.WorkspaceID, binding.WorkspaceKey
+		return nil
+	})
+	return id, key, err
 }
 
 func (c *Client) PrincipalLookupNeeded(ctx context.Context, source string) (bool, error) {

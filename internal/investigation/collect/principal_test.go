@@ -138,6 +138,54 @@ func TestLegacyGitHubBindingRefreshesLoginOnce(t *testing.T) {
 	}
 }
 
+func TestLegacyLinearBindingRefreshesWorkspaceOnce(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "linear-token"
+	const host = "api.linear.app"
+	key := principalCredentialKey("linear", host, []byte(token))
+	legacy := principalBinding{CredentialKey: key, Source: "linear", Host: host, PrincipalID: "user-42", PrincipalKey: principalHash("linear", host, "user-42"), Version: 1}
+	if err := store.Put(principalBindingKind, key, legacy); err != nil {
+		t.Fatal(err)
+	}
+	identityCalls := 0
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.Contains(string(body), "organization { id urlKey }") {
+			t.Fatalf("workspace missing from identity query: %s", body)
+		}
+		identityCalls++
+		return response(200, `{"data":{"viewer":{"id":"user-42"},"organization":{"id":"workspace-7","urlKey":"smf"}}}`), nil
+	})
+	secretStore := secrets.NewSessionStore()
+	if _, err := secretStore.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: token, Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(&http.Client{Transport: transport}, secretStore)
+	client.SetCacheStore(store)
+	client.SetRPH("linear", 3600000)
+	client.EnablePrincipalResolution()
+	needed, err := client.PrincipalLookupNeeded(context.Background(), "linear")
+	if err != nil || !needed {
+		t.Fatalf("legacy lookup needed=%v err=%v", needed, err)
+	}
+	if err := client.ensurePrincipal(context.Background(), "linear"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ensurePrincipal(context.Background(), "linear"); err != nil {
+		t.Fatal(err)
+	}
+	id, workspace, err := client.PrincipalWorkspace(context.Background())
+	if err != nil || id != "workspace-7" || workspace != "smf" || identityCalls != 1 {
+		t.Fatalf("workspace id=%q key=%q calls=%d err=%v", id, workspace, identityCalls, err)
+	}
+}
+
 func TestCredentialRotationDuringLookupStopsBeforeBusinessRequest(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
@@ -217,7 +265,7 @@ func TestTwoLinearKeysOfSameViewerShareQueue(t *testing.T) {
 			mu.Lock()
 			identityCalls++
 			mu.Unlock()
-			return response(200, `{"data":{"viewer":{"id":"user-42"}}}`), nil
+			return response(200, `{"data":{"viewer":{"id":"user-42"},"organization":{"id":"workspace-7","urlKey":"smf"}}}`), nil
 		}
 		mu.Lock()
 		businessCalls++
@@ -257,6 +305,12 @@ func TestTwoLinearKeysOfSameViewerShareQueue(t *testing.T) {
 	wg.Wait()
 	if maxActive != 1 || identityCalls != 2 || businessCalls != 2 {
 		t.Fatalf("active=%d identity=%d business=%d", maxActive, identityCalls, businessCalls)
+	}
+	for _, client := range clients {
+		id, key, err := client.PrincipalWorkspace(context.Background())
+		if err != nil || id != "workspace-7" || key != "smf" {
+			t.Fatalf("workspace id=%q key=%q err=%v", id, key, err)
+		}
 	}
 }
 
