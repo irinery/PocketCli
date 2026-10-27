@@ -204,6 +204,19 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	if err != nil {
 		return out, err
 	}
+	if input.LinearEnabled {
+		lookupNeeded, err := c.collector.PrincipalLookupNeeded(ctx, "linear")
+		if err != nil {
+			return out, err
+		}
+		minimum := 1 // Primeira página de teams autorizados.
+		if lookupNeeded {
+			minimum++
+		}
+		if minimum > discoveryLimit {
+			return out, fault("ERR_RESOURCE_EXHAUSTED", "identidade Linear e teams excedem orçamento de descoberta; aprove mais chamadas")
+		}
+	}
 	verifiedGitHubVersion := ""
 	if input.GitHubEnabled {
 		lookupNeeded, err := c.collector.PrincipalLookupNeeded(ctx, "github")
@@ -401,6 +414,14 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				}
 				if login != "" {
 					identity = fmt.Sprintf("@%s (%s)", login, identity)
+				}
+			} else if source.name == "linear" {
+				workspaceID, workspaceKey, err := c.collector.PrincipalWorkspace(ctx)
+				if err != nil {
+					return out, err
+				}
+				if workspaceID != "" {
+					identity += fmt.Sprintf("; workspace %s (ID %s)", workspaceKey, workspaceID)
 				}
 			}
 			warnings = append(warnings, fmt.Sprintf("conta %s verificada: %s", source.name, identity))
