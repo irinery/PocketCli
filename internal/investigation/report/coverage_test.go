@@ -41,3 +41,21 @@ func TestPartialCoverageAppearsOnCoverAndKeepsEveryReason(t *testing.T) {
 		t.Fatalf("cobertura vazia=%q", got)
 	}
 }
+
+func TestNullMetricInReportShowsUncalculatedValueAndSample(t *testing.T) {
+	eligible := int64(4)
+	metric := contract.Metric{ID: "cycle-small", Name: "Tempo de ciclo mediano", Value: contract.Cell{Kind: "null"}, Unit: "seconds", SampleSize: 3, EligibleSize: &eligible, Limitations: []string{"comparação insuficiente"}}
+	doc := model{Records: []contract.ReportRecord{{Kind: "metric", Metric: &metric}}}
+	tmpl, err := template.New("report").Funcs(template.FuncMap{"recordID": recordID, "intPtr": formatIntPtr, "floatPtr": formatFloatPtr}).Parse(reportTemplate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := tmpl.Execute(&output, doc); err != nil {
+		t.Fatal(err)
+	}
+	html := output.String()
+	if !strings.Contains(html, "Tempo de ciclo mediano = não calculado · amostra 3 / 4") || !strings.Contains(html, "comparação insuficiente") {
+		t.Fatalf("amostra pequena não ficou explícita no PDF HTML: %s", html)
+	}
+}
