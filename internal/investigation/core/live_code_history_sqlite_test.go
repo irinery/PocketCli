@@ -56,28 +56,30 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if len(plan.Resources) != 1 || plan.Resources[0].Name != repo {
 		t.Fatalf("escopo inesperado: %d recursos", len(plan.Resources))
 	}
+	waitPublished := func(core *Core, current contract.Run) contract.Run {
+		deadline := time.Now().Add(250 * time.Second)
+		for time.Now().Before(deadline) {
+			current, err = core.GetRun(context.Background(), current.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch current.State {
+			case "completed", "completed_partial":
+				return current
+			case "failed", "paused", "report_failed", "cancelled":
+				t.Fatalf("run não concluiu: estado=%s erro=%+v", current.State, current.LastError)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		_, _ = core.CancelRun(context.Background(), current.ID)
+		t.Fatal("run excedeu 250 segundos")
+		return contract.Run{}
+	}
 	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "code-history-live"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(250 * time.Second)
-	for time.Now().Before(deadline) {
-		run, err = c.GetRun(context.Background(), run.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch run.State {
-		case "completed", "completed_partial":
-			goto completed
-		case "failed", "paused", "report_failed", "cancelled":
-			t.Fatalf("run não concluiu: estado=%s erro=%+v", run.State, run.LastError)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	_, _ = c.CancelRun(context.Background(), run.ID)
-	t.Fatal("run excedeu 250 segundos")
-
-completed:
+	run = waitPublished(c, run)
 	if run.SnapshotID == "" {
 		t.Fatal("snapshot ausente")
 	}
@@ -104,5 +106,39 @@ completed:
 	if err != nil || len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0].Kind != "integer" {
 		t.Fatalf("consulta do snapshot falhou: %+v %v", result, err)
 	}
-	t.Logf("snapshot publicado: requests=%d bytes=%d registros=%d coberturas=%d", run.Requests, run.Bytes, run.Items, len(d.Coverage))
+	firstSnapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStats, err := c.RunStats(context.Background(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCore, err := NewCore(CoreConfig{Store: store, Secrets: ss})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCore.SetFinalizer(&fakeFinalizer{core: secondCore})
+	input.InvestigationID = plan.InvestigationID
+	secondPlan, err := secondCore.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRun, err := secondCore.StartRun(context.Background(), contract.RunRequest{PlanID: secondPlan.ID, ConfirmedPlanHash: secondPlan.Hash, IdempotencyKey: "code-history-live-refresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRun = waitPublished(secondCore, secondRun)
+	secondStats, err := secondCore.RunStats(context.Background(), secondRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchangedSnapshot, err := secondCore.GetSnapshot(context.Background(), run.SnapshotID)
+	if err != nil || unchangedSnapshot.DatasetHash != firstSnapshot.DatasetHash {
+		t.Fatalf("snapshot anterior mudou ou ficou indisponível: err=%v", err)
+	}
+	if secondStats.ReuseCounter <= firstStats.ReuseCounter {
+		t.Fatalf("refresh não demonstrou reuso: %d -> %d", firstStats.ReuseCounter, secondStats.ReuseCounter)
+	}
+	t.Logf("primeira rodada: requests=%d bytes=%d registros=%d coberturas=%d; refresh: requests=%d bytes=%d reuso=%d->%d", run.Requests, run.Bytes, run.Items, len(d.Coverage), secondRun.Requests, secondRun.Bytes, firstStats.ReuseCounter, secondStats.ReuseCounter)
 }
