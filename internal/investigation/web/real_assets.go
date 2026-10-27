@@ -411,9 +411,16 @@ const realAppJSTemplate = `(() => {
     const parameters = node('textarea');
     parameters.style.minHeight = '75px';
     parameters.value = '[]';
+    const guidance = node('p', 'callout');
+    guidance.hidden = true;
     select.onchange = () => {
       const query = queries[Number(select.value) - 1];
-      if (query) { editor.value = query.sql; parameters.value = JSON.stringify(query.parameters || [], null, 2); }
+      if (query) {
+        editor.value = query.sql;
+        parameters.value = JSON.stringify(query.parameters || [], null, 2);
+      }
+      guidance.textContent = query && query.description || '';
+      guidance.hidden = !guidance.textContent;
     };
     const result = node('section');
     const run = button('Executar consulta', async () => {
@@ -429,7 +436,7 @@ const realAppJSTemplate = `(() => {
       } catch (error) { result.replaceChildren(); fail(result, error); }
       finally { run.disabled = false; }
     }, 'primary');
-    box.append(field('Consultas sugeridas', select), field('SQL', editor), field('Parâmetros JSON', parameters), run);
+    box.append(field('Consultas sugeridas', select), guidance, field('SQL', editor), field('Parâmetros JSON', parameters), run);
     main.append(box, result);
   }
   async function comments() {
