@@ -1965,7 +1965,7 @@ func TestRuntimeImportIsTypedAndPinnedByPlan(t *testing.T) {
 	if err != nil || first.Resources[0].ID != "runtime-pending" {
 		t.Fatalf("plano pendente: %+v %v", first, err)
 	}
-	raw := []byte(`{"schema_version":"pocketcli.runtime.v1","observed_at":"2026-01-08T00:00:00Z","environment":"production","components":[{"name":"api","repository":"acme/api","path":"services/api/go.mod","enabled":true,"revision_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"worker","enabled":false}]}`)
+	raw := []byte(`{"schema_version":"pocketcli.runtime.v1","observed_at":"2026-01-08T00:00:00Z","environment":"production","components":[{"name":"api","repository":"acme/api","path":"services/api/go.mod","enabled":true,"revision_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"worker","enabled":false},{"name":"latest-image","enabled":true}]}`)
 	if _, err := c.ImportRuntime(context.Background(), first.InvestigationID, []byte(`{"schema_version":"pocketcli.runtime.v1","schema_version":"pocketcli.runtime.v1"}`)); err == nil {
 		t.Fatal("chave duplicada aceita")
 	}
@@ -1989,12 +1989,53 @@ func TestRuntimeImportIsTypedAndPinnedByPlan(t *testing.T) {
 	if err := c.collectRuntime(context.Background(), second.Resources[0], &d, &run); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Components) != 3 || d.Components[0].DeploymentStatus != "unknown" || d.Components[1].DeploymentStatus != "observed" || len(d.Deliveries) != 1 || d.Deliveries[0].ComponentID != "cmp-api" || len(d.Events) != 2 || d.Coverage[0].Status != "complete" {
+	if len(d.Components) != 4 || d.Components[0].DeploymentStatus != "unknown" || d.Components[1].DeploymentStatus != "observed" || d.Components[3].DeploymentStatus != "unknown" || len(d.Deliveries) != 1 || d.Deliveries[0].ComponentID != "cmp-api" || len(d.Events) != 3 || d.Coverage[0].Status != "complete" {
 		t.Fatalf("runtime=%+v", d)
 	}
 	old := query.Dataset{}
 	if err := c.collectRuntime(context.Background(), first.Resources[0], &old, &run); err != nil || old.Coverage[0].Status != "pending" || len(old.Components) != 0 {
 		t.Fatalf("plano antigo alterado: %+v %v", old, err)
+	}
+}
+
+func TestUnversionedRuntimeStaysUnknownInPublishedSnapshot(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Clock: func() time.Time { return time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := contract.PlanInput{SchemaVersion: contract.Version, Name: "runtime-latest", Modules: contract.Modules{RuntimeImport: true}, Period: contract.Period{Preset: "30d", Timezone: "UTC"}}
+	first, err := c.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"schema_version":"pocketcli.runtime.v1","observed_at":"2026-01-08T00:00:00Z","environment":"production","components":[{"name":"latest-image","enabled":true}]}`)
+	if _, err := c.ImportRuntime(context.Background(), first.InvestigationID, raw); err != nil {
+		t.Fatal(err)
+	}
+	input.InvestigationID = first.InvestigationID
+	plan, err := c.PreparePlan(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: plan.Hash, IdempotencyKey: "runtime-latest"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run = waitRun(t, c, run.ID)
+	if run.SnapshotID == "" {
+		t.Fatalf("snapshot ausente: %+v", run)
+	}
+	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT deployment_status FROM v_components WHERE name = 'latest-image'"})
+	if err != nil || len(result.Rows) != 1 || result.Rows[0][0].Value != "unknown" {
+		t.Fatalf("status público da imagem sem revisão: %+v err=%v", result, err)
+	}
+	artifacts, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_delivery_artifacts"})
+	if err != nil || len(artifacts.Rows) != 1 || artifacts.Rows[0][0].Value != "0" {
+		t.Fatalf("artefato inventado para imagem sem revisão: %+v err=%v", artifacts, err)
 	}
 }
 
