@@ -263,10 +263,11 @@ func (c *Core) projectReview(plan contract.Plan, r contract.Resource, target git
 
 func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target githubChildTarget, raw json.RawMessage, d *query.Dataset, run *contract.Run) error {
 	var entry struct {
-		ID        int64  `json:"id"`
-		Event     string `json:"event"`
-		CreatedAt string `json:"created_at"`
-		Actor     struct {
+		ID          int64  `json:"id"`
+		Event       string `json:"event"`
+		CreatedAt   string `json:"created_at"`
+		StateReason string `json:"state_reason"`
+		Actor       struct {
 			ID int64 `json:"id"`
 		} `json:"actor"`
 	}
@@ -297,7 +298,15 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 	}
 	event := query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, EvidenceID: e.ID}
 	if entry.Event == "closed" {
-		event.Type, event.OldValue, event.NewValue = "state_changed", "open", "closed"
+		event.Type, event.OldValue, event.NewValue = "state_changed", "open", "closed_unclassified"
+		if entry.StateReason == "completed" {
+			event.NewValue = "completed"
+		} else if target.Index >= 0 && target.Index < len(d.Issues) {
+			issue := d.Issues[target.Index]
+			if issue.CompletedAt != "" && issue.CompletedAt == entry.CreatedAt {
+				event.NewValue = "completed"
+			}
+		}
 	}
 	upsertEvent(d, event)
 	if target.IsPR && entry.Event == "ready_for_review" {

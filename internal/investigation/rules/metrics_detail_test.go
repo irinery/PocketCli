@@ -86,6 +86,26 @@ func TestContextIssueDoesNotProduceMissingLinkFinding(t *testing.T) {
 	}
 }
 
+func TestUnclassifiedGitHubClosureCannotAnchorThirtyDayRework(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z", AnalysisReferenceAt: "2026-02-01T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "github-issue-8", Source: "github", State: "open", EvidenceID: "ev-issue"}},
+		Events: []query.Event{
+			{ID: "close", EntityID: "github-issue-8", Type: "state_changed", OldValue: "open", NewValue: "closed_unclassified", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-close"},
+			{ID: "reopen", EntityID: "github-issue-8", Type: "reopened", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-reopen"},
+		},
+		Rework: []contract.ReworkRecord{{ID: "correction", SubjectID: "github-issue-8", Kind: "declared_correction", EvidenceStatus: "direct", EventAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr"}},
+	}
+	out := Evaluate(d)
+	values := make(map[string]string)
+	for _, metric := range out.Metrics {
+		values[metric.ID] = metric.Value.Value
+	}
+	if values["metric-rework-30d-observed"] != "0" || values["metric-rework-no-prior-completion"] != "1" || values["metric-declared-correction-30d-observed"] != "0" || values["metric-declared-correction-no-prior-completion"] != "1" {
+		t.Fatalf("unclassified closure was treated as delivery: %+v", values)
+	}
+}
+
 func TestPeriodMetricsExcludeOldCompletionAndReviewAfterMetadataEdit(t *testing.T) {
 	wait := int64(3600)
 	d := query.Dataset{
