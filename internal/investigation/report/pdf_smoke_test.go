@@ -21,7 +21,7 @@ func TestRealPDFWithFixture(t *testing.T) {
 	for _, test := range []struct {
 		scenario string
 		findings int64
-	}{{"complete", 2}, {"large_report", 237}} {
+	}{{"complete", 2}, {"partial", 2}, {"large_report", 237}} {
 		t.Run(test.scenario, func(t *testing.T) {
 			reader := mock.NewScenario(test.scenario)
 			f, err := report.New(reader, t.TempDir(), chromium, true, nil, nil, nil)
