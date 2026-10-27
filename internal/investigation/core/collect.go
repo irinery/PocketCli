@@ -133,6 +133,7 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 				if err := c.mapPRHeadFiles(ctx, plan, r, &d, run); err != nil {
 					return d, err
 				}
+				c.completeCodeHistoryCoverage(r.ID, &d)
 			}
 		case "linear":
 			if err := c.collectTeam(ctx, plan, r, &d, run); err != nil {
