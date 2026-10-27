@@ -5,9 +5,11 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"pocketcli/internal/investigation/contract"
@@ -73,6 +75,7 @@ func TestReadOnlyAndFixture(t *testing.T) {
 	check("SELECT random() FROM v_snapshot", 0, true)
 	check("WITH /*x*/ RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x) SELECT n FROM x", 0, true)
 	check("WITH RECURSIVE/*x*/ x(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM x) SELECT n FROM x", 0, true)
+	check("WITH x(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM x WHERE n<3) SELECT n FROM x", 0, true)
 	large, err := q.Execute(context.Background(), "snap-demo-001", contract.QueryRequest{SnapshotID: "snap-demo-001", SQL: "SELECT 9007199254740993 AS large_integer FROM v_snapshot"})
 	if err != nil || large.Rows[0][0].Value != "9007199254740993" {
 		t.Fatalf("large integer=%+v err=%v", large, err)
@@ -112,5 +115,14 @@ func TestReadOnlyAndFixture(t *testing.T) {
 	limited, err := q.Execute(context.Background(), "snap-demo-001", contract.QueryRequest{SnapshotID: "snap-demo-001", SQL: "SELECT component_id FROM v_components", MaxRows: 1000})
 	if err != nil || limited.ReturnedRows != 1000 || !limited.Truncated {
 		t.Fatalf("limit=%+v err=%v", limited, err)
+	}
+	wideSQL := "SELECT " + strings.TrimSuffix(strings.Repeat("'x' AS c,", 400), ",") + " FROM v_components"
+	wide, err := q.Execute(context.Background(), "snap-demo-001", contract.QueryRequest{SnapshotID: "snap-demo-001", SQL: wideSQL, MaxRows: 1000, TimeoutMS: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(wide)
+	if err != nil || len(encoded) > 2*1024*1024 || !wide.Truncated || wide.ReturnedRows >= 1000 {
+		t.Fatalf("limite de bytes não aplicado ao JSON completo: bytes=%d rows=%d truncated=%v err=%v", len(encoded), wide.ReturnedRows, wide.Truncated, err)
 	}
 }

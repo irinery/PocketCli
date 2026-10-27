@@ -147,7 +147,15 @@ func (s *sqliteService) Execute(ctx context.Context, id string, req contract.Que
 		out.Columns[i] = contract.Column{Name: n, DeclaredType: declared}
 	}
 	out.Rows = make([][]contract.Cell, 0)
-	used := 0
+	// Count the serialized response, including per-cell JSON overhead. A wide
+	// query with tiny values can otherwise exceed the 2 MiB public limit.
+	const maxResultBytes = 2 * 1024 * 1024
+	budgetProbe := contract.QueryResult{SnapshotID: id, QueryHash: storage.Hash([]byte(req.SQL)), Columns: out.Columns, Rows: [][]contract.Cell{}, ReturnedRows: req.MaxRows, Truncated: false, ElapsedMS: 9223372036854775807, Warnings: []string{}}
+	baseJSON, err := json.Marshal(budgetProbe)
+	if err != nil || len(baseJSON) > maxResultBytes {
+		return contract.QueryResult{}, denied("ERR_SQL_LIMIT", "colunas excedem limite de resultado")
+	}
+	used := len(baseJSON)
 	for rows.Next() {
 		values := make([]interface{}, len(names))
 		pointers := make([]interface{}, len(names))
@@ -164,15 +172,16 @@ func (s *sqliteService) Execute(ctx context.Context, id string, req contract.Que
 		line := make([]contract.Cell, len(names))
 		for i, v := range values {
 			line[i] = cell(v)
-			used += len(line[i].Value)
-			if used > 2*1024*1024 {
-				out.Truncated = true
-				break
-			}
 		}
-		if out.Truncated {
+		lineJSON, err := json.Marshal(line)
+		if err != nil {
+			return contract.QueryResult{}, denied("ERR_SQL_DENIED", "linha inválida")
+		}
+		if used+len(lineJSON)+1 > maxResultBytes {
+			out.Truncated = true
 			break
 		}
+		used += len(lineJSON) + 1
 		out.Rows = append(out.Rows, line)
 	}
 	if err := rows.Err(); err != nil {
