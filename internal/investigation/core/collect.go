@@ -294,16 +294,17 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				return err
 			}
 			var obj struct {
-				ID        int64   `json:"id"`
-				Number    int     `json:"number"`
-				Title     string  `json:"title"`
-				State     string  `json:"state"`
-				CreatedAt string  `json:"created_at"`
-				UpdatedAt string  `json:"updated_at"`
-				ClosedAt  *string `json:"closed_at"`
-				MergedAt  *string `json:"merged_at"`
-				Draft     bool    `json:"draft"`
-				User      struct {
+				ID          int64   `json:"id"`
+				Number      int     `json:"number"`
+				Title       string  `json:"title"`
+				State       string  `json:"state"`
+				StateReason string  `json:"state_reason"`
+				CreatedAt   string  `json:"created_at"`
+				UpdatedAt   string  `json:"updated_at"`
+				ClosedAt    *string `json:"closed_at"`
+				MergedAt    *string `json:"merged_at"`
+				Draft       bool    `json:"draft"`
+				User        struct {
 					ID int64 `json:"id"`
 				} `json:"user"`
 				Head struct {
@@ -339,7 +340,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				upsertPR(d, p)
 			} else {
 				i := query.Issue{ID: fmt.Sprintf("github-issue-%d", obj.ID), Identifier: fmt.Sprintf("%s#%d", r.Name, obj.Number), Source: "github", Title: c.safeTitle(ctx, obj.Title), State: obj.State, CreatedAt: obj.CreatedAt, UpdatedAt: obj.UpdatedAt, EvidenceID: e.ID, IsContext: contextOnly(plan.WindowStart, obj.CreatedAt, obj.UpdatedAt)}
-				if obj.State == "closed" && obj.ClosedAt != nil {
+				if obj.State == "closed" && obj.StateReason == "completed" && obj.ClosedAt != nil {
 					i.CompletedAt = *obj.ClosedAt
 				}
 				upsertIssue(d, i)

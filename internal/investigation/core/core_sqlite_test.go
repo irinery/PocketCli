@@ -214,7 +214,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.2.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.2.1" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	result, err := c.Query(context.Background(), contract.QueryRequest{SnapshotID: run.SnapshotID, SQL: "SELECT COUNT(*) FROM v_pull_requests"})
