@@ -214,7 +214,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.3.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.4.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -1012,9 +1012,49 @@ func TestRetainedIssueReclassifiesFromPrivateEvidence(t *testing.T) {
 			}
 			seconds := int64(3600)
 			prior := query.Issue{ID: tc.name, Source: tc.source, EvidenceID: evidence.ID, StartedAt: "2026-01-08T00:00:00Z", CompletedAt: "2026-01-09T00:00:00Z", DurationValid: true, CycleSeconds: &seconds}
-			got, err := c.classifyRetainedIssue(prior)
+			got, err := c.classifyRetainedIssue(prior, evidence.SHA256)
 			if err != nil || got.Outcome != tc.want || got.CompletedAt != "" || got.DurationValid || got.CycleSeconds != nil {
 				t.Fatalf("old projection retained false delivery: issue=%+v err=%v", got, err)
+			}
+			if _, err := c.classifyRetainedIssue(prior, "wrong-hash"); err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") {
+				t.Fatalf("tampered evidence accepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestRetainedGitHubActorKindsReclassifyWithoutNetwork(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewCore(CoreConfig{Store: store, Secrets: secrets.NewSessionStore()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prEvidence, err := c.evidence("github", "acme/api#7", "2026-01-10T00:00:00Z", json.RawMessage(`{"id":100,"user":{"id":1,"type":"User"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, err := c.classifyRetainedPR(query.PullRequest{ID: "github-pr-100", AuthorID: "github-1", EvidenceID: prEvidence.ID}, prEvidence.SHA256)
+	if err != nil || pr.AuthorID != "github-1" || pr.AuthorKind != "user" {
+		t.Fatalf("retained PR author type: %+v err=%v", pr, err)
+	}
+	for _, tc := range []struct {
+		name, body, wantType, wantKind string
+	}{
+		{"bot", `{"id":10,"state":"APPROVED","user":{"id":2,"type":"Bot"}}`, "bot_reviewed", "bot"},
+		{"unknown", `{"id":11,"state":"APPROVED","user":{"id":3}}`, "reviewed_unknown", ""},
+		{"self", `{"id":12,"state":"APPROVED","user":{"id":1,"type":"User"}}`, "reviewed", "user"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evidence, err := c.evidence("github", "acme/api:review:"+tc.name, "2026-01-10T00:00:00Z", json.RawMessage(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			event, err := c.classifyRetainedActorEvent(query.Event{ID: tc.name, EntityID: pr.ID, Type: "reviewed", ActorID: "github-2", EvidenceID: evidence.ID}, []query.PullRequest{pr}, evidence.SHA256)
+			if err != nil || event.Type != tc.wantType || event.ActorKind != tc.wantKind {
+				t.Fatalf("retained review classification: %+v err=%v", event, err)
 			}
 		})
 	}

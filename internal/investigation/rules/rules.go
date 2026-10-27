@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.3.0"
+const Version = "1.4.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -119,7 +119,7 @@ func Evaluate(d query.Dataset) query.Dataset {
 		}
 		stageID := "stage-" + storage.Hash([]byte(p.ID + ":review_wait:" + p.ReadyAt + ":" + p.FirstHumanReviewAt + ":" + readyEvidence + ":" + reviewEvidence))[:20]
 		d.Stages = append(d.Stages, contract.StageRecord{ID: stageID, SubjectID: p.ID, Stage: "review_wait", StartedAt: p.ReadyAt, EndedAt: p.FirstHumanReviewAt, ElapsedSeconds: seconds, DurationValid: true, EvidenceID: reviewEvidence})
-		d.Findings = append(d.Findings, finding("R-FLOW-001", "info", p.ID, "Tempo de espera observado", fmt.Sprintf("A primeira revisão humana foi observada %d segundos após o PR ficar pronto.", *seconds), "direct", []string{readyEvidence, reviewEvidence}, "Tempo decorrido, não horas trabalhadas."))
+		d.Findings = append(d.Findings, finding("R-FLOW-001", "info", p.ID, "Tempo de espera observado", fmt.Sprintf("A primeira revisão de conta GitHub User foi observada %d segundos após o PR ficar pronto.", *seconds), "direct", []string{readyEvidence, reviewEvidence}, "Tempo decorrido, não horas trabalhadas; tipo User não descarta automação nessa conta."))
 	}
 	for _, e := range d.Events {
 		if e.Type == "reopened" || (isDone(e.OldValue) && isOpen(e.NewValue)) {

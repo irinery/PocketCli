@@ -55,11 +55,15 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			if err != nil {
 				return d, err
 			}
+			evidenceHashes := make(map[string]string, len(prior.Evidence))
+			for _, evidence := range prior.Evidence {
+				evidenceHashes[evidence.ID] = evidence.SHA256
+			}
 			referenced := make(map[string]bool)
 			for _, i := range prior.Issues {
 				if activeInWindow(plan.WindowStart, plan.WindowEnd, i.CreatedAt, i.UpdatedAt, i.State, plan.Input.Period.Preset != "custom") {
 					if i.Outcome == "" && (i.Source == "github" || i.Source == "linear") {
-						i, err = c.classifyRetainedIssue(i)
+						i, err = c.classifyRetainedIssue(i, evidenceHashes[i.EvidenceID])
 						if err != nil {
 							return d, err
 						}
@@ -70,12 +74,20 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			}
 			for _, p := range prior.PullRequests {
 				if activeInWindow(plan.WindowStart, plan.WindowEnd, p.CreatedAt, p.UpdatedAt, p.State, plan.Input.Period.Preset != "custom") {
+					p, err = c.classifyRetainedPR(p, evidenceHashes[p.EvidenceID])
+					if err != nil {
+						return d, err
+					}
 					d.PullRequests = append(d.PullRequests, p)
 					referenced[p.EvidenceID] = true
 				}
 			}
 			for _, event := range prior.Events {
 				if timestampInWindow(plan.WindowStart, plan.WindowEnd, event.EventAt) {
+					event, err = c.classifyRetainedActorEvent(event, d.PullRequests, evidenceHashes[event.EvidenceID])
+					if err != nil {
+						return d, err
+					}
 					d.Events = append(d.Events, event)
 					referenced[event.EvidenceID] = true
 				}
@@ -311,7 +323,8 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				MergedAt    *string `json:"merged_at"`
 				Draft       bool    `json:"draft"`
 				User        struct {
-					ID int64 `json:"id"`
+					ID   int64  `json:"id"`
+					Type string `json:"type"`
 				} `json:"user"`
 				Head struct {
 					SHA string `json:"sha"`
@@ -336,7 +349,11 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			}
 			upsertEvidence(d, e)
 			if col.name == "pull_requests" {
-				p := query.PullRequest{ID: fmt.Sprintf("github-pr-%d", obj.ID), Repository: r.Name, Number: obj.Number, Title: c.safeTitle(ctx, obj.Title), AuthorID: fmt.Sprintf("github-%d", obj.User.ID), State: obj.State, CreatedAt: obj.CreatedAt, UpdatedAt: obj.UpdatedAt, HeadSHA: obj.Head.SHA, EvidenceID: e.ID}
+				p := query.PullRequest{ID: fmt.Sprintf("github-pr-%d", obj.ID), Repository: r.Name, Number: obj.Number, Title: c.safeTitle(ctx, obj.Title), State: obj.State, CreatedAt: obj.CreatedAt, UpdatedAt: obj.UpdatedAt, HeadSHA: obj.Head.SHA, EvidenceID: e.ID}
+				if obj.User.ID > 0 {
+					p.AuthorID = fmt.Sprintf("github-%d", obj.User.ID)
+					p.AuthorKind = githubAccountKind(obj.User.Type)
+				}
 				if obj.MergedAt != nil {
 					p.MergedAt = *obj.MergedAt
 				}
@@ -792,6 +809,17 @@ func githubIssueOutcome(state, reason string) string {
 	}
 }
 
+func githubAccountKind(accountType string) string {
+	switch strings.ToLower(strings.TrimSpace(accountType)) {
+	case "user":
+		return "user"
+	case "bot":
+		return "bot"
+	default:
+		return ""
+	}
+}
+
 func linearIssueOutcome(stateType, stateName string) string {
 	kind := strings.ToLower(strings.TrimSpace(stateType))
 	name := strings.ToLower(strings.TrimSpace(stateName))
@@ -816,10 +844,10 @@ func linearIssueOutcome(stateType, stateName string) string {
 	return "unclassified"
 }
 
-func (c *Core) classifyRetainedIssue(issue query.Issue) (query.Issue, error) {
-	var raw json.RawMessage
-	if issue.EvidenceID == "" || c.store.Get("objects", issue.EvidenceID, &raw) != nil || !json.Valid(raw) {
-		return issue, fault("ERR_AUDIT_FAILED", "evidência de issue anterior indisponível")
+func (c *Core) classifyRetainedIssue(issue query.Issue, evidenceHash string) (query.Issue, error) {
+	raw, err := c.verifiedRetainedEvidence(issue.EvidenceID, evidenceHash)
+	if err != nil {
+		return issue, err
 	}
 	switch issue.Source {
 	case "github":

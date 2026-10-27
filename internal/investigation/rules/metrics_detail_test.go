@@ -153,6 +153,44 @@ func TestExplicitIssueOutcomesSeparateCancelledDuplicatesAndDeliveries(t *testin
 	}
 }
 
+func TestActorAccountTypesKeepBotsAndUnknownSeparate(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:   []query.Issue{{ID: "issue", State: "done", CompletedAt: "2026-01-08T00:00:00Z", AssigneeID: "linear-assignee"}},
+		PullRequests: []query.PullRequest{
+			{ID: "bot-pr", AuthorID: "github-1", AuthorKind: "bot", MergedAt: "2026-01-10T00:00:00Z"},
+			{ID: "user-pr", AuthorID: "github-2", AuthorKind: "user", MergedAt: "2026-01-10T00:00:00Z"},
+			{ID: "unknown-pr", AuthorID: "github-3", MergedAt: "2026-01-10T00:00:00Z"},
+		},
+		Events: []query.Event{
+			{ID: "closure", EntityID: "issue", Type: "state_changed", OldValue: "started", NewValue: "done", EventAt: "2026-01-08T00:00:00Z", ActorID: "linear-actor"},
+			{ID: "human-review", EntityID: "bot-pr", Type: "human_reviewed", EventAt: "2026-01-09T00:00:00Z", ActorID: "github-2", ActorKind: "user"},
+			{ID: "bot-review", EntityID: "user-pr", Type: "bot_reviewed", EventAt: "2026-01-09T00:00:00Z", ActorID: "github-1", ActorKind: "bot"},
+			{ID: "unknown-review", EntityID: "user-pr", Type: "reviewed_unknown", EventAt: "2026-01-09T00:00:00Z", ActorID: "github-4"},
+		},
+	}
+	byID := make(map[string]contract.Metric)
+	for _, metric := range Evaluate(d).Metrics {
+		byID[metric.ID] = metric
+	}
+	want := map[string]string{
+		"metric-actor-kind-bot":                           "1",
+		"metric-actor-kind-user-account":                  "1",
+		"metric-actor-kind-unknown":                       "4",
+		"metric-bot-reviewed-prs":                         "1",
+		"metric-unknown-kind-reviewed-prs":                "1",
+		metricID("metric-reviewed-prs-actor", "github-2"): "1",
+	}
+	for id, value := range want {
+		if byID[id].Value.Value != value {
+			t.Fatalf("actor kind metric %s=%+v want %s", id, byID[id], value)
+		}
+	}
+	if _, ok := byID[metricID("metric-reviewed-prs-actor", "github-1")]; ok {
+		t.Fatal("bot review counted as human review")
+	}
+}
+
 func TestPeriodMetricsExcludeOldCompletionAndReviewAfterMetadataEdit(t *testing.T) {
 	wait := int64(3600)
 	d := query.Dataset{

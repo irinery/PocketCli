@@ -19,9 +19,9 @@ import (
 
 func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 	responses := map[string]string{
-		"/repos/acme/api/pulls":             `[ {"id":100,"number":7,"title":"PR","body":"Fixes #8","state":"closed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","merged_at":"2026-01-05T00:00:00Z","user":{"id":1}} ]`,
+		"/repos/acme/api/pulls":             `[ {"id":100,"number":7,"title":"PR","body":"Fixes #8","state":"closed","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z","merged_at":"2026-01-05T00:00:00Z","user":{"id":1,"type":"User"}} ]`,
 		"/repos/acme/api/issues":            `[ {"id":200,"number":8,"title":"Issue","state":"open","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z"} ]`,
-		"/repos/acme/api/pulls/7/reviews":   `[ {"id":14,"submitted_at":"2026-01-01T12:00:00Z","state":"COMMENTED","user":{"id":2,"type":"User"}}, {"id":11,"submitted_at":"2026-01-02T06:00:00Z","state":"APPROVED","user":{"id":1,"type":"User"}}, {"id":12,"submitted_at":"2026-01-02T12:00:00Z","state":"APPROVED","user":{"id":3,"type":"Bot"}}, {"id":13,"submitted_at":"2026-01-03T00:00:00Z","state":"CHANGES_REQUESTED","user":{"id":2,"type":"User"}} ]`,
+		"/repos/acme/api/pulls/7/reviews":   `[ {"id":14,"submitted_at":"2026-01-01T12:00:00Z","state":"COMMENTED","user":{"id":2,"type":"User"}}, {"id":11,"submitted_at":"2026-01-02T06:00:00Z","state":"APPROVED","user":{"id":1,"type":"User"}}, {"id":12,"submitted_at":"2026-01-02T12:00:00Z","state":"APPROVED","user":{"id":3,"type":"Bot"}}, {"id":13,"submitted_at":"2026-01-03T00:00:00Z","state":"CHANGES_REQUESTED","user":{"id":2,"type":"User"}}, {"id":15,"submitted_at":"2026-01-02T18:00:00Z","state":"COMMENTED","user":{"id":4}} ]`,
 		"/repos/acme/api/issues/7/timeline": `[ {"sha":"abc","event":"committed","created_at":"2026-01-02T00:00:00Z"}, {"event":"cross-referenced","created_at":"2026-01-02T00:00:00Z"}, {"id":21,"event":"ready_for_review","created_at":"2026-01-02T00:00:00Z","actor":{"id":1}} ]`,
 		"/repos/acme/api/issues/8/timeline": `[ {"id":23,"event":"closed","state_reason":"completed","created_at":"2026-01-03T00:00:00Z","actor":{"id":1}}, {"id":22,"event":"reopened","created_at":"2026-01-04T00:00:00Z","actor":{"id":2}} ]`,
 	}
@@ -56,6 +56,17 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 	}
 	if len(d.PullRequests) != 1 || d.PullRequests[0].ReadyAt != "2026-01-02T00:00:00Z" || d.PullRequests[0].FirstHumanReviewAt != "2026-01-03T00:00:00Z" || d.PullRequests[0].ReviewWaitSeconds == nil || *d.PullRequests[0].ReviewWaitSeconds != 86400 {
 		t.Fatalf("PR review projection: %+v", d.PullRequests)
+	}
+	if d.PullRequests[0].AuthorKind != "user" {
+		t.Fatalf("PR author account type was lost: %+v", d.PullRequests[0])
+	}
+	botReview, unknownReview := false, false
+	for _, event := range d.Events {
+		botReview = botReview || (event.Type == "bot_reviewed" && event.ActorID == "github-3" && event.ActorKind == "bot")
+		unknownReview = unknownReview || (event.Type == "reviewed_unknown" && event.ActorID == "github-4" && event.ActorKind == "")
+	}
+	if !botReview || !unknownReview {
+		t.Fatalf("reviewer account types were not separated: %+v", d.Events)
 	}
 	if len(d.Issues) != 1 || d.Issues[0].ReopenCount != 1 {
 		t.Fatalf("issue reopen projection: %+v", d.Issues)

@@ -30,7 +30,7 @@ type Dataset struct {
 	Metrics      []contract.Metric
 }
 
-type Event struct{ ID, EntityID, Type, EventAt, ObservedAt, ActorID, OldValue, NewValue, EvidenceID string }
+type Event struct{ ID, EntityID, Type, EventAt, ObservedAt, ActorID, ActorKind, OldValue, NewValue, EvidenceID string }
 
 type Issue struct {
 	ID, Identifier, Source, Title, State, AssigneeID, TeamID, ComponentID string
@@ -44,6 +44,7 @@ type Issue struct {
 }
 type PullRequest struct {
 	ID, Repository, Title, AuthorID, State, CreatedAt, UpdatedAt, ReadyAt, FirstHumanReviewAt, MergedAt, HeadSHA, MergeSHA, EvidenceID string
+	AuthorKind                                                                                                                         string
 	Number                                                                                                                             int
 	ReviewWaitSeconds                                                                                                                  *int64
 }

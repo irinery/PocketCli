@@ -61,8 +61,22 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 	}
 	closures := make(map[string]int64)
 	reviews := make(map[string]map[string]bool)
+	botReviews := make(map[string]map[string]bool)
+	unknownReviews := make(map[string]map[string]bool)
 	merged := make(map[string]int64)
+	accountKinds := make(map[string]string)
+	observeKind := func(actor, kind string) {
+		if actor == "" || (kind != "user" && kind != "bot") {
+			return
+		}
+		if prior := accountKinds[actor]; prior == "" {
+			accountKinds[actor] = kind
+		} else if prior != kind {
+			accountKinds[actor] = "conflict"
+		}
+	}
 	for _, event := range d.Events {
+		observeKind(event.ActorID, event.ActorKind)
 		if event.ActorID == "" || !observedInWindow(event.EventAt, d.Snapshot) {
 			continue
 		}
@@ -77,8 +91,21 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 			}
 			reviews[event.ActorID][event.EntityID] = true
 		}
+		if event.Type == "bot_reviewed" {
+			if botReviews[event.ActorID] == nil {
+				botReviews[event.ActorID] = make(map[string]bool)
+			}
+			botReviews[event.ActorID][event.EntityID] = true
+		}
+		if event.Type == "reviewed_unknown" {
+			if unknownReviews[event.ActorID] == nil {
+				unknownReviews[event.ActorID] = make(map[string]bool)
+			}
+			unknownReviews[event.ActorID][event.EntityID] = true
+		}
 	}
 	for _, pr := range d.PullRequests {
+		observeKind(pr.AuthorID, pr.AuthorKind)
 		if pr.AuthorID != "" && observedInWindow(pr.MergedAt, d.Snapshot) {
 			merged[pr.AuthorID]++
 		}
@@ -88,6 +115,12 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 		actors[actor] = true
 	}
 	for actor := range reviews {
+		actors[actor] = true
+	}
+	for actor := range botReviews {
+		actors[actor] = true
+	}
+	for actor := range unknownReviews {
 		actors[actor] = true
 	}
 	for actor := range merged {
@@ -102,12 +135,23 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 	}
 	sort.Strings(ids)
 	out := make([]contract.Metric, 0, len(ids)*4+1)
+	var botAccounts, userAccounts, unknownAccounts int64
 	for _, actor := range ids {
 		label := strings.TrimSpace(actor)
 		if len(label) > 128 {
 			label = label[:128]
 		}
-		limit := "Contagens observadas, sem atribuição causal ou score de produtividade; bots e identidade histórica podem ser desconhecidos."
+		limit := "Contagens observadas, sem atribuição causal ou score de produtividade; tipo de conta não verificado."
+		switch accountKinds[actor] {
+		case "bot":
+			botAccounts++
+			limit = "GitHub informa tipo Bot; contagem não atribui causa, culpa ou produtividade."
+		case "user":
+			userAccounts++
+			limit = "GitHub informa tipo User; automação operando essa conta não pode ser descartada."
+		default:
+			unknownAccounts++
+		}
 		if closures[actor] > 0 {
 			out = append(out, integerMetric(metricID("metric-closures-actor", actor), "Conclusões registradas por "+label, closures[actor], closures[actor], nil, "Transições de estado para concluído registradas com este ator na janela; quem registrou não necessariamente resolveu", limit))
 		}
@@ -119,8 +163,34 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 		}
 		if len(reviews[actor]) > 0 {
 			count := int64(len(reviews[actor]))
-			out = append(out, integerMetric(metricID("metric-reviewed-prs-actor", actor), "PRs revisados por "+label, count, count, nil, "PRs distintos com evento de revisão humana deste ator na janela", limit))
+			out = append(out, integerMetric(metricID("metric-reviewed-prs-actor", actor), "PRs revisados por "+label, count, count, nil, "PRs distintos com evento de revisão de conta GitHub User deste ator na janela", limit))
 		}
+	}
+	if len(ids) > 0 {
+		eligible := int64(len(ids))
+		out = append(out,
+			integerMetric("metric-actor-kind-bot", "Atores com conta GitHub Bot observada", botAccounts, botAccounts, &eligible, "Atores distintos nas métricas de atividade cujo tipo Bot foi informado pela API", "Somente tipo explícito; outras automações podem usar contas User ou identidades sem tipo conhecido."),
+			integerMetric("metric-actor-kind-user-account", "Atores com conta GitHub User observada", userAccounts, userAccounts, &eligible, "Atores distintos nas métricas de atividade cujo tipo User foi informado pela API", "User descreve o tipo da conta, não prova ação humana nem produtividade."),
+			integerMetric("metric-actor-kind-unknown", "Atores sem tipo de conta verificado", unknownAccounts, unknownAccounts, &eligible, "Atores distintos nas métricas de atividade sem tipo User/Bot consistente", "Inclui atores Linear e metadados ausentes ou conflitantes; não presumir pessoa humana."),
+		)
+	}
+	botPRs, unknownPRs := make(map[string]bool), make(map[string]bool)
+	for _, prs := range botReviews {
+		for pr := range prs {
+			botPRs[pr] = true
+		}
+	}
+	for _, prs := range unknownReviews {
+		for pr := range prs {
+			unknownPRs[pr] = true
+		}
+	}
+	if len(botPRs) > 0 || len(unknownPRs) > 0 {
+		botCount, unknownCount := int64(len(botPRs)), int64(len(unknownPRs))
+		out = append(out,
+			integerMetric("metric-bot-reviewed-prs", "PRs com revisão de conta Bot", botCount, botCount, nil, "PRs distintos com revisão submetida por conta GitHub tipo Bot na janela", "Revisão de Bot não compõe a primeira revisão de conta User."),
+			integerMetric("metric-unknown-kind-reviewed-prs", "PRs com revisão de tipo desconhecido", unknownCount, unknownCount, nil, "PRs distintos com revisão submetida por conta sem tipo User/Bot reconhecido na janela", "Tipo ausente não é tratado como revisão humana."),
+		)
 	}
 	if assigneeUnknown > 0 {
 		out = append(out, integerMetric("metric-completed-assignee-unknown", "Issues concluídas sem responsável conhecido", assigneeUnknown, assigneeUnknown, &completedEligible, "Issues não contextuais com completed_at na janela e assignee_id ausente no snapshot", "Ausência de responsável não identifica quem executou o trabalho."))
