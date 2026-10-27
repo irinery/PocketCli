@@ -137,8 +137,12 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 				req.Header.Set("Content-Type", "application/json")
 			}
 			c.next[source] = time.Now().Add(c.spacing[source])
+			started := time.Now().UTC()
 			res, err := c.HTTP.Do(req)
 			if err != nil {
+				if auditErr := c.recordRequest(ctx, source, method, endpoint, started, 0, 0, nil, false); auditErr != nil {
+					return auditErr
+				}
 				if attempt < 3 {
 					if e := waitUntil(ctx, time.Now().Add(time.Duration(1<<attempt)*time.Second)); e != nil {
 						return e
@@ -151,13 +155,21 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			headers = res.Header.Clone()
 			response, err = io.ReadAll(io.LimitReader(res.Body, 10*1024*1024+1))
 			res.Body.Close()
+			wireBytes += int64(len(response))
+			cacheHit := status == http.StatusNotModified && cached.ETag != "" && !skipConditional
+			auditBody := response
+			if cacheHit {
+				auditBody = cached.Body
+			}
+			if auditErr := c.recordRequest(ctx, source, method, endpoint, started, status, int64(len(response)), auditBody, cacheHit); auditErr != nil {
+				return auditErr
+			}
 			if err != nil {
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "resposta externa inválida"}
 			}
 			if len(response) > 10*1024*1024 {
 				return &contract.ErrorResponse{Code: "ERR_RESOURCE_EXHAUSTED", Message: "resposta externa excede 10 MiB"}
 			}
-			wireBytes += int64(len(response))
 			if status == http.StatusNotModified {
 				if cached.ETag != "" && !skipConditional {
 					if err := c.recordReuse(ctx); err != nil {

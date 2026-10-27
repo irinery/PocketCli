@@ -147,6 +147,11 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			return out, err
 		}
 	}
+	planID, err := storage.ID()
+	if err != nil {
+		return out, err
+	}
+	ctx = collect.WithAuditID(ctx, planID)
 	if input.Limits.GitHubRPH < 0 || input.Limits.LinearRPH < 0 || input.Limits.MaxSessionMS < 0 || input.Limits.MaxTransferBytes < 0 || input.Limits.MaxLocalBytes < 0 {
 		return out, fault("ERR_VALIDATION", "limite negativo")
 	}
@@ -295,10 +300,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 		Resources  []contract.Resource
 		Start, End string
 	}{canonicalInput, auth, resources, period.WindowStart, period.WindowEnd})
-	id, err := storage.ID()
-	if err != nil {
-		return out, err
-	}
+	id := planID
 	warnings := []string{}
 	if input.Modules.CodeHistory {
 		warnings = append(warnings, "coleta Git de refs e manifestos ativa; histórico de arquivos ainda tem cobertura parcial")
