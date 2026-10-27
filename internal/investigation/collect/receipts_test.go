@@ -42,12 +42,18 @@ func TestRequestReceiptsPersist200And304WithoutSecrets(t *testing.T) {
 	calls := 0
 	client := secretClient(t, func(r *http.Request) (*http.Response, error) {
 		calls++
+		if r.Header.Get("X-GitHub-Api-Version") != "2026-03-10" {
+			t.Fatalf("versão REST não enviada: %q", r.Header.Get("X-GitHub-Api-Version"))
+		}
 		if calls == 1 {
 			res := response(200, `[{"id":1},{"id":2}]`)
 			res.Header.Set("ETag", `"v1"`)
+			res.Header.Set("X-Github-Api-Version-Selected", "2026-03-10")
 			return res, nil
 		}
-		return response(304, ""), nil
+		res := response(304, "")
+		res.Header.Set("X-Github-Api-Version-Selected", "unexpected-private-header-value")
+		return res, nil
 	})
 	client.SetCacheStore(store)
 	ctx := WithRunID(context.Background(), "run-receipts")
@@ -67,12 +73,15 @@ func TestRequestReceiptsPersist200And304WithoutSecrets(t *testing.T) {
 			t.Fatalf("recibo inválido: %+v", receipt)
 		}
 		content, err := os.ReadFile(filepath.Join(store.Root, requestReceiptKind, receipt.ID+".json"))
-		if err != nil || strings.Contains(string(content), "topsecret") || strings.Contains(string(content), "page=1") || strings.Contains(string(content), "Authorization") {
+		if err != nil || strings.Contains(string(content), "topsecret") || strings.Contains(string(content), "page=1") || strings.Contains(string(content), "Authorization") || strings.Contains(string(content), "unexpected-private-header-value") {
 			t.Fatalf("recibo expôs conteúdo privado: %s err=%v", content, err)
 		}
 	}
 	if seen[200].CacheHit || seen[200].WireBytes != int64(len(`[{"id":1},{"id":2}]`)) || !seen[304].CacheHit || seen[304].WireBytes != 0 {
 		t.Fatalf("contagem 200/304: %+v", seen)
+	}
+	if seen[200].RequestedAPIVersion != "2026-03-10" || seen[200].SelectedAPIVersion != "2026-03-10" || seen[304].RequestedAPIVersion != "2026-03-10" || seen[304].SelectedAPIVersion != "" {
+		t.Fatalf("versões REST do recibo: %+v", seen)
 	}
 }
 
