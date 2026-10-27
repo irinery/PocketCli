@@ -19,7 +19,7 @@ import (
 	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/core"
-	"pocketcli/internal/investigation/query"
+	"pocketcli/internal/investigation/report"
 	"pocketcli/internal/investigation/secrets"
 	"pocketcli/internal/pocketpath"
 )
@@ -32,14 +32,19 @@ func newInvestigateCommand() *cobra.Command {
 			return err
 		}
 		defer os.RemoveAll(root)
-		q, err := query.New(filepath.Join(root, "projection"))
+		c, err := core.NewCore(core.CoreConfig{Root: root})
 		if err != nil {
 			return err
 		}
-		if q.Available() {
+		if c.SQLAvailable() {
 			fmt.Fprintln(cmd.OutOrStdout(), "investigate: motor SQLite disponível")
 		} else {
 			fmt.Fprintln(cmd.OutOrStdout(), "investigate: Viewer; compile Agent com CGO_ENABLED=1 e -tags investigate_sqlite")
+		}
+		if _, err := report.New(c, filepath.Join(root, "reports"), os.Getenv("POCKETCLI_CHROMIUM"), false, nil, nil, nil); err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "investigate: PDF indisponível: %v\n", err)
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "investigate: PDF disponível (Chromium e pdfinfo)")
 		}
 		return nil
 	}})
