@@ -4,11 +4,14 @@ package core
 
 import (
 	"context"
+	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"pocketcli/internal/investigation/contract"
+	"pocketcli/internal/investigation/report"
 	"pocketcli/internal/investigation/secrets"
 	"pocketcli/internal/investigation/storage"
 )
@@ -36,7 +39,17 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetFinalizer(&fakeFinalizer{core: c})
+	chromium := os.Getenv("POCKETCLI_CHROMIUM")
+	var firstPDF *report.Finalizer
+	if chromium == "" {
+		c.SetFinalizer(&fakeFinalizer{core: c})
+	} else {
+		firstPDF, err = report.New(c, filepath.Join(store.Root, "reports"), chromium, false, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetFinalizer(firstPDF)
+	}
 	now := time.Now().UTC()
 	input := contract.PlanInput{
 		SchemaVersion: contract.Version,
@@ -118,7 +131,16 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCore.SetFinalizer(&fakeFinalizer{core: secondCore})
+	var secondPDF *report.Finalizer
+	if chromium == "" {
+		secondCore.SetFinalizer(&fakeFinalizer{core: secondCore})
+	} else {
+		secondPDF, err = report.New(secondCore, filepath.Join(store.Root, "reports"), chromium, false, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondCore.SetFinalizer(secondPDF)
+	}
 	input.InvestigationID = plan.InvestigationID
 	secondPlan, err := secondCore.PreparePlan(context.Background(), input)
 	if err != nil {
@@ -142,6 +164,25 @@ func TestRealCodeHistoryToSnapshot(t *testing.T) {
 	}
 	if firstStats.GitRefBytesAdded <= 0 || secondStats.GitRefBytesAdded != 0 {
 		t.Fatalf("ref padrão idêntica baixada outra vez ou contagem ausente: first=%d refresh=%d", firstStats.GitRefBytesAdded, secondStats.GitRefBytesAdded)
+	}
+	if firstPDF != nil {
+		firstArtifacts := firstPDF.List(run.SnapshotID)
+		secondArtifacts := secondPDF.List(secondRun.SnapshotID)
+		retained := secondPDF.List(run.SnapshotID)
+		if len(firstArtifacts) != 1 || len(secondArtifacts) != 1 || len(retained) != 1 || firstArtifacts[0].PageCount < 1 || secondArtifacts[0].PageCount < 1 || retained[0].SHA256 != firstArtifacts[0].SHA256 {
+			t.Fatalf("PDF real ausente ou primeira revisão alterada: first=%+v refresh=%+v retained=%+v", firstArtifacts, secondArtifacts, retained)
+		}
+		file, err := secondPDF.Open(secondArtifacts[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var signature [5]byte
+		_, readErr := io.ReadFull(file, signature[:])
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || string(signature[:]) != "%PDF-" {
+			t.Fatalf("PDF real inválido: signature=%q read=%v close=%v", signature, readErr, closeErr)
+		}
+		t.Logf("PDF real: primeira=%d páginas refresh=%d páginas achados=%d/%d", firstArtifacts[0].PageCount, secondArtifacts[0].PageCount, firstArtifacts[0].FindingCount, secondArtifacts[0].FindingCount)
 	}
 	t.Logf("primeira rodada: requests=%d bytes=%d registros=%d coberturas=%d git_ref_bytes=%d; refresh: requests=%d bytes=%d reuso=%d->%d git_ref_bytes=%d git_branch_bytes=%d git_tree_bytes=%d", run.Requests, run.Bytes, run.Items, len(d.Coverage), firstStats.GitRefBytesAdded, secondRun.Requests, secondRun.Bytes, firstStats.ReuseCounter, secondStats.ReuseCounter, secondStats.GitRefBytesAdded, secondStats.GitBranchBytesAdded, secondStats.GitTreeBytesAdded)
 }
