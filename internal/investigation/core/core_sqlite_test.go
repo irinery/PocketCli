@@ -214,7 +214,7 @@ func TestRunSnapshotAndVersionedObservation(t *testing.T) {
 		t.Fatalf("run=%+v", run)
 	}
 	snapshot, err := c.GetSnapshot(context.Background(), run.SnapshotID)
-	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.6.0" {
+	if err != nil || snapshot.RulesetVersion != rules.Version || snapshot.MappingVersion != "1.7.0" {
 		t.Fatalf("published versions do not match executed rules and mappings: snapshot=%+v err=%v", snapshot, err)
 	}
 	if snapshot.WindowStart != plan.WindowStart || snapshot.WindowEnd != plan.WindowEnd || snapshot.AnalysisReferenceAt != plan.WindowEnd {
@@ -511,7 +511,7 @@ func TestResumeAfterSnapshotPublicationKeepsSameSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	run = waitRun(t, firstCore, run.ID)
-	if run.State != "completed" || run.SnapshotID == "" {
+	if run.State != "completed_partial" || run.SnapshotID == "" {
 		t.Fatalf("primeiro run=%+v", run)
 	}
 	beforeID := run.SnapshotID
@@ -537,7 +537,7 @@ func TestResumeAfterSnapshotPublicationKeepsSameSnapshot(t *testing.T) {
 	afterRequests := transport.requests
 	transport.mu.Unlock()
 	snapshots, err := store.List("snapshots")
-	if err != nil || resumed.State != "completed" || resumed.SnapshotID != beforeID || afterRequests != beforeRequests || len(snapshots) != 1 {
+	if err != nil || resumed.State != "completed_partial" || resumed.SnapshotID != beforeID || afterRequests != beforeRequests || len(snapshots) != 1 {
 		t.Fatalf("retomada duplicou publicação: run=%+v requests=%d->%d snapshots=%v err=%v", resumed, beforeRequests, afterRequests, snapshots, err)
 	}
 	var published contract.Snapshot
@@ -581,7 +581,7 @@ func TestResumeAfterSnapshotPublicationKeepsSameSnapshot(t *testing.T) {
 	transport.mu.Lock()
 	afterRepublishRequests := transport.requests
 	transport.mu.Unlock()
-	if republished.State != "completed" || republished.SnapshotID != beforeID || afterRepublishRequests != beforeRequests {
+	if republished.State != "completed_partial" || republished.SnapshotID != beforeID || afterRepublishRequests != beforeRequests {
 		t.Fatalf("build persistido não republicado: run=%+v requests=%d->%d", republished, beforeRequests, afterRepublishRequests)
 	}
 	if err := store.Put("datasets", beforeID, query.Dataset{}); err != nil {
@@ -605,7 +605,7 @@ func TestResumeAfterSnapshotPublicationKeepsSameSnapshot(t *testing.T) {
 	}
 }
 
-func TestFinalizerTransitionsRunToCompleted(t *testing.T) {
+func TestFinalizerTransitionsRunToCompletedPartialWithIncompleteLinks(t *testing.T) {
 	store, _ := storage.Open(t.TempDir())
 	secretStore := secrets.NewSessionStore()
 	secretStore.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "test-secret", Persistence: "session"})
@@ -631,12 +631,12 @@ func TestFinalizerTransitionsRunToCompleted(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if run.State != "completed" || finalizer.calls.Load() != 1 {
+	if run.State != "completed_partial" || finalizer.calls.Load() != 1 {
 		t.Fatalf("run=%+v finalizer calls=%d", run, finalizer.calls.Load())
 	}
 }
 
-func TestReportRetryCompletesRunWithoutRecollecting(t *testing.T) {
+func TestReportRetryClosesPartialRunWithoutRecollecting(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -688,7 +688,7 @@ func TestReportRetryCompletesRunWithoutRecollecting(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := c.GetRun(context.Background(), run.ID)
-	if err != nil || got.State != "completed" || got.LastError != nil || got.SnapshotID != run.SnapshotID || transport.requests != before {
+	if err != nil || got.State != "completed_partial" || got.LastError != nil || got.SnapshotID != run.SnapshotID || transport.requests != before {
 		t.Fatalf("retry recollected or did not close run: %+v requests=%d before=%d err=%v", got, transport.requests, before, err)
 	}
 	if err := c.CompleteReport(context.Background(), artifact); err != nil {
@@ -1929,7 +1929,7 @@ func TestYAMLAndFormProduceSamePlanHash(t *testing.T) {
 	}
 }
 
-func TestLinksRequireExactCollectedPRReference(t *testing.T) {
+func TestTextReferenceCreatesOnlyMentionForExactCollectedPR(t *testing.T) {
 	store, _ := storage.Open(t.TempDir())
 	c, err := NewCore(CoreConfig{Store: store})
 	if err != nil {
@@ -1948,12 +1948,12 @@ func TestLinksRequireExactCollectedPRReference(t *testing.T) {
 	if err := c.linkDataset(contract.Plan{InvestigationID: "inv-1"}, &d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Links) != 1 || d.Links[0].SourceID != "issue-1" || d.Links[0].TargetID != "pr-7" || d.Coverage[len(d.Coverage)-1].Status != "complete" {
+	if len(d.Links) != 1 || d.Links[0].SourceID != "issue-1" || d.Links[0].TargetID != "pr-7" || d.Links[0].Relation != "mentions" || d.Coverage[len(d.Coverage)-1].Status != "partial" {
 		t.Fatalf("links=%+v coverage=%+v", d.Links, d.Coverage)
 	}
 }
 
-func TestIssueCommentCreatesDirectPRLink(t *testing.T) {
+func TestIssueCommentCreatesDirectPRMention(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1975,7 +1975,7 @@ func TestIssueCommentCreatesDirectPRLink(t *testing.T) {
 	if err := c.linkDataset(contract.Plan{InvestigationID: "inv-comments"}, &d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.Links) != 1 || d.Links[0].EvidenceID != "ev-comment" || d.Links[0].SourceID != "issue-8" || d.Links[0].TargetID != "pr-7" {
+	if len(d.Links) != 1 || d.Links[0].EvidenceID != "ev-comment" || d.Links[0].SourceID != "issue-8" || d.Links[0].TargetID != "pr-7" || d.Links[0].Relation != "mentions" {
 		t.Fatalf("comment link=%+v", d.Links)
 	}
 }
@@ -2023,7 +2023,7 @@ func TestFixesKeywordCreatesDeclaredFixLinkOnlyForExactIssue(t *testing.T) {
 				t.Fatalf("wrong fix declaration: %+v", link)
 			}
 		}
-		if link.Relation == "references_pr" {
+		if link.Relation == "mentions" {
 			generic++
 		}
 	}

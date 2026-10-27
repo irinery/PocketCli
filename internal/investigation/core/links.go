@@ -34,17 +34,17 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 	for _, link := range d.Links {
 		linked[link.ID] = true
 	}
-	add := func(issue query.Issue, pr query.PullRequest, evidenceID string) {
+	addMention := func(issue query.Issue, pr query.PullRequest, evidenceID string) {
 		if issue.ID == "" || pr.ID == "" || evidenceID == "" {
 			return
 		}
-		seed := issue.ID + ":references_pr:" + pr.ID + ":" + evidenceID
+		seed := issue.ID + ":mentions:" + pr.ID + ":" + evidenceID
 		id := "link-" + storage.Hash([]byte(seed))[:24]
 		if linked[id] {
 			return
 		}
 		linked[id] = true
-		d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: issue.ID, Relation: "references_pr", TargetID: pr.ID, Status: "direct", EvidenceID: evidenceID})
+		d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: issue.ID, Relation: "mentions", TargetID: pr.ID, Status: "direct", EvidenceID: evidenceID})
 	}
 	addDeclaredFix := func(issue query.Issue, pr query.PullRequest) {
 		if issue.ID == "" || pr.ID == "" || pr.EvidenceID == "" {
@@ -66,14 +66,14 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		for _, match := range pullURL.FindAllStringSubmatch(body, -1) {
 			key := strings.ToLower(match[1] + "/" + match[2] + "#" + match[3])
 			if pr, ok := prs[key]; ok {
-				add(issue, pr, issue.EvidenceID)
+				addMention(issue, pr, issue.EvidenceID)
 			}
 		}
 		if issue.Source == "github" {
 			repo := strings.SplitN(issue.Identifier, "#", 2)[0]
 			for _, match := range pullReference.FindAllStringSubmatch(body, -1) {
 				if pr, ok := prs[strings.ToLower(repo+"#"+match[1])]; ok {
-					add(issue, pr, issue.EvidenceID)
+					addMention(issue, pr, issue.EvidenceID)
 				}
 			}
 		}
@@ -85,13 +85,13 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		}
 		for _, match := range linearIdentifier.FindAllString(body, -1) {
 			if issue, ok := issues[strings.ToLower(match)]; ok {
-				add(issue, pr, pr.EvidenceID)
+				addMention(issue, pr, pr.EvidenceID)
 			}
 		}
 		for _, match := range issueURL.FindAllStringSubmatch(body, -1) {
 			key := strings.ToLower(match[1] + "/" + match[2] + "#" + match[3])
 			if issue, ok := issues[key]; ok {
-				add(issue, pr, pr.EvidenceID)
+				addMention(issue, pr, pr.EvidenceID)
 			}
 		}
 		for _, match := range closingReference.FindAllStringSubmatch(body, -1) {
@@ -99,7 +99,7 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 				continue
 			}
 			if issue, ok := issues[strings.ToLower(pr.Repository+"#"+match[1])]; ok {
-				add(issue, pr, pr.EvidenceID)
+				addMention(issue, pr, pr.EvidenceID)
 			}
 		}
 		for _, match := range fixingReference.FindAllStringSubmatch(body, -1) {
@@ -127,12 +127,12 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 			if ok {
 				for _, ref := range pullURL.FindAllStringSubmatch(item.Body, -1) {
 					if pr, ok := prs[strings.ToLower(ref[1]+"/"+ref[2]+"#"+ref[3])]; ok {
-						add(issue, pr, evidence.ID)
+						addMention(issue, pr, evidence.ID)
 					}
 				}
 				for _, ref := range pullReference.FindAllStringSubmatch(item.Body, -1) {
 					if pr, ok := prs[strings.ToLower(repo+"#"+ref[1])]; ok {
-						add(issue, pr, evidence.ID)
+						addMention(issue, pr, evidence.ID)
 					}
 				}
 			}
@@ -142,19 +142,19 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 			if ok {
 				for _, ref := range linearIdentifier.FindAllString(item.Body, -1) {
 					if issue, ok := issues[strings.ToLower(ref)]; ok {
-						add(issue, pr, evidence.ID)
+						addMention(issue, pr, evidence.ID)
 					}
 				}
 				for _, ref := range issueURL.FindAllStringSubmatch(item.Body, -1) {
 					if issue, ok := issues[strings.ToLower(ref[1]+"/"+ref[2]+"#"+ref[3])]; ok {
-						add(issue, pr, evidence.ID)
+						addMention(issue, pr, evidence.ID)
 					}
 				}
 			}
 		}
 	}
-	status := "complete"
-	reason := "referências explícitas verificadas contra os recursos coletados"
+	status := "partial"
+	reason := "menções textuais verificadas; relações formais issue-PR ainda não coletadas"
 	hasPRCollection := false
 	for _, cov := range d.Coverage {
 		if cov.Collection == "pull_requests" && cov.Source == "github" {

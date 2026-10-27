@@ -51,6 +51,27 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	}
 }
 
+func TestMentionDoesNotBecomeConfirmedPRLinkForMissingLinkRule(t *testing.T) {
+	d := query.Dataset{
+		Issues:   []query.Issue{{ID: "issue-1", EvidenceID: "ev-issue", State: "open"}},
+		Links:    []contract.LinkRecord{{ID: "mention", SourceID: "issue-1", TargetID: "pr-1", Relation: "mentions", Status: "direct", EvidenceID: "ev-mention"}},
+		Coverage: []contract.Coverage{{Source: "analysis", Collection: "links", Status: "complete"}},
+	}
+	found := false
+	for _, finding := range Evaluate(d).Findings {
+		found = found || finding.RuleID == "R-LINK-001"
+	}
+	if !found {
+		t.Fatal("text mention was promoted to a confirmed PR relationship")
+	}
+	d.Links = append(d.Links, contract.LinkRecord{ID: "confirmed", SourceID: "issue-1", TargetID: "pr-1", Relation: "references_pr", Status: "direct", EvidenceID: "ev-confirmed"})
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("confirmed PR relation reported as missing: %+v", finding)
+		}
+	}
+}
+
 func TestBlockFindingRequiresBothActiveStatesAndDirectEvidence(t *testing.T) {
 	base := query.Dataset{
 		Issues: []query.Issue{
