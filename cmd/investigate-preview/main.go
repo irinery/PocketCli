@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"pocketcli/internal/investigation/annotations"
 	"pocketcli/internal/investigation/credentials"
@@ -32,7 +33,8 @@ func main() {
 		}
 		*dataDir = filepath.Join(base, "pocketcli", "investigation-preview")
 	}
-	options := web.PreviewOptions{Demo: true, BindHost: *bind, Port: *port, Scenario: *scenario, DataDir: *dataDir}
+	jobs := web.NewReportJobs()
+	options := web.PreviewOptions{Demo: true, BindHost: *bind, Port: *port, Scenario: *scenario, DataDir: *dataDir, ReportJobs: jobs}
 	queryStore, err := queries.Open(*dataDir)
 	if err != nil {
 		log.Fatal(err)
@@ -73,4 +75,9 @@ func main() {
 	log.Printf("Abra %s", address)
 	log.Printf("Código de desbloqueio (exibido uma vez): %s", code)
 	<-ctx.Done()
+	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := jobs.Close(closeCtx); err != nil {
+		log.Printf("encerramento do PDF: %v", err)
+	}
 }

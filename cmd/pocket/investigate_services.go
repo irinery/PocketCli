@@ -130,7 +130,8 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("flag inválida: %s", args[i])
 		}
 	}
-	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries})
+	jobs := web.NewReportJobs()
+	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs})
 	if err != nil {
 		return err
 	}
@@ -144,7 +145,17 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 	defer stop()
 	fmt.Fprintf(cmd.OutOrStdout(), "http://%s/\n", listener.Addr().String())
 	fmt.Fprintf(os.Stderr, "Código local de desbloqueio: %s\n", code)
-	return serveInvestigationHTTP(ctx, server, listener, 5*time.Second)
+	serveErr := serveInvestigationHTTP(ctx, server, listener, 5*time.Second)
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer closeCancel()
+	closeErr := jobs.Close(closeCtx)
+	if serveErr != nil {
+		return serveErr
+	}
+	if closeErr != nil {
+		return fmt.Errorf("ERR_TIMEOUT: renderização de PDF não encerrou após o servidor: %w", closeErr)
+	}
+	return nil
 }
 
 func serveInvestigationHTTP(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration) error {
