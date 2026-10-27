@@ -17,7 +17,7 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, MergedAt: "2026-01-04T01:00:00Z", EvidenceID: "ev-4", MergeSHA: "new-sha"}},
 		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
 		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-ancestry", SourceID: "art-1", TargetID: "pr-10", Relation: "merge_commit_not_ancestor", Status: "direct", EvidenceID: "ev-9"}},
-		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
+		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
 		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-6"}},
 		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ObservedAt: "2026-01-30T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
 	}
@@ -163,7 +163,7 @@ func TestEventFindingsRequireEvidenceInsideConfirmedWindow(t *testing.T) {
 		Events: []query.Event{
 			{ID: "old-reopen", EntityID: "old", Type: "reopened", EventAt: "2025-12-31T00:00:00Z", EvidenceID: "ev-old"},
 			{ID: "unproven-reopen", EntityID: "unproven", Type: "reopened", EventAt: "2026-01-03T00:00:00Z"},
-			{ID: "valid-reopen", EntityID: "valid", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-valid"},
+			{ID: "valid-reopen", EntityID: "valid", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-valid"},
 			{ID: "ready", EntityID: "pr-1", Type: "ready_for_review", EventAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-ready"},
 			{ID: "late-review", EntityID: "pr-1", Type: "human_reviewed", EventAt: "2026-01-11T00:00:00Z", EvidenceID: "ev-review"},
 		},
@@ -188,6 +188,52 @@ func TestEventFindingsRequireEvidenceInsideConfirmedWindow(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("eventos válidos não geraram achados: %+v", want)
+	}
+}
+
+func TestGitHubReopenNeedsCompletedClosureAndCompleteTimeline(t *testing.T) {
+	closeCompleted := query.Event{ID: "close", EntityID: "github-issue-8", Type: "state_changed", OldValue: "open", NewValue: "completed", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-close"}
+	reopened := query.Event{ID: "reopen", EntityID: "github-issue-8", Type: "reopened", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-reopen"}
+	resource := contract.Resource{Source: "github", ID: "repo-1", Name: "acme/api"}
+	base := query.Dataset{
+		Snapshot:     contract.Snapshot{Resources: []contract.Resource{resource}, WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"},
+		Issues:       []query.Issue{{ID: "github-issue-8", Source: "github", Identifier: "acme/api#8", EvidenceID: "ev-issue"}},
+		PullRequests: []query.PullRequest{{ID: "pr-fix", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr"}},
+		Links:        []contract.LinkRecord{{ID: "link-fix", SourceID: "pr-fix", TargetID: "github-issue-8", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-pr"}},
+		Coverage:     []contract.Coverage{{Source: "github", ResourceID: resource.ID, Collection: "timeline", Status: "complete"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		events    []query.Event
+		status    string
+		confirmed bool
+	}{
+		{"completed", []query.Event{closeCompleted, reopened}, "complete", true},
+		{"unclassified", []query.Event{{ID: "close", EntityID: reopened.EntityID, Type: "state_changed", OldValue: "open", NewValue: "closed_unclassified", EventAt: closeCompleted.EventAt, EvidenceID: "ev-close"}, reopened}, "complete", false},
+		{"missing closure", []query.Event{reopened}, "complete", false},
+		{"partial timeline", []query.Event{closeCompleted, reopened}, "partial", false},
+		{"same timestamp", []query.Event{closeCompleted, {ID: "reopen", EntityID: reopened.EntityID, Type: "reopened", EventAt: closeCompleted.EventAt, EvidenceID: "ev-reopen"}}, "complete", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base
+			d.Events = tc.events
+			d.Coverage = append([]contract.Coverage(nil), base.Coverage...)
+			d.Coverage[0].Status = tc.status
+			out := Evaluate(d)
+			found, correction := false, false
+			for _, finding := range out.Findings {
+				if finding.RuleID == "R-REOPEN-001" {
+					found = true
+					if tc.confirmed && !reflect.DeepEqual(finding.EvidenceIDs, []string{"ev-close", "ev-reopen"}) {
+						t.Fatalf("reabertura sem as duas evidências: %+v", finding)
+					}
+				}
+				correction = correction || finding.RuleID == "R-CORRECTION-001"
+			}
+			if found != tc.confirmed || correction != tc.confirmed || (out.Issues[0].ReopenCount == 1) != tc.confirmed {
+				t.Fatalf("reabertura ou correção indevida: found=%v correction=%v count=%d coverage=%+v", found, correction, out.Issues[0].ReopenCount, out.Coverage)
+			}
+		})
 	}
 }
 
@@ -355,7 +401,7 @@ func TestDeclaredFixAfterObservedReopeningIsSeparatedFromGenericReference(t *tes
 			{ID: "pr-before", MergedAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-pr-before"},
 			{ID: "pr-same", MergedAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-pr-same"},
 		},
-		Events: []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
+		Events: []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
 		Links: []contract.LinkRecord{
 			{ID: "fix", SourceID: "pr-fix", Relation: "declares_fix_of", TargetID: "issue-8", Status: "direct", EvidenceID: "ev-pr-fix"},
 			{ID: "generic", SourceID: "issue-8", Relation: "references_pr", TargetID: "pr-generic", Status: "direct", EvidenceID: "ev-pr-generic"},

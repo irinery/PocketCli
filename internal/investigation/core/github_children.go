@@ -151,18 +151,6 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			p.ReviewWaitSeconds = &wait
 		}
 	}
-	for i := range d.Issues {
-		issue := &d.Issues[i]
-		if issue.Source != "github" || !strings.HasPrefix(issue.Identifier, r.Name+"#") {
-			continue
-		}
-		issue.ReopenCount = 0
-		for _, event := range d.Events {
-			if event.EntityID == issue.ID && event.Type == "reopened" {
-				issue.ReopenCount++
-			}
-		}
-	}
 	return nil
 }
 

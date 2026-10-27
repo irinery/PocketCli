@@ -49,7 +49,7 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 	}
 	plan := contract.Plan{ID: "plan-child", WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-10T00:00:00Z", Input: contract.PlanInput{Modules: contract.Modules{GitHubIssues: true}, Limits: contract.Limits{MaxTransferBytes: 1 << 20}}}
 	resource := contract.Resource{Source: "github", ID: "42", Name: "acme/api"}
-	d := query.Dataset{Snapshot: contract.Snapshot{WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, AnalysisReferenceAt: plan.WindowEnd}}
+	d := query.Dataset{Snapshot: contract.Snapshot{Resources: []contract.Resource{resource}, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, AnalysisReferenceAt: plan.WindowEnd}}
 	run := contract.Run{ID: "run-child"}
 	if err := c.collectRepository(context.Background(), plan, resource, contract.Snapshot{}, &d, &run); err != nil {
 		t.Fatal(err)
@@ -68,8 +68,8 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 	if !botReview || !unknownReview {
 		t.Fatalf("reviewer account types were not separated: %+v", d.Events)
 	}
-	if len(d.Issues) != 1 || d.Issues[0].ReopenCount != 1 {
-		t.Fatalf("issue reopen projection: %+v", d.Issues)
+	if len(d.Issues) != 1 {
+		t.Fatalf("issue projection: %+v", d.Issues)
 	}
 	closedObserved := false
 	for _, event := range d.Events {
@@ -87,6 +87,9 @@ func TestGitHubReviewsAndTimelineFeedDeterministicRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	d = rules.Evaluate(d)
+	if d.Issues[0].ReopenCount != 1 {
+		t.Fatalf("reabertura sem contagem comprovada: %+v", d.Issues)
+	}
 	var flow, reopen bool
 	for _, f := range d.Findings {
 		flow = flow || f.RuleID == "R-FLOW-001"

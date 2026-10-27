@@ -2151,7 +2151,7 @@ func TestFixesKeywordCreatesDeclaredFixLinkOnlyForExactIssue(t *testing.T) {
 			{ID: "pr-vague", Repository: "acme/api", Number: 10, MergedAt: "2026-01-22T00:00:00Z", EvidenceID: "ev-vague"},
 			{ID: "pr-foreign", Repository: "acme/api", Number: 11, MergedAt: "2026-01-23T00:00:00Z", EvidenceID: "ev-foreign"},
 		},
-		Events:   []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
+		Events:   []query.Event{{ID: "reopened", EntityID: "issue-8", Type: "reopened", OldValue: "done", NewValue: "open", EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-reopen"}},
 		Coverage: []contract.Coverage{{Source: "github", Collection: "pull_requests", Status: "complete"}, {Source: "github", Collection: "issues", Status: "complete"}},
 	}
 	if err := c.linkDataset(contract.Plan{InvestigationID: "inv-fixes"}, &d); err != nil {

@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.14.0"
+const Version = "1.15.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -30,13 +30,17 @@ func Evaluate(d query.Dataset) query.Dataset {
 	}
 	commitEvents := make(map[string]query.Event)
 	reopenEvents := make(map[string][]query.Event)
+	reopenProofs := confirmedReopens(d)
 	for _, event := range d.Events {
 		if event.Type == "commit_reachable_observed" && event.EvidenceID != "" {
 			commitEvents[event.EntityID+"\x00"+event.NewValue] = event
 		}
-		if event.ID != "" && event.EvidenceID != "" && observedInWindow(event.EventAt, d.Snapshot) && (event.Type == "reopened" || (isDone(event.OldValue) && isOpen(event.NewValue))) {
+		if _, confirmed := reopenProofs[event.ID]; confirmed {
 			reopenEvents[event.EntityID] = append(reopenEvents[event.EntityID], event)
 		}
+	}
+	for i := range d.Issues {
+		d.Issues[i].ReopenCount = len(reopenEvents[d.Issues[i].ID])
 	}
 	d.Coverage = revertLinkCoverage(d.Coverage, d.Events, commitEvents, d.Snapshot.AnalysisReferenceAt)
 	issueByID := make(map[string]query.Issue)
@@ -116,13 +120,13 @@ func Evaluate(d query.Dataset) query.Dataset {
 		d.Findings = append(d.Findings, finding("R-FLOW-001", "info", p.ID, "Tempo de espera observado", fmt.Sprintf("A primeira revisão de conta GitHub User foi observada %d segundos após o PR ficar pronto.", *seconds), "direct", []string{readyEvidence, reviewEvidence}, "Tempo decorrido, não horas trabalhadas; tipo User não descarta automação nessa conta."))
 	}
 	for _, e := range d.Events {
-		if e.ID != "" && e.EvidenceID != "" && observedInWindow(e.EventAt, d.Snapshot) && (e.Type == "reopened" || (isDone(e.OldValue) && isOpen(e.NewValue))) {
+		if closureEvidence, confirmed := reopenProofs[e.ID]; confirmed {
 			id := "rework-" + storage.Hash([]byte(e.ID + ":reopen"))[:20]
 			if !reworkIDs[id] {
 				d.Rework = append(d.Rework, contract.ReworkRecord{ID: id, SubjectID: e.EntityID, Kind: "reopening", EvidenceStatus: "direct", EventAt: e.EventAt, CauseStatus: "undetermined", EvidenceID: e.EvidenceID})
 				reworkIDs[id] = true
 			}
-			d.Findings = append(d.Findings, finding("R-REOPEN-001", "medium", e.EntityID, "Reabertura registrada", "Foi observada uma transição de concluído para aberto.", "direct", []string{e.EvidenceID}, "A transição não comprova defeito ou causa."))
+			d.Findings = append(d.Findings, finding("R-REOPEN-001", "medium", e.EntityID, "Reabertura registrada", "Foi observada uma transição de concluído para aberto.", "direct", uniqueEvidenceIDs([]string{e.EvidenceID, closureEvidence}), "A transição não comprova defeito ou causa."))
 		}
 		if e.Type == "commit_revert_declared" && e.EvidenceID != "" && e.OldValue != e.NewValue {
 			target, targetSeen := commitEvents[e.EntityID+"\x00"+e.OldValue]
@@ -234,6 +238,92 @@ func Evaluate(d query.Dataset) query.Dataset {
 	d.Metrics = metrics(d)
 	sort.Slice(d.Findings, func(i, j int) bool { return d.Findings[i].ID < d.Findings[j].ID })
 	return d
+}
+
+// A GitHub "reopened" event only proves closed -> open. It is a reopening
+// after completion when the last observed state transition was completed and
+// the issue timeline was fully collected. Linear history can prove the old
+// and new states on the transition itself.
+func confirmedReopens(d query.Dataset) map[string]string {
+	byEntity := make(map[string][]query.Event)
+	issues := make(map[string]query.Issue, len(d.Issues))
+	for _, issue := range d.Issues {
+		issues[issue.ID] = issue
+	}
+	for _, event := range d.Events {
+		if event.EntityID != "" && (event.Type == "reopened" || event.Type == "state_changed") {
+			byEntity[event.EntityID] = append(byEntity[event.EntityID], event)
+		}
+	}
+	proofs := make(map[string]string)
+	for _, event := range d.Events {
+		if event.ID == "" || event.EntityID == "" || event.EvidenceID == "" || !observedInWindow(event.EventAt, d.Snapshot) {
+			continue
+		}
+		if isDone(event.OldValue) && isOpen(event.NewValue) {
+			proofs[event.ID] = ""
+			continue
+		}
+		if event.Type != "reopened" || event.OldValue != "" || event.NewValue != "" || !completeGitHubTimeline(issues[event.EntityID], d) {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, event.EventAt)
+		if err != nil {
+			continue
+		}
+		var latest query.Event
+		var latestAt time.Time
+		ambiguous, sameTime := false, false
+		for _, prior := range byEntity[event.EntityID] {
+			priorAt, err := time.Parse(time.RFC3339, prior.EventAt)
+			if err != nil || prior.ID == event.ID || priorAt.After(at) {
+				continue
+			}
+			if priorAt.Equal(at) {
+				sameTime = true
+				continue
+			}
+			if latest.ID == "" || priorAt.After(latestAt) {
+				latest, latestAt, ambiguous = prior, priorAt, false
+			} else if priorAt.Equal(latestAt) {
+				ambiguous = true
+			}
+		}
+		if !sameTime && !ambiguous && latest.Type == "state_changed" && isDone(latest.NewValue) && latest.EvidenceID != "" {
+			proofs[event.ID] = latest.EvidenceID
+		}
+	}
+	return proofs
+}
+
+func completeGitHubTimeline(issue query.Issue, d query.Dataset) bool {
+	if issue.Source != "github" {
+		return false
+	}
+	repository, _, ok := strings.Cut(issue.Identifier, "#")
+	if !ok || repository == "" {
+		return false
+	}
+	resourceID := ""
+	for _, resource := range d.Snapshot.Resources {
+		if resource.Source == "github" && strings.EqualFold(resource.Name, repository) {
+			resourceID = resource.ID
+			break
+		}
+	}
+	if resourceID == "" {
+		return false
+	}
+	seen := false
+	for _, coverage := range d.Coverage {
+		if coverage.Source == "github" && coverage.ResourceID == resourceID && coverage.Collection == "timeline" {
+			if coverage.Status != "complete" {
+				return false
+			}
+			seen = true
+		}
+	}
+	return seen
 }
 
 type runtimeObservation struct {
