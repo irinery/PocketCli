@@ -29,6 +29,7 @@ func TestPrincipalResolutionConsumesDiscoveryBudgetOnlyOnFirstUse(t *testing.T) 
 		body := `{"id":42}`
 		if r.URL.Path == "/user" {
 			identityCalls++
+			body = `{"id":42,"login":"octocat"}`
 		} else if r.URL.Path == "/versions" {
 			versionCalls++
 			body = `["2022-11-28","2026-03-10"]`
@@ -52,7 +53,7 @@ func TestPrincipalResolutionConsumesDiscoveryBudgetOnlyOnFirstUse(t *testing.T) 
 	if err != nil || identityCalls != 1 || versionCalls != 1 || repoCalls != 1 {
 		t.Fatalf("first plan: identity=%d versions=%d repos=%d err=%v", identityCalls, versionCalls, repoCalls, err)
 	}
-	if len(plan.Warnings) < 2 || !strings.Contains(strings.Join(plan.Warnings, " "), "ID 42") || !strings.Contains(strings.Join(plan.Warnings, " "), "2026-03-10") {
+	if len(plan.Warnings) < 2 || !strings.Contains(strings.Join(plan.Warnings, " "), "@octocat (ID 42)") || !strings.Contains(strings.Join(plan.Warnings, " "), "2026-03-10") {
 		t.Fatalf("verified account missing from plan: %v", plan.Warnings)
 	}
 	if _, err := c.PreparePlan(collect.WithDiscoveryBudget(context.Background(), 1), input); err != nil || identityCalls != 1 || versionCalls != 1 || repoCalls != 2 {
