@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -20,9 +21,48 @@ type CacheStore interface {
 
 const (
 	cacheKind          = "httpcache"
+	runStatsKind       = "runstats"
 	cacheSlots         = 64
 	persistedBodyLimit = 256 * 1024
 )
+
+type RunStats struct {
+	RunID        string `json:"run_id"`
+	ReuseCounter int64  `json:"reuse_counter"`
+}
+
+type runIDContextKey struct{}
+
+func WithRunID(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, runIDContextKey{}, runID)
+}
+
+// RecordReuse persists each confirmed cache hit before the run proceeds.
+// It is shared by HTTP 304 and immutable Git object caches.
+func RecordReuse(store CacheStore, runID string) error {
+	if store == nil || runID == "" {
+		return nil
+	}
+	stats := RunStats{RunID: runID}
+	err := store.Get(runStatsKind, runID, &stats)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística de cache corrompida"}
+	}
+	if err == nil && (stats.RunID != runID || stats.ReuseCounter < 0) {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "estatística de cache corrompida"}
+	}
+	stats.RunID = runID
+	stats.ReuseCounter++
+	if err := store.Put(runStatsKind, runID, stats); err != nil {
+		return &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao auditar reaproveitamento"}
+	}
+	return nil
+}
+
+func (c *Client) recordReuse(ctx context.Context) error {
+	runID, _ := ctx.Value(runIDContextKey{}).(string)
+	return RecordReuse(c.cacheStore, runID)
+}
 
 type persistedETagEntry struct {
 	Key    string `json:"key"`

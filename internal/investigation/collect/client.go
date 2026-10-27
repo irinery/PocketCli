@@ -160,6 +160,9 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 			wireBytes += int64(len(response))
 			if status == http.StatusNotModified {
 				if cached.ETag != "" && !skipConditional {
+					if err := c.recordReuse(ctx); err != nil {
+						return err
+					}
 					response = append([]byte(nil), cached.Body...)
 					headers = cached.Header.Clone()
 					status = http.StatusOK
