@@ -23,6 +23,11 @@ var (
 func main() {
 	root := newRootCommand()
 	if err := root.Execute(); err != nil {
+		if investigationJSONRequested(os.Args[1:]) {
+			if writeErr := writeInvestigationJSONError(os.Stderr, err); writeErr == nil {
+				os.Exit(1)
+			}
+		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

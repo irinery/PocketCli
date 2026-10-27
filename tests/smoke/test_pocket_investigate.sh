@@ -28,6 +28,14 @@ fi
 if [ -n "${REAL_GO_BINARY}" ] && [ -x "${REAL_GO_BINARY}" ]; then
     "${REAL_GO_BINARY}" investigate doctor >"${WORKDIR}/doctor.out" 2>"${WORKDIR}/doctor.err"
     grep -F 'investigate:' "${WORKDIR}/doctor.out" >/dev/null
+	if "${REAL_GO_BINARY}" investigate --bad=1 --json >"${WORKDIR}/json.out" 2>"${WORKDIR}/json.err"; then
+		printf 'FAIL investigate --json aceitou flag inválida\n' >&2
+		exit 1
+	fi
+	if [ -s "${WORKDIR}/json.out" ] || ! grep -F '"ok": false' "${WORKDIR}/json.err" >/dev/null || ! grep -F '"code": "ERR_VALIDATION"' "${WORKDIR}/json.err" >/dev/null; then
+		printf 'FAIL investigate --json não retornou erro estruturado no stderr\n' >&2
+		exit 1
+	fi
 fi
 
-printf 'PASS pocket investigate delegates to the Go Agent and doctor opens a private temporary directory\n'
+printf 'PASS pocket investigate dispatch, doctor and structured JSON errors\n'
