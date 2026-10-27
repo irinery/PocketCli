@@ -28,6 +28,8 @@ O servidor local espera até cinco segundos pelas requisições em andamento ap�
 
 ## Build e testes locais
 
+Fila de PDFs S08: a composição limita a tentativa inteira a 120 segundos, inclusive a espera por outra revisão em andamento. A espera pelo mutex local respeita o contexto; uma exportação cancelada não fica presa atrás de outro Chromium. Valide com `go test -race -buildvcs=false -run 'TestCancelledPDFDoesNotWaitForAnotherReportCacheJob|TestReportCacheFinalizesOncePerRevision' -count=1 ./cmd/pocket` (Go 1.22+, compilador C para o detector de corridas, storage temporário e Finalizer falso; sem token, rede, Chromium ou Poppler).
+
 Pré-requisitos: Go 1.22 ou posterior, `gofmt`, compilador C para CGO, `git`, `sh`; para o PDF automático, Chromium/Google Chrome e `pdfinfo` (Poppler). Não são baixados durante a investigação. No macOS, se o navegador não estiver no `PATH`, configure `POCKETCLI_CHROMIUM` com o caminho absoluto do executável.
 
 ```sh
