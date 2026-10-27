@@ -185,9 +185,16 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		status = "partial"
 		reason = "relações formais issue-PR não coletadas"
 	}
+	for _, issue := range d.Issues {
+		if issue.Source == "linear" {
+			status = "partial"
+			reason = "vínculos formais entre issues Linear e PRs ainda não são coletados"
+			break
+		}
+	}
 	if !hasPRCollection {
 		status = "unsupported"
-		reason = "nenhuma coleção de PR foi selecionada"
+		reason = "nenhuma coleção de PR foi selecionada; vínculos formais Linear issue-PR não estão disponíveis"
 	}
 	d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "analysis", ID: plan.InvestigationID}, "links", status, int64(len(d.Links)), reason))
 	return nil

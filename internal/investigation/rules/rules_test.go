@@ -13,7 +13,7 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	before, after := 3.0, 5.0
 	wait := int64(172800)
 	d := query.Dataset{
-		Issues:       []query.Issue{{ID: "iss-1", Identifier: "UNI-1", State: "done", CompletedAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-1"}, {ID: "iss-3", Identifier: "UNI-3", State: "open", EvidenceID: "ev-3"}},
+		Issues:       []query.Issue{{ID: "iss-1", Identifier: "UNI-1", Source: "linear", TeamID: "team", State: "done", CompletedAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-1"}, {ID: "iss-3", Identifier: "UNI-3", Source: "linear", TeamID: "team", State: "open", EvidenceID: "ev-3"}},
 		PullRequests: []query.PullRequest{{ID: "pr-10", ReadyAt: "2026-01-02T00:00:00Z", FirstHumanReviewAt: "2026-01-04T00:00:00Z", ReviewWaitSeconds: &wait, MergedAt: "2026-01-04T01:00:00Z", EvidenceID: "ev-4", MergeSHA: "new-sha"}},
 		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
 		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-ancestry", SourceID: "art-1", TargetID: "pr-10", Relation: "merge_commit_not_ancestor", Status: "direct", EvidenceID: "ev-9"}},
@@ -105,6 +105,52 @@ func TestMentionDoesNotBecomeConfirmedPRLinkForMissingLinkRule(t *testing.T) {
 	for _, finding := range Evaluate(d).Findings {
 		if finding.RuleID == "R-LINK-001" {
 			t.Fatalf("confirmed PR relation reported as missing: %+v", finding)
+		}
+	}
+}
+
+func TestMissingPRLinkRequiresCompleteCoverageOfIssuesOwnSourceAndRepository(t *testing.T) {
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{Resources: []contract.Resource{{Source: "github", ID: "repo-a", Name: "acme/a"}, {Source: "github", ID: "repo-b", Name: "acme/b"}}},
+		Issues: []query.Issue{
+			{ID: "github-a", Identifier: "acme/a#1", Source: "github", EvidenceID: "ev-a"},
+			{ID: "github-b", Identifier: "acme/b#2", Source: "github", EvidenceID: "ev-b"},
+			{ID: "linear-c", Identifier: "OPS-3", Source: "linear", TeamID: "team-c", EvidenceID: "ev-c"},
+		},
+		Coverage: []contract.Coverage{
+			{Source: "github", ResourceID: "repo-a", Collection: "issues", Status: "complete"},
+			{Source: "github", ResourceID: "repo-a", Collection: "pull_requests", Status: "complete"},
+			{Source: "github", ResourceID: "repo-a", Collection: "formal_links", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "issues", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "pull_requests", Status: "complete"},
+			{Source: "github", ResourceID: "repo-b", Collection: "formal_links", Status: "partial"},
+			{Source: "linear", ResourceID: "team-c", Collection: "issues", Status: "complete"},
+			{Source: "analysis", Collection: "links", Status: "partial"},
+		},
+	}
+	want := map[string]bool{"github-a": true}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			if !want[finding.SubjectID] {
+				t.Fatalf("lacuna de outra fonte/repo gerou ausência falsa: %+v", finding)
+			}
+			delete(want, finding.SubjectID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("repo completo perdeu achado elegível: %+v", want)
+	}
+	d.Coverage = append(d.Coverage, contract.Coverage{Source: "github", ResourceID: "repo-a", Collection: "formal_links", Status: "partial"})
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("coberturas conflitantes geraram ausência falsa: %+v", finding)
+		}
+	}
+	d.Coverage = d.Coverage[:len(d.Coverage)-1]
+	d.Coverage[2].Status = "partial"
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-LINK-001" {
+			t.Fatalf("vínculo formal parcial gerou ausência falsa: %+v", finding)
 		}
 	}
 }
