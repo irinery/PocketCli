@@ -92,6 +92,29 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 			}
 			upsertEvidence(d, evidence)
 			upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":commit:" + commit.OID))[:24], EntityID: entityID, Type: "commit_reachable_observed", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
+			target, inspected, err := observer.DeclaredRevertTarget(ctx, commit.OID)
+			if err != nil {
+				return false, fault("ERR_AUDIT_FAILED", "mensagem de commit Git indisponível")
+			}
+			if !inspected {
+				upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":revert-uninspected:" + commit.OID))[:24], EntityID: entityID, Type: "commit_revert_message_uninspected", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
+			} else if target != "" {
+				revertRecord, err := json.Marshal(struct {
+					Repository string `json:"repository"`
+					RevertOID  string `json:"revert_oid"`
+					TargetOID  string `json:"target_oid"`
+					Relation   string `json:"relation"`
+				}{r.Name, commit.OID, target, "declared_revert"})
+				if err != nil {
+					return false, fault("ERR_AUDIT_FAILED", "declaração de revert inválida")
+				}
+				revertEvidence, err := c.evidence("git", fmt.Sprintf("%s:revert:%s", r.Name, commit.OID), commit.CommittedAt, revertRecord)
+				if err != nil {
+					return false, err
+				}
+				upsertEvidence(d, revertEvidence)
+				upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":revert-declared:" + commit.OID + ":" + target))[:24], EntityID: entityID, Type: "commit_revert_declared", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, OldValue: target, NewValue: commit.OID, EvidenceID: revertEvidence.ID})
+			}
 			seen[commit.OID] = true
 			newCount++
 			run.Items++
@@ -112,13 +135,21 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 		return fault("ERR_AUDIT_FAILED", "falha ao auditar commits Git")
 	}
 	status, reason := "complete", "commits alcançáveis selecionados pela data do commit"
-	if !complete || !graphComplete || invalidDates > 0 {
+	uninspectedMessages := 0
+	for _, event := range d.Events {
+		if event.EntityID == entityID && event.Type == "commit_revert_message_uninspected" && timestampInWindow(plan.WindowStart, plan.WindowEnd, event.EventAt) {
+			uninspectedMessages++
+		}
+	}
+	if !complete || !graphComplete || invalidDates > 0 || uninspectedMessages > 0 {
 		status = "partial"
 		switch {
 		case !complete:
 			reason = "fila de commits pendente; continue com refresh"
 		case !graphComplete:
 			reason = "branches pendentes ou grafo Git raso/incompleto"
+		case uninspectedMessages > 0:
+			reason = "mensagem de commit acima do limite de 64 KiB; declaração de revert não verificada"
 		default:
 			reason = "um ou mais commits sem data válida"
 		}

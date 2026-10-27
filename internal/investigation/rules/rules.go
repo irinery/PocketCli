@@ -12,13 +12,28 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
 	d.Issues = fillEstimateBeforeStart(d)
 	d.Stages = append([]contract.StageRecord{}, d.Stages...)
 	d.Rework = append([]contract.ReworkRecord{}, d.Rework...)
+	reworkIDs := make(map[string]bool, len(d.Rework))
+	for _, record := range d.Rework {
+		reworkIDs[record.ID] = true
+	}
+	linkIDs := make(map[string]bool, len(d.Links))
+	for _, link := range d.Links {
+		linkIDs[link.ID] = true
+	}
+	commitEvents := make(map[string]query.Event)
+	for _, event := range d.Events {
+		if event.Type == "commit_reachable_observed" && event.EvidenceID != "" {
+			commitEvents[event.EntityID+"\x00"+event.NewValue] = event
+		}
+	}
+	d.Coverage = revertLinkCoverage(d.Coverage, d.Events, commitEvents, d.Snapshot.AnalysisReferenceAt)
 	issueByID := make(map[string]query.Issue)
 	prByID := make(map[string]query.PullRequest)
 	for _, i := range d.Issues {
@@ -86,8 +101,28 @@ func Evaluate(d query.Dataset) query.Dataset {
 	}
 	for _, e := range d.Events {
 		if e.Type == "reopened" || (isDone(e.OldValue) && isOpen(e.NewValue)) {
-			d.Rework = append(d.Rework, contract.ReworkRecord{ID: "rework-" + storage.Hash([]byte(e.ID + ":reopen"))[:20], SubjectID: e.EntityID, Kind: "reopening", EvidenceStatus: "direct", EventAt: e.EventAt, CauseStatus: "undetermined", EvidenceID: e.EvidenceID})
+			id := "rework-" + storage.Hash([]byte(e.ID + ":reopen"))[:20]
+			if !reworkIDs[id] {
+				d.Rework = append(d.Rework, contract.ReworkRecord{ID: id, SubjectID: e.EntityID, Kind: "reopening", EvidenceStatus: "direct", EventAt: e.EventAt, CauseStatus: "undetermined", EvidenceID: e.EvidenceID})
+				reworkIDs[id] = true
+			}
 			d.Findings = append(d.Findings, finding("R-REOPEN-001", "medium", e.EntityID, "Reabertura registrada", "Foi observada uma transição de concluído para aberto.", "direct", []string{e.EvidenceID}, "A transição não comprova defeito ou causa."))
+		}
+		if e.Type == "commit_revert_declared" && e.EvidenceID != "" && e.OldValue != e.NewValue {
+			target, targetSeen := commitEvents[e.EntityID+"\x00"+e.OldValue]
+			revertCommit, revertSeen := commitEvents[e.EntityID+"\x00"+e.NewValue]
+			if targetSeen && revertSeen {
+				linkID := "link-" + storage.Hash([]byte(e.ID + ":declares_revert_of:" + target.ID))[:24]
+				if !linkIDs[linkID] {
+					d.Links = append(d.Links, contract.LinkRecord{ID: linkID, SourceID: revertCommit.ID, Relation: "declares_revert_of", TargetID: target.ID, Status: "direct", EvidenceID: e.EvidenceID, ValidFrom: e.EventAt})
+					linkIDs[linkID] = true
+				}
+				id := "rework-" + storage.Hash([]byte(e.ID + ":declared_reversal:" + target.ID))[:20]
+				if !reworkIDs[id] {
+					d.Rework = append(d.Rework, contract.ReworkRecord{ID: id, SubjectID: target.ID, Kind: "declared_reversal", EvidenceStatus: "direct", EventAt: e.EventAt, CauseStatus: "undetermined", EvidenceID: e.EvidenceID})
+					reworkIDs[id] = true
+				}
+			}
 		}
 		if e.Type == "disabled" && completeRuntime {
 			d.Findings = append(d.Findings, finding("R-DISABLE-001", "medium", e.EntityID, "Recurso observado desativado", "Uma desativação foi observada no snapshot operacional aplicável.", "direct", []string{e.EvidenceID}, "A observação não reconstrói o passado."))
@@ -124,6 +159,38 @@ func Evaluate(d query.Dataset) query.Dataset {
 	d.Metrics = metrics(d)
 	sort.Slice(d.Findings, func(i, j int) bool { return d.Findings[i].ID < d.Findings[j].ID })
 	return d
+}
+
+func revertLinkCoverage(existing []contract.Coverage, events []query.Event, commits map[string]query.Event, checkedAt string) []contract.Coverage {
+	out := make([]contract.Coverage, 0, len(existing))
+	for _, item := range existing {
+		if item.Source != "analysis" || item.Collection != "revert_links" {
+			out = append(out, item)
+		}
+	}
+	unresolved := make(map[string]int64)
+	resolved := make(map[string]int64)
+	for _, event := range events {
+		if event.Type != "commit_revert_declared" || event.EvidenceID == "" {
+			continue
+		}
+		_, targetSeen := commits[event.EntityID+"\x00"+event.OldValue]
+		_, revertSeen := commits[event.EntityID+"\x00"+event.NewValue]
+		if !targetSeen || !revertSeen || event.OldValue == event.NewValue {
+			unresolved[event.EntityID]++
+		} else {
+			resolved[event.EntityID]++
+		}
+	}
+	ids := make([]string, 0, len(unresolved))
+	for id := range unresolved {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		out = append(out, contract.Coverage{Source: "analysis", ResourceID: id, Collection: "revert_links", Status: "partial", Observed: resolved[id], Reason: fmt.Sprintf("%d declarações de revert sem os dois commits observados no período", unresolved[id]), CheckedAt: checkedAt})
+	}
+	return out
 }
 
 func finding(rule, severity, subject, title, body, status string, evidence []string, limitations string) contract.Finding {

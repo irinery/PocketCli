@@ -15,6 +15,7 @@ import (
 	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/query"
+	"pocketcli/internal/investigation/rules"
 	"pocketcli/internal/investigation/storage"
 )
 
@@ -177,7 +178,7 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		if !c.saveRun(&run) {
 			return
 		}
-		d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: "1.0.0", MappingVersion: "1.0.0", QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Status: "published"}
+		d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: rules.Version, MappingVersion: "1.1.0", QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Status: "published"}
 		canonical, marshalErr := json.Marshal(d)
 		if marshalErr != nil {
 			run.State = "failed"

@@ -286,7 +286,15 @@ func reworkMetrics(d query.Dataset) []contract.Metric {
 	out := make([]contract.Metric, 0, len(kinds)+1)
 	for _, kind := range kinds {
 		count := byKind[kind]
-		out = append(out, integerMetric(metricID("metric-rework", kind), "Retrabalho observado: "+kind, count, count, nil, "Ocorrências com evidência direta deste tipo na janela", "Contagem de ocorrências; não atribui causa, pessoa culpada ou taxa por entrega."))
+		name := "Retrabalho observado: " + kind
+		definition := "Ocorrências com evidência direta deste tipo na janela"
+		limitation := "Contagem de ocorrências; não atribui causa, pessoa culpada ou taxa por entrega."
+		if kind == "declared_reversal" {
+			name = "Reversões declaradas em commits"
+			definition = "Commits com trailer exato de git revert apontando para commit também observado no mesmo repositório"
+			limitation = "O trailer declara a reversão; a equivalência inversa do patch não foi demonstrada e não identifica culpa ou causa."
+		}
+		out = append(out, integerMetric(metricID("metric-rework", kind), name, count, count, nil, definition, limitation))
 	}
 	out = append(out, integerMetric("metric-rework-undetermined-cause", "Retrabalho sem causa determinada", unknownCause, unknownCause, nil, "Ocorrências de retrabalho direto cuja causa permanece indeterminada", "Ausência de causa documentada não identifica responsável."))
 	return out

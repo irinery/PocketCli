@@ -2,6 +2,7 @@ package rules
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"pocketcli/internal/investigation/contract"
@@ -47,5 +48,49 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 	}
 	if a.Metrics[0].Value.Value != "1" {
 		t.Fatal("completed metric incorrect")
+	}
+}
+
+func TestDeclaredGitRevertRequiresObservedTargetAndDoesNotClaimPatchEquivalence(t *testing.T) {
+	targetOID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	revertOID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	d := query.Dataset{
+		Events: []query.Event{
+			{ID: "commit-target", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: targetOID, EvidenceID: "ev-target"},
+			{ID: "commit-revert", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: revertOID, EvidenceID: "ev-revert"},
+			{ID: "declared", EntityID: "repo-1", Type: "commit_revert_declared", OldValue: targetOID, NewValue: revertOID, EventAt: "2026-01-10T00:00:00Z", EvidenceID: "ev-declaration"},
+			{ID: "fix-text", EntityID: "repo-1", Type: "commit_reachable_observed", NewValue: "cccccccccccccccccccccccccccccccccccccccc", EvidenceID: "ev-fix"},
+		},
+	}
+	out := Evaluate(d)
+	if len(out.Rework) != 1 || out.Rework[0].Kind != "declared_reversal" || out.Rework[0].SubjectID != "commit-target" || out.Rework[0].CauseStatus != "undetermined" || out.Rework[0].EvidenceID != "ev-declaration" {
+		t.Fatalf("declaration was lost or unrelated commit became rework: %+v", out.Rework)
+	}
+	if len(out.Links) != 1 || out.Links[0].Relation != "declares_revert_of" || out.Links[0].SourceID != "commit-revert" || out.Links[0].TargetID != "commit-target" {
+		t.Fatalf("declared revert relation missing: %+v", out.Links)
+	}
+	metricFound := false
+	for _, metric := range out.Metrics {
+		if metric.ID == metricID("metric-rework", "declared_reversal") {
+			metricFound = true
+			if !strings.Contains(strings.Join(metric.Limitations, " "), "não foi demonstrada") {
+				t.Fatalf("revert metric claims patch equivalence: %+v", metric)
+			}
+		}
+	}
+	if !metricFound {
+		t.Fatal("declared reversal metric missing")
+	}
+	again := Evaluate(out)
+	if len(again.Rework) != 1 || len(again.Links) != 1 {
+		t.Fatalf("rules duplicated reversal on reevaluation: rework=%+v links=%+v", again.Rework, again.Links)
+	}
+	d.Events = d.Events[1:]
+	missing := Evaluate(d)
+	if len(missing.Rework) != 0 || len(missing.Links) != 0 {
+		t.Fatalf("reversal confirmed without observed target commit: rework=%+v links=%+v", missing.Rework, missing.Links)
+	}
+	if len(missing.Coverage) != 1 || missing.Coverage[0].Collection != "revert_links" || missing.Coverage[0].Status != "partial" {
+		t.Fatalf("unresolved revert did not mark analysis partial: %+v", missing.Coverage)
 	}
 }
