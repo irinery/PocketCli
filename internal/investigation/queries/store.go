@@ -68,6 +68,13 @@ type Store struct {
 	saved      map[string]SavedQuery
 }
 
+type journalEntry struct {
+	Kind         string     `json:"kind"`
+	Execution    Execution  `json:"execution"`
+	Saved        SavedQuery `json:"saved"`
+	ResultSHA256 string     `json:"result_sha256"`
+}
+
 const maxStoredQueryResult = 64 * 1024 * 1024
 
 func Open(dir string) (*Store, error) {
@@ -89,26 +96,35 @@ func Open(dir string) (*Store, error) {
 	}
 	p := filepath.Join(dir, "queries.jsonl")
 	s := &Store{path: p, resultsDir: resultsDir, saved: map[string]SavedQuery{}}
+	release, e := lockJournal(dir)
+	if e != nil {
+		return nil, e
+	}
+	defer release()
 	f, e := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0600)
 	if e != nil {
 		return nil, e
 	}
 	_ = os.Chmod(p, 0600)
+	hasLegacyResults := false
 	sc := bufio.NewScanner(f)
 	// Legacy journals embedded full query results; new entries hold metadata only.
 	sc.Buffer(make([]byte, 64*1024), maxStoredQueryResult)
 	for sc.Scan() {
-		var row struct {
-			Kind         string     `json:"kind"`
-			Execution    Execution  `json:"execution"`
-			Saved        SavedQuery `json:"saved"`
-			ResultSHA256 string     `json:"result_sha256"`
-		}
+		var row journalEntry
 		if e = json.Unmarshal(sc.Bytes(), &row); e != nil {
 			_ = f.Close()
 			return nil, e
 		}
+		legacyResult := false
 		if row.Kind == "execution" {
+			if row.Execution.Result != nil {
+				if row.Execution.Status != "complete" {
+					_ = f.Close()
+					return nil, errors.New("failed query has unexpected result")
+				}
+				legacyResult = true
+			}
 			if row.Execution.Status == "complete" && row.Execution.Result == nil {
 				result, readErr := s.readResult("execution", row.Execution.ID, row.ResultSHA256)
 				if readErr != nil {
@@ -123,6 +139,7 @@ func Open(dir string) (*Store, error) {
 			}
 			s.executions = append(s.executions, row.Execution)
 		} else if row.Kind == "saved" {
+			legacyResult = row.Saved.Result.SnapshotID != ""
 			if row.Saved.Result.SnapshotID == "" {
 				result, readErr := s.readResult("saved", row.Saved.ID, row.ResultSHA256)
 				if readErr != nil {
@@ -137,18 +154,152 @@ func Open(dir string) (*Store, error) {
 			}
 			s.saved[row.Saved.ID] = row.Saved
 		}
+		if legacyResult {
+			hasLegacyResults = true
+		}
 	}
 	if e = sc.Err(); e != nil {
 		_ = f.Close()
 		return nil, e
 	}
-	return s, f.Close()
+	if e = f.Close(); e != nil {
+		return nil, e
+	}
+	if !hasLegacyResults {
+		return s, nil
+	}
+	if e = s.migrateLegacyJournal(dir, p); e != nil {
+		return nil, e
+	}
+	return s, nil
 }
+
+// Migrate result-bearing legacy lines only after the entire journal has been
+// validated. The old file remains intact until every result file is durable.
+// Open holds queries.lock throughout this operation.
+func (s *Store) migrateLegacyJournal(dir, path string) error {
+	source, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := os.CreateTemp(dir, ".queries-migrate-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(target.Name())
+	defer target.Close()
+	if err := target.Chmod(0600); err != nil {
+		return err
+	}
+	savedHashes := make(map[string]string)
+	scanner := bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 64*1024), maxStoredQueryResult)
+	for scanner.Scan() {
+		var entry journalEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return err
+		}
+		if entry.Kind != "saved" {
+			continue
+		}
+		hash := entry.ResultSHA256
+		if entry.Saved.Result.SnapshotID != "" {
+			encoded, err := json.Marshal(entry.Saved.Result)
+			if err != nil {
+				return err
+			}
+			digest := sha256.Sum256(encoded)
+			hash = hex.EncodeToString(digest[:])
+		}
+		if prior := savedHashes[entry.Saved.ID]; prior != "" && prior != hash {
+			return errors.New("saved query result changed across revisions")
+		}
+		savedHashes[entry.Saved.ID] = hash
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	scanner = bufio.NewScanner(source)
+	scanner.Buffer(make([]byte, 64*1024), maxStoredQueryResult)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var entry journalEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return err
+		}
+		kind, id := "", ""
+		var result contract.QueryResult
+		switch {
+		case entry.Kind == "execution" && entry.Execution.Result != nil:
+			kind, id, result = "execution", entry.Execution.ID, *entry.Execution.Result
+		case entry.Kind == "saved" && entry.Saved.Result.SnapshotID != "":
+			kind, id, result = "saved", entry.Saved.ID, entry.Saved.Result
+		}
+		if kind != "" {
+			hash, err := s.writeResult(kind, id, result)
+			if err != nil {
+				return err
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(line, &fields); err != nil {
+				return err
+			}
+			var payload map[string]json.RawMessage
+			if err := json.Unmarshal(fields[kind], &payload); err != nil {
+				return err
+			}
+			delete(payload, "result")
+			fields[kind], err = json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+			fields["result_sha256"], err = json.Marshal(hash)
+			if err != nil {
+				return err
+			}
+			line, err = json.Marshal(fields)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := target.Write(append(line, '\n')); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if err := target.Sync(); err != nil {
+		return err
+	}
+	if err := target.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(target.Name(), path); err != nil {
+		return err
+	}
+	parent, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return parent.Sync()
+}
+
 func (s *Store) append(value any) error {
 	b, e := json.Marshal(value)
 	if e != nil {
 		return e
 	}
+	release, e := lockJournal(filepath.Dir(s.path))
+	if e != nil {
+		return e
+	}
+	defer release()
 	f, e := os.OpenFile(s.path, os.O_APPEND|os.O_WRONLY, 0600)
 	if e != nil {
 		return e
