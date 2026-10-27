@@ -498,48 +498,86 @@ func reworkWindowMetrics(d query.Dataset) []contract.Metric {
 }
 
 func cycleTimeMetrics(d query.Dataset) []contract.Metric {
-	cohorts := make(map[string][]int64)
-	eligible := make(map[string]int64)
+	type cohort struct {
+		eligible int64
+		values   []int64
+	}
+	teams := make(map[string]*cohort)
+	assignees := make(map[string]*cohort)
+	assigneeLabels := make(map[string]string)
 	for _, issue := range d.Issues {
 		if issue.TeamID == "" || !completedIssueInWindow(issue, d.Snapshot) {
 			continue
 		}
-		eligible[issue.TeamID]++
+		team := teams[issue.TeamID]
+		if team == nil {
+			team = &cohort{}
+			teams[issue.TeamID] = team
+		}
+		team.eligible++
+		var assigned *cohort
+		if issue.AssigneeID != "" {
+			key := issue.TeamID + "\x00" + issue.AssigneeID
+			assigned = assignees[key]
+			if assigned == nil {
+				assigned = &cohort{}
+				assignees[key] = assigned
+				assigneeLabels[key] = "team " + issue.TeamID + ", responsável observado " + issue.AssigneeID
+			}
+			assigned.eligible++
+		}
 		if issue.DurationValid && issue.CycleSeconds != nil && *issue.CycleSeconds >= 0 {
-			cohorts[issue.TeamID] = append(cohorts[issue.TeamID], *issue.CycleSeconds)
+			team.values = append(team.values, *issue.CycleSeconds)
+			if assigned != nil {
+				assigned.values = append(assigned.values, *issue.CycleSeconds)
+			}
 		}
 	}
-	ids := make([]string, 0, len(cohorts))
-	for teamID := range cohorts {
+	ids := make([]string, 0, len(teams))
+	for teamID := range teams {
 		ids = append(ids, teamID)
 	}
 	sort.Strings(ids)
-	out := make([]contract.Metric, 0, 2*len(ids))
+	out := make([]contract.Metric, 0, 2*(len(ids)+len(assignees)))
 	for _, teamID := range ids {
-		values := cohorts[teamID]
-		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-		n := len(values)
-		median := float64(values[n/2])
-		if n%2 == 0 {
-			median = (float64(values[n/2-1]) + float64(values[n/2])) / 2
-		}
-		p85 := values[int(math.Ceil(0.85*float64(n)))-1]
-		label := strings.TrimSpace(teamID)
-		if len(label) > 128 {
-			label = label[:128]
-		}
-		limits := []string{"Segundos decorridos entre started_at e completed_at; não mede horas trabalhadas nem produtividade."}
-		if n < 10 {
-			limits = append(limits, "Amostra insuficiente para comparação entre grupos.")
-		}
-		count := int64(n)
-		eligibleCount := eligible[teamID]
-		out = append(out,
-			contract.Metric{ID: metricID("metric-cycle-median-team", teamID), Name: "Tempo de ciclo mediano no team " + label, Value: contract.Cell{Kind: "real", Value: strconv.FormatFloat(median, 'f', -1, 64)}, Unit: "seconds", SampleSize: count, EligibleSize: &eligibleCount, Definition: "Mediana convencional de cycle_seconds válido para issues concluídas na janela deste team", Limitations: limits},
-			contract.Metric{ID: metricID("metric-cycle-p85-team", teamID), Name: "Tempo de ciclo p85 no team " + label, Value: contract.Cell{Kind: "integer", Value: strconv.FormatInt(p85, 10)}, Unit: "seconds", SampleSize: count, EligibleSize: &eligibleCount, Definition: "Nearest rank ceil(0.85*n) de cycle_seconds válido para issues concluídas na janela deste team", Limitations: limits},
-		)
+		team := teams[teamID]
+		out = append(out, cycleQuantiles("team", teamID, "team "+teamID, team.values, team.eligible, "Issues concluídas no mesmo team e janela; duração válida entre started_at e completed_at.", "Sem atribuição individual; não mede horas trabalhadas ou produtividade.")...)
+	}
+	assigneeIDs := make([]string, 0, len(assignees))
+	for key := range assignees {
+		assigneeIDs = append(assigneeIDs, key)
+	}
+	sort.Strings(assigneeIDs)
+	for _, key := range assigneeIDs {
+		group := assignees[key]
+		out = append(out, cycleQuantiles("assignee-team", key, assigneeLabels[key], group.values, group.eligible, "Issues concluídas do mesmo team, janela e responsável observado no snapshot, com duração válida.", "O responsável atual pode diferir daquele no encerramento; não atribui execução nem mede produtividade.")...)
 	}
 	return out
+}
+
+func cycleQuantiles(group, key, label string, values []int64, eligible int64, definition, limitation string) []contract.Metric {
+	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
+	if len(label) > 128 {
+		label = label[:128]
+	}
+	n := len(values)
+	median, p85 := contract.Cell{Kind: "null"}, contract.Cell{Kind: "null"}
+	limits := []string{limitation}
+	if n < 10 {
+		limits = append(limits, "Amostra insuficiente: comparação insuficiente entre grupos; quantis não calculados.")
+	} else {
+		value := float64(values[n/2])
+		if n%2 == 0 {
+			value = (float64(values[n/2-1]) + float64(values[n/2])) / 2
+		}
+		median = contract.Cell{Kind: "real", Value: strconv.FormatFloat(value, 'f', -1, 64)}
+		p85 = contract.Cell{Kind: "integer", Value: strconv.FormatInt(values[int(math.Ceil(0.85*float64(n)))-1], 10)}
+	}
+	count := int64(n)
+	return []contract.Metric{
+		{ID: metricID("metric-cycle-median-"+group, key), Name: "Tempo de ciclo mediano no " + label, Value: median, Unit: "seconds", SampleSize: count, EligibleSize: &eligible, Definition: "Mediana convencional de cycle_seconds. " + definition, Limitations: limits},
+		{ID: metricID("metric-cycle-p85-"+group, key), Name: "Tempo de ciclo p85 no " + label, Value: p85, Unit: "seconds", SampleSize: count, EligibleSize: &eligible, Definition: "Nearest rank ceil(0.85*n) de cycle_seconds. " + definition, Limitations: limits},
+	}
 }
 
 func openAgingMetrics(d query.Dataset) []contract.Metric {

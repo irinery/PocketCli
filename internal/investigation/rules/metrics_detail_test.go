@@ -2,6 +2,7 @@ package rules
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -295,8 +296,8 @@ func TestCycleTimeMetricsUseOnlyValidCompletedIssuesInTeam(t *testing.T) {
 		},
 	}
 	metrics := cycleTimeMetrics(d)
-	if len(metrics) != 2 || metrics[0].Value.Value != "300" || metrics[1].Value.Value != "500" {
-		t.Fatalf("cycle median/p85 include wrong issue: %+v", metrics)
+	if len(metrics) != 2 || metrics[0].Value.Kind != "null" || metrics[1].Value.Kind != "null" {
+		t.Fatalf("small cycle cohort exposed comparable quantiles: %+v", metrics)
 	}
 	for _, metric := range metrics {
 		if metric.SampleSize != 3 || metric.EligibleSize == nil || *metric.EligibleSize != 4 || !strings.Contains(strings.Join(metric.Limitations, " "), "Amostra insuficiente") {
@@ -304,6 +305,46 @@ func TestCycleTimeMetricsUseOnlyValidCompletedIssuesInTeam(t *testing.T) {
 		}
 	}
 }
+
+func TestCycleTimeAssigneeCohortsNeedTenValidDurationsWithinTeam(t *testing.T) {
+	d := query.Dataset{Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-02-01T00:00:00Z"}}
+	for n := 1; n <= 10; n++ {
+		secondsA, secondsB := int64(n*10), int64(n*100)
+		d.Issues = append(d.Issues,
+			query.Issue{ID: "a-" + strconv.Itoa(n), TeamID: "team-a", AssigneeID: "user-a", Outcome: "completed", CompletedAt: "2026-01-10T00:00:00Z", DurationValid: true, CycleSeconds: &secondsA},
+			query.Issue{ID: "b-" + strconv.Itoa(n), TeamID: "team-a", AssigneeID: "user-b", Outcome: "completed", CompletedAt: "2026-01-10T00:00:00Z", DurationValid: true, CycleSeconds: &secondsB},
+		)
+	}
+	for n := 1; n <= 3; n++ {
+		seconds := int64(n * 7)
+		d.Issues = append(d.Issues, query.Issue{ID: "c-" + strconv.Itoa(n), TeamID: "team-a", AssigneeID: "user-c", Outcome: "completed", CompletedAt: "2026-01-10T00:00:00Z", DurationValid: true, CycleSeconds: &seconds})
+	}
+	d.Issues = append(d.Issues,
+		query.Issue{ID: "a-invalid", TeamID: "team-a", AssigneeID: "user-a", Outcome: "completed", CompletedAt: "2026-01-10T00:00:00Z"},
+		query.Issue{ID: "a-cancelled", TeamID: "team-a", AssigneeID: "user-a", Outcome: "cancelled", CompletedAt: "2026-01-10T00:00:00Z", DurationValid: true, CycleSeconds: ptrInt64(9999)},
+	)
+	metrics := make(map[string]contract.Metric)
+	for _, metric := range cycleTimeMetrics(d) {
+		metrics[metric.ID] = metric
+	}
+	check := func(assignee, median, p85 string, sample, eligible int64) {
+		t.Helper()
+		key := "team-a\x00" + assignee
+		m := metrics[metricID("metric-cycle-median-assignee-team", key)]
+		p := metrics[metricID("metric-cycle-p85-assignee-team", key)]
+		if m.Value.Value != median || p.Value.Value != p85 || m.SampleSize != sample || p.SampleSize != sample || m.EligibleSize == nil || *m.EligibleSize != eligible || p.EligibleSize == nil || *p.EligibleSize != eligible {
+			t.Fatalf("assignee cohort %s median=%+v p85=%+v", assignee, m, p)
+		}
+	}
+	check("user-a", "55", "90", 10, 11)
+	check("user-b", "550", "900", 10, 10)
+	check("user-c", "", "", 3, 3)
+	if metrics[metricID("metric-cycle-median-assignee-team", "team-a\x00user-c")].Value.Kind != "null" {
+		t.Fatal("small assignee cohort must be non-comparable")
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }
 
 func TestReworkThirtyDayObservationWindowDoesNotInferAbsence(t *testing.T) {
 	d := query.Dataset{

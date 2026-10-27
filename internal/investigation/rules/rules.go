@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.4.0"
+const Version = "1.5.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
