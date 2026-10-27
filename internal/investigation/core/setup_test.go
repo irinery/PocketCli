@@ -25,10 +25,27 @@ func TestParseStrictAndDefaults(t *testing.T) {
 		"schema_version: investigate.v1\nname: a\ntoken: secret\n",
 		"schema_version: investigate.v1\nname: a\nunknown: x\n",
 		"schema_version: investigate.v1\nname: !custom a\n",
+		"schema_version: investigate.v1\nname: a\nscope:\n  mode: all_authorized\n  repositories: [owner/repo]\n",
 	} {
 		if _, err := s.Parse(context.Background(), contract.SetupParseRequest{Filename: "plan.yaml", Content: content}); err == nil {
 			t.Fatalf("accepted %q", content)
 		}
+	}
+}
+
+func TestPreparePlanRejectsAllAuthorizedWithSelectorsBeforeDiscovery(t *testing.T) {
+	c, err := NewCore(CoreConfig{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.PreparePlan(context.Background(), contract.PlanInput{
+		SchemaVersion: contract.Version,
+		Scope:         &contract.Scope{Mode: "all_authorized", Repositories: []string{"owner/repo"}},
+		Modules:       contract.Modules{RuntimeImport: true},
+		Period:        contract.Period{Preset: "30d", Timezone: "UTC"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ERR_VALIDATION") {
+		t.Fatalf("aceitou seleção oculta em all_authorized: %v", err)
 	}
 }
 
@@ -43,6 +60,18 @@ func TestResolveLeapYearAndMissing(t *testing.T) {
 	}
 	if _, err := s.ResolvePeriod(context.Background(), contract.Period{}); err == nil {
 		t.Fatal("period required")
+	}
+}
+
+func TestResolvePeriodRejectsDatesOutsideCustom(t *testing.T) {
+	s := NewSetup(nil)
+	for _, period := range []contract.Period{
+		{Preset: "90d", FromDate: "2025-01-01", Timezone: "UTC"},
+		{Preset: "all", ToDate: "2025-02-01", Timezone: "UTC"},
+	} {
+		if _, err := s.ResolvePeriod(context.Background(), period); err == nil || !strings.Contains(err.Error(), "ERR_VALIDATION") {
+			t.Fatalf("aceitou datas ignoradas em %q: %v", period.Preset, err)
+		}
 	}
 }
 

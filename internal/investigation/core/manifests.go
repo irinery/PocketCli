@@ -161,10 +161,9 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 		}
 		upsertEvidence(d, e)
 		componentID := "cmp-" + storage.Hash([]byte(r.ID + ":" + entry.Path + ":" + kind))[:24]
-		d.Components = append(d.Components, contract.ComponentRecord{ID: componentID, Name: entry.Path, Repository: r.Name, Path: entry.Path, Kind: kind, ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
-		componentIndex := len(d.Components) - 1
+		componentIndex := upsertComponent(d, contract.ComponentRecord{ID: componentID, Name: entry.Path, Repository: r.Name, Path: entry.Path, Kind: kind, ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
 		linkID := "lnk-" + storage.Hash([]byte("repo-" + r.ID + ":" + componentID + ":" + e.ID))[:24]
-		d.Links = append(d.Links, contract.LinkRecord{ID: linkID, SourceID: "repo-" + r.ID, Relation: "contains_manifest", TargetID: componentID, Status: "direct", EvidenceID: e.ID})
+		upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: "repo-" + r.ID, Relation: "contains_manifest", TargetID: componentID, Status: "direct", EvidenceID: e.ID})
 		observed++
 		if entry.Size > 2*1024*1024 {
 			contentStatus, contentReason = "partial", "manifestos acima de 2 MiB não foram processados"
@@ -191,9 +190,9 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 		for _, service := range facts.Services {
 			serviceID := "cmp-" + storage.Hash([]byte(componentID + ":service:" + service))[:24]
 			serviceIDs[service] = serviceID
-			d.Components = append(d.Components, contract.ComponentRecord{ID: serviceID, Name: service, Repository: r.Name, Path: entry.Path + "#" + service, Kind: "compose_service", ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
+			upsertComponent(d, contract.ComponentRecord{ID: serviceID, Name: service, Repository: r.Name, Path: entry.Path + "#" + service, Kind: "compose_service", ImplementationStatus: "identified", DeploymentStatus: "unknown", Coverage: "partial"})
 			serviceLinkID := "lnk-" + storage.Hash([]byte(componentID + ":" + serviceID + ":" + blobEvidence.ID))[:24]
-			d.Links = append(d.Links, contract.LinkRecord{ID: serviceLinkID, SourceID: componentID, Relation: "declares_service", TargetID: serviceID, Status: "direct", EvidenceID: blobEvidence.ID})
+			upsertLink(d, contract.LinkRecord{ID: serviceLinkID, SourceID: componentID, Relation: "declares_service", TargetID: serviceID, Status: "direct", EvidenceID: blobEvidence.ID})
 		}
 		for _, dependency := range facts.Dependencies {
 			sourceID, sourceExists := serviceIDs[dependency.Service]
@@ -202,7 +201,7 @@ func (c *Core) collectManifestPaths(ctx context.Context, plan contract.Plan, r c
 				return fault("ERR_AUDIT_FAILED", "dependência Compose sem componente verificado")
 			}
 			linkID := "lnk-" + storage.Hash([]byte(sourceID + ":depends_on:" + targetID + ":" + blobEvidence.ID))[:24]
-			d.Links = append(d.Links, contract.LinkRecord{ID: linkID, SourceID: sourceID, Relation: "depends_on", TargetID: targetID, Status: "direct", EvidenceID: blobEvidence.ID})
+			upsertLink(d, contract.LinkRecord{ID: linkID, SourceID: sourceID, Relation: "depends_on", TargetID: targetID, Status: "direct", EvidenceID: blobEvidence.ID})
 		}
 		if len(facts.UnresolvedDependencies) > 0 {
 			contentStatus, contentReason = "partial", "dependência Compose sem destino no manifesto observado"

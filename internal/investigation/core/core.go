@@ -142,6 +142,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	if input.Scope.Mode == "selected" && len(input.Scope.Repositories) == 0 && len(input.Scope.Teams) == 0 {
 		return out, fault("ERR_VALIDATION", "selected exige recursos")
 	}
+	if input.Scope.Mode == "all_authorized" && (len(input.Scope.Repositories) > 0 || len(input.Scope.Teams) > 0) {
+		return out, fault("ERR_VALIDATION", "all_authorized não aceita seletores; use selected")
+	}
 	input.Scope.Repositories = dedupe(input.Scope.Repositories)
 	input.Scope.Teams = dedupe(input.Scope.Teams)
 	discoveryLimit := collect.DiscoveryBudget(ctx)

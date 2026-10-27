@@ -62,11 +62,11 @@ func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanI
 	}
 	input.GitHubEnabled, input.LinearEnabled = sourceNames["github"], sourceNames["linear"]
 	input.Scope = &contract.Scope{Mode: "all_authorized", Repositories: []string{}, Teams: []string{}}
-	if _, err := io.WriteString(out, "Deixe as listas vazias para descobrir todos os recursos autorizados; em duas fontes, preencha ambas para limitar o escopo.\n"); err != nil {
+	if _, err := io.WriteString(out, "Lista vazia descobre todos os recursos autorizados daquela fonte.\n"); err != nil {
 		return input, "", err
 	}
 	if input.GitHubEnabled {
-		value, err := promptLineFrom(in, out, "Repositórios GitHub owner/repo separados por vírgula (Enter=padrão): ")
+		value, err := promptLineFrom(in, out, "Repositórios GitHub owner/repo separados por vírgula (Enter=todos autorizados): ")
 		if err != nil {
 			return input, "", err
 		}
@@ -76,7 +76,7 @@ func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanI
 		}
 	}
 	if input.LinearEnabled {
-		value, err := promptLineFrom(in, out, "Teams Linear por chave ou ID, separados por vírgula (Enter=padrão): ")
+		value, err := promptLineFrom(in, out, "Teams Linear por chave ou ID, separados por vírgula (Enter=todos autorizados): ")
 		if err != nil {
 			return input, "", err
 		}
@@ -84,9 +84,6 @@ func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanI
 		if err != nil {
 			return input, "", err
 		}
-	}
-	if input.GitHubEnabled && input.LinearEnabled && (len(input.Scope.Repositories) == 0) != (len(input.Scope.Teams) == 0) {
-		return input, "", fmt.Errorf("ERR_VALIDATION: selecione repositórios e teams nas duas fontes ou deixe ambas as listas vazias para todos os recursos autorizados")
 	}
 	if len(input.Scope.Repositories)+len(input.Scope.Teams) > 0 {
 		input.Scope.Mode = "selected"

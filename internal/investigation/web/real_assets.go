@@ -178,6 +178,9 @@ const realAppJSTemplate = `(() => {
     period.value = '90d';
     const from = node('input'), to = node('input'), timezone = node('input');
     from.type = to.type = 'date';
+    const updatePeriod = () => { const custom = period.value === 'custom'; from.disabled = to.disabled = !custom; };
+    period.onchange = updatePeriod;
+    updatePeriod();
     timezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 	const discoveryBudget = node('input');
 	discoveryBudget.type = 'number'; discoveryBudget.min = '1'; discoveryBudget.step = '1'; discoveryBudget.value = '20';
@@ -225,6 +228,7 @@ const realAppJSTemplate = `(() => {
         github.checked = !!imported.github_enabled; linear.checked = !!imported.linear_enabled;
         period.value = imported.period.preset;
         from.value = imported.period.from_date || ''; to.value = imported.period.to_date || '';
+        updatePeriod();
         timezone.value = imported.period.timezone || timezone.value;
         Object.keys(moduleChecks).forEach(key => { moduleChecks[key].checked = !!imported.modules[key]; });
         updatePermissions();
@@ -243,7 +247,7 @@ const realAppJSTemplate = `(() => {
         const input = {
           ...(imported || {}), investigation_id: investigationId, schema_version: 'investigate.v1',
           name: name.value, scope: {mode: scope.value, repositories: parseList(repositories.value), teams: parseList(teams.value)},
-          period: {preset: period.value, from_date: from.value, to_date: to.value, timezone: timezone.value},
+          period: {preset: period.value, from_date: period.value === 'custom' ? from.value : '', to_date: period.value === 'custom' ? to.value : '', timezone: timezone.value},
           github_enabled: github.checked, linear_enabled: linear.checked,
           modules: Object.fromEntries(Object.entries(moduleChecks).map(([key, check]) => [key, check.checked])),
           limits: imported && imported.limits || {}

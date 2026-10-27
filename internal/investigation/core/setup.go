@@ -118,6 +118,9 @@ func (s *Setup) Parse(_ context.Context, req contract.SetupParseRequest) (contra
 	if input.Scope.Teams == nil {
 		input.Scope.Teams = []string{}
 	}
+	if input.Scope.Mode == "all_authorized" && (len(input.Scope.Repositories) > 0 || len(input.Scope.Teams) > 0) {
+		return out, fault("ERR_VALIDATION", "all_authorized não aceita seletores; use selected")
+	}
 	if input.Limits.GitHubRPH == 0 {
 		input.Limits.GitHubRPH = 300
 	}
@@ -177,6 +180,9 @@ func (s *Setup) ResolvePeriod(_ context.Context, p contract.Period) (contract.Re
 	var out contract.ResolvedPeriod
 	if p.Preset == "" {
 		return out, fault("ERR_PERIOD_REQUIRED", "escolha um período")
+	}
+	if p.Preset != "custom" && (p.FromDate != "" || p.ToDate != "") {
+		return out, fault("ERR_VALIDATION", "from e to exigem período custom")
 	}
 	if p.Timezone == "" {
 		p.Timezone = "UTC"
