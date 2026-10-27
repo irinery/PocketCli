@@ -150,7 +150,8 @@ func (s *sqliteService) Execute(ctx context.Context, id string, req contract.Que
 	// Count the serialized response, including per-cell JSON overhead. A wide
 	// query with tiny values can otherwise exceed the 2 MiB public limit.
 	const maxResultBytes = 2 * 1024 * 1024
-	budgetProbe := contract.QueryResult{SnapshotID: id, QueryHash: storage.Hash([]byte(req.SQL)), Columns: out.Columns, Rows: [][]contract.Cell{}, ReturnedRows: req.MaxRows, Truncated: false, ElapsedMS: 9223372036854775807, Warnings: []string{}}
+	// The web handler adds a 32-character query ID before returning the result.
+	budgetProbe := contract.QueryResult{QueryID: strings.Repeat("x", 32), SnapshotID: id, QueryHash: storage.Hash([]byte(req.SQL)), Columns: out.Columns, Rows: [][]contract.Cell{}, ReturnedRows: req.MaxRows, Truncated: false, ElapsedMS: 9223372036854775807, Warnings: []string{}}
 	baseJSON, err := json.Marshal(budgetProbe)
 	if err != nil || len(baseJSON) > maxResultBytes {
 		return contract.QueryResult{}, denied("ERR_SQL_LIMIT", "colunas excedem limite de resultado")

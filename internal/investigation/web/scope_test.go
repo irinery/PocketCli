@@ -37,9 +37,9 @@ func (c *scopeCore) LoadPlan(id string) (contract.Plan, error) {
 func (c *scopeCore) GetRun(_ context.Context, id string) (contract.Run, error) {
 	return contract.Run{ID: id, PlanID: "plan-other"}, nil
 }
-func (c *scopeCore) Query(context.Context, contract.QueryRequest) (contract.QueryResult, error) {
+func (c *scopeCore) Query(_ context.Context, req contract.QueryRequest) (contract.QueryResult, error) {
 	c.queries++
-	return contract.QueryResult{}, nil
+	return contract.QueryResult{SnapshotID: req.SnapshotID}, nil
 }
 func (c *scopeCore) StartRun(context.Context, contract.RunRequest) (contract.Run, error) {
 	c.starts++
@@ -107,7 +107,7 @@ func TestRealServerRejectsOtherInvestigationBeforeReadingOrWriting(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queryStore.Record(contract.QueryRequest{SnapshotID: "snap-other", SQL: "SELECT 1"}, contract.QueryResult{QueryID: "foreign-query"}, nil); err != nil {
+	if _, err := queryStore.Record(contract.QueryRequest{SnapshotID: "snap-other", SQL: "SELECT 1"}, contract.QueryResult{QueryID: "foreign-query", SnapshotID: "snap-other"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	foreignQuery, err := queryStore.Create(queries.CreateInput{Name: "foreign", QueryID: "foreign-query"}, "investigation-other", "snap-other")
