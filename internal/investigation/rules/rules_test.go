@@ -18,7 +18,7 @@ func TestDeterministicRulesAndUnknownCause(t *testing.T) {
 		Coverage:     []contract.Coverage{{Source: "linear", ResourceID: "team", Collection: "links", Status: "complete"}},
 		Links:        []contract.LinkRecord{{ID: "link-1", SourceID: "iss-1", TargetID: "pr-10", Relation: "references_pr", Status: "direct", EvidenceID: "ev-1"}, {ID: "link-2", SourceID: "pr-10", TargetID: "cmp-api", Relation: "modifies_component", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-fix", SourceID: "pr-10", TargetID: "iss-1", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-4"}, {ID: "link-ancestry", SourceID: "art-1", TargetID: "pr-10", Relation: "merge_commit_not_ancestor", Status: "direct", EvidenceID: "ev-9"}},
 		Events:       []query.Event{{ID: "evt-1", EntityID: "iss-1", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-7"}, {ID: "evt-ready", EntityID: "pr-10", Type: "ready_for_review", EventAt: "2026-01-02T00:00:00Z", EvidenceID: "ev-ready"}, {ID: "evt-review", EntityID: "pr-10", Type: "human_reviewed", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-review"}},
-		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EvidenceID: "ev-6"}},
+		Estimates:    []contract.EstimateRecord{{ID: "est-1", IssueID: "iss-1", Before: &before, After: &after, Timing: "after_start", EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-6"}},
 		Deliveries:   []contract.DeliveryRecord{{ID: "art-1", ComponentID: "cmp-api", RevisionSHA: "old-sha", ObservedAt: "2026-01-30T00:00:00Z", ProvenanceStatus: "declared", EvidenceID: "ev-8"}},
 	}
 	a := Evaluate(d)
@@ -152,6 +152,42 @@ func TestMissingPRLinkRequiresCompleteCoverageOfIssuesOwnSourceAndRepository(t *
 		if finding.RuleID == "R-LINK-001" {
 			t.Fatalf("vínculo formal parcial gerou ausência falsa: %+v", finding)
 		}
+	}
+}
+
+func TestEventFindingsRequireEvidenceInsideConfirmedWindow(t *testing.T) {
+	before, after := 1.0, 2.0
+	wait := int64(6 * 24 * 60 * 60)
+	d := query.Dataset{
+		Snapshot: contract.Snapshot{WindowStart: "2026-01-01T00:00:00Z", WindowEnd: "2026-01-11T00:00:00Z"},
+		Events: []query.Event{
+			{ID: "old-reopen", EntityID: "old", Type: "reopened", EventAt: "2025-12-31T00:00:00Z", EvidenceID: "ev-old"},
+			{ID: "unproven-reopen", EntityID: "unproven", Type: "reopened", EventAt: "2026-01-03T00:00:00Z"},
+			{ID: "valid-reopen", EntityID: "valid", Type: "reopened", EventAt: "2026-01-03T00:00:00Z", EvidenceID: "ev-valid"},
+			{ID: "ready", EntityID: "pr-1", Type: "ready_for_review", EventAt: "2026-01-05T00:00:00Z", EvidenceID: "ev-ready"},
+			{ID: "late-review", EntityID: "pr-1", Type: "human_reviewed", EventAt: "2026-01-11T00:00:00Z", EvidenceID: "ev-review"},
+		},
+		PullRequests: []query.PullRequest{{ID: "pr-1", ReadyAt: "2026-01-05T00:00:00Z", FirstHumanReviewAt: "2026-01-11T00:00:00Z", ReviewWaitSeconds: &wait}},
+		Estimates: []contract.EstimateRecord{
+			{ID: "old-estimate", IssueID: "old", Timing: "after_start", Before: &before, After: &after, EventAt: "2025-12-31T00:00:00Z", EvidenceID: "ev-old-estimate"},
+			{ID: "unproven-estimate", IssueID: "unproven", Timing: "after_start", Before: &before, After: &after, EventAt: "2026-01-04T00:00:00Z"},
+			{ID: "valid-estimate", IssueID: "valid", Timing: "after_start", Before: &before, After: &after, EventAt: "2026-01-04T00:00:00Z", EvidenceID: "ev-estimate"},
+		},
+	}
+	want := map[string]string{"R-REOPEN-001": "valid", "R-EST-001": "valid"}
+	for _, finding := range Evaluate(d).Findings {
+		if finding.RuleID == "R-FLOW-001" {
+			t.Fatalf("revisão na fronteira exclusiva gerou achado: %+v", finding)
+		}
+		if subject, relevant := want[finding.RuleID]; relevant {
+			if finding.SubjectID != subject {
+				t.Fatalf("evento fora da janela ou sem evidência gerou achado: %+v", finding)
+			}
+			delete(want, finding.RuleID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("eventos válidos não geraram achados: %+v", want)
 	}
 }
 

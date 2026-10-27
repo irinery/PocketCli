@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.13.0"
+const Version = "1.14.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -108,7 +108,7 @@ func Evaluate(d query.Dataset) query.Dataset {
 				reviewEvidence = event.EvidenceID
 			}
 		}
-		if readyEvidence == "" || reviewEvidence == "" {
+		if readyEvidence == "" || reviewEvidence == "" || !observedInWindow(p.FirstHumanReviewAt, d.Snapshot) {
 			continue
 		}
 		stageID := "stage-" + storage.Hash([]byte(p.ID + ":review_wait:" + p.ReadyAt + ":" + p.FirstHumanReviewAt + ":" + readyEvidence + ":" + reviewEvidence))[:20]
@@ -116,7 +116,7 @@ func Evaluate(d query.Dataset) query.Dataset {
 		d.Findings = append(d.Findings, finding("R-FLOW-001", "info", p.ID, "Tempo de espera observado", fmt.Sprintf("A primeira revisão de conta GitHub User foi observada %d segundos após o PR ficar pronto.", *seconds), "direct", []string{readyEvidence, reviewEvidence}, "Tempo decorrido, não horas trabalhadas; tipo User não descarta automação nessa conta."))
 	}
 	for _, e := range d.Events {
-		if e.Type == "reopened" || (isDone(e.OldValue) && isOpen(e.NewValue)) {
+		if e.ID != "" && e.EvidenceID != "" && observedInWindow(e.EventAt, d.Snapshot) && (e.Type == "reopened" || (isDone(e.OldValue) && isOpen(e.NewValue))) {
 			id := "rework-" + storage.Hash([]byte(e.ID + ":reopen"))[:20]
 			if !reworkIDs[id] {
 				d.Rework = append(d.Rework, contract.ReworkRecord{ID: id, SubjectID: e.EntityID, Kind: "reopening", EvidenceStatus: "direct", EventAt: e.EventAt, CauseStatus: "undetermined", EvidenceID: e.EvidenceID})
@@ -150,7 +150,7 @@ func Evaluate(d query.Dataset) query.Dataset {
 		}
 	}
 	for _, e := range d.Estimates {
-		if e.Timing == "after_start" && e.Before != nil && e.After != nil {
+		if e.Timing == "after_start" && e.Before != nil && e.After != nil && e.EvidenceID != "" && observedInWindow(e.EventAt, d.Snapshot) {
 			d.Findings = append(d.Findings, finding("R-EST-001", "info", e.IssueID, "Estimativa alterada após início", fmt.Sprintf("A estimativa observada mudou de %g para %g após o início registrado.", *e.Before, *e.After), "direct", []string{e.EvidenceID}, "Quem registrou a mudança não necessariamente a decidiu."))
 		}
 	}
