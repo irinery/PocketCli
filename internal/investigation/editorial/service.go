@@ -84,7 +84,7 @@ type secretProvider interface {
 	WithSecret(context.Context, string, func([]byte) error) error
 }
 type annotationReader interface {
-	List(snapshot, cursor string, limit int) annotations.Page
+	Get(id string) (annotations.Annotation, bool)
 }
 type provider interface {
 	Models(context.Context, []byte) ([]Model, error)
@@ -256,20 +256,18 @@ func (s *Service) Preview(ctx context.Context, in Selection) (Preview, error) {
 		if s.annotations == nil {
 			return Preview{}, editorialError("ERR_UNAVAILABLE", "Comentários locais não estão disponíveis.")
 		}
-		page := s.annotations.List(in.SnapshotID, "", 100)
-		wanted := map[string]bool{}
+		selected := map[string]bool{}
 		for _, id := range in.AnnotationIDs {
-			wanted[id] = true
-		}
-		for _, a := range page.Items {
-			if wanted[a.ID] {
-				a.Body = redactValue(a.Body)
-				p.Comments = append(p.Comments, a)
-				delete(wanted, a.ID)
+			if selected[id] {
+				continue
 			}
-		}
-		if len(wanted) > 0 {
-			return Preview{}, editorialError("ERR_VALIDATION", "Comentário ausente ou de outro snapshot.")
+			selected[id] = true
+			a, ok := s.annotations.Get(id)
+			if !ok || a.SnapshotID != in.SnapshotID {
+				return Preview{}, editorialError("ERR_VALIDATION", "Comentário ausente ou de outro snapshot.")
+			}
+			a.Body = redactValue(a.Body)
+			p.Comments = append(p.Comments, a)
 		}
 	}
 	encoded, err := json.Marshal(p)
