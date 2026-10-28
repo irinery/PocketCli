@@ -17,6 +17,7 @@ import (
 )
 
 const insightSanitizationVersion = "pocketcli-local-v1"
+const insightQuestionCatalogVersion = "l1-questions-v1"
 
 type insightCoverageManifest struct {
 	SnapshotID  string                           `json:"snapshot_id"`
@@ -446,10 +447,11 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 	bundle.Evidence = filteredEvidence
 	sortSourceBundle(&bundle)
 	canonical, err = json.Marshal(struct {
-		SnapshotHash string                         `json:"snapshot_hash"`
-		Config       insightcontract.AnalysisConfig `json:"config"`
-		Bundle       insightcontract.SourceBundle   `json:"bundle"`
-	}{snapshot.DatasetHash, cfg, bundle})
+		SnapshotHash           string                         `json:"snapshot_hash"`
+		Config                 insightcontract.AnalysisConfig `json:"config"`
+		QuestionCatalogVersion string                         `json:"question_catalog_version"`
+		Bundle                 insightcontract.SourceBundle   `json:"bundle"`
+	}{snapshot.DatasetHash, cfg, insightQuestionCatalogVersion, bundle})
 	if err != nil {
 		return insightcontract.SourceBundle{}, fault("ERR_AUDIT_FAILED", "não foi possível calcular hash da fonte")
 	}
@@ -540,13 +542,7 @@ func redactInsightText(text string) (string, bool) {
 
 func issueEntity(issue query.Issue) insightcontract.Entity {
 	state := normalizeEntityState(issue.State)
-	outcome := issue.Outcome
-	if outcome == "" {
-		outcome = "unknown"
-	}
-	if outcome == "not_planned" {
-		outcome = "unclassified"
-	}
+	outcome := normalizeEntityOutcome(issue.Outcome)
 	components := []string{}
 	if issue.ComponentID != "" {
 		components = append(components, issue.ComponentID)
@@ -555,6 +551,17 @@ func issueEntity(issue query.Issue) insightcontract.Entity {
 		TeamID: nonempty(issue.TeamID), TeamName: nil, OwnerID: nonempty(issue.AssigneeID), ProjectID: nil, ComponentIDs: components, State: state, Outcome: outcome,
 		StateTemporalStatus: "current_only", WorkflowState: issue.State, CreatedAt: nonempty(issue.CreatedAt), UpdatedAt: nonempty(issue.UpdatedAt), StartedAt: nonempty(issue.StartedAt), CompletedAt: nonempty(issue.CompletedAt), DueAt: nil,
 		IsContext: issue.IsContext, EstimateCurrent: issue.EstimateCurrent, EstimateBeforeStart: issue.EstimateBeforeStart, EstimateScaleID: nil, EvidenceIDs: evidenceList(issue.EvidenceID)}
+}
+
+func normalizeEntityOutcome(value string) string {
+	switch strings.ToLower(value) {
+	case "active", "completed", "cancelled", "duplicate", "not_planned", "unclassified", "unknown":
+		return strings.ToLower(value)
+	case "canceled":
+		return "cancelled"
+	default:
+		return "unknown"
+	}
 }
 
 func normalizeEntityState(value string) string {
@@ -653,6 +660,27 @@ func questionCoverage(cfg insightcontract.AnalysisConfig, coverage []insightcont
 						missing = append(missing, "intervalo histórico solicitado não está comprovadamente coberto: "+coverageKey(key))
 					}
 				}
+			}
+			for _, resource := range cfg.RequestedScope.Resources {
+				if resource.Source == "github" {
+					if status == "sufficient" {
+						status = "partial"
+					}
+					missing = append(missing, "API GitHub expõe representação atual; intervalos percorridos não comprovam reconstrução histórica de estados.")
+				}
+			}
+		}
+		if id == "objective_status" {
+			hasExplicitTarget := false
+			for _, objective := range cfg.Objectives {
+				if objective.Target != nil || objective.Comparator != "" && objective.Comparator != "none" {
+					hasExplicitTarget = true
+					break
+				}
+			}
+			if !hasExplicitTarget {
+				status = "insufficient"
+				missing = append(missing, "Nenhuma meta ou critério explícito foi fornecido para avaliar objetivos.")
 			}
 		}
 		out = append(out, insightcontract.QuestionCoverage{QuestionID: id, Status: status, RequiredCollections: required, Missing: dedupe(missing), Reason: questionReason(id)})

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -73,6 +74,10 @@ func TestReadInsightSourceSeparatesScopeCoverageEvidenceAndLinks(t *testing.T) {
 	}
 	if statuses["formal"] != "explicit" || statuses["mention"] != "candidate" || statuses["fix"] != "candidate" || statuses["orphan"] != "invalid" {
 		t.Fatalf("status de links incorreto: %v", statuses)
+	}
+	second, err := c.ReadInsightSource(context.Background(), snapshot.ID, cfg)
+	if err != nil || second.InputHash != bundle.InputHash {
+		t.Fatalf("leitura não determinística: %s != %s, err=%v", bundle.InputHash, second.InputHash, err)
 	}
 }
 
@@ -151,6 +156,26 @@ func TestCoverageStatusesKeepPartialAndNotSelectedDistinct(t *testing.T) {
 	}
 }
 
+func TestCoverageCatalogDoesNotOverstateGitHubHistoryOrMissingTargets(t *testing.T) {
+	window := insightcontract.Window{Start: "2022-10-28T00:00:00Z", End: "2026-10-28T00:00:00Z"}
+	cfg := insightcontract.AnalysisConfig{RequestedScope: insightcontract.Scope{History: window, Resources: []insightcontract.ResourceRef{{Source: "github", ID: "42", Name: "owner/repo"}}}}
+	interval := []insightcontract.Window{window}
+	coverage := []insightcontract.SourceCoverage{{Key: insightcontract.CoverageKey{Source: "github", ResourceID: "42", Collection: "issues"}, Status: "complete", HistoryCoveredIntervals: interval}, {Key: insightcontract.CoverageKey{Source: "github", ResourceID: "42", Collection: "pull_requests"}, Status: "complete", HistoryCoveredIntervals: interval}}
+	questions := questionCoverage(cfg, coverage)
+	if questions[0].Status != "partial" || len(questions[0].Missing) == 0 {
+		t.Fatalf("intervalos GitHub foram tratados como histórico de estados: %+v", questions[0])
+	}
+	var objective insightcontract.QuestionCoverage
+	for _, item := range questions {
+		if item.QuestionID == "objective_status" {
+			objective = item
+		}
+	}
+	if objective.Status != "insufficient" {
+		t.Fatalf("objetivo sem meta/critério virou avaliável: %+v", objective)
+	}
+}
+
 func TestCoverageSidecarFreezesIntervalsAndOpaqueCheckpoint(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
@@ -190,6 +215,26 @@ func TestCoverageSidecarFreezesIntervalsAndOpaqueCheckpoint(t *testing.T) {
 	}
 	if len(manifest.Queues) != 1 || manifest.Queues[0].Pending != nil || manifest.Queues[0].CheckpointID == nil || strings.Contains(*manifest.Queues[0].CheckpointID, "opaque-cursor") || strings.Contains(*manifest.Queues[0].CheckpointID, "newer-secret-cursor") {
 		t.Fatalf("fila expôs checkpoint ou converteu pending nulo: %+v", manifest.Queues)
+	}
+}
+
+func TestCommonLunaFixtureUsesCanonicalSourceBundle(t *testing.T) {
+	data, err := os.ReadFile("../insightcontract/testdata/fixture_go.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Config insightcontract.AnalysisConfig `json:"config"`
+		Source insightcontract.SourceBundle   `json:"source"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Config.Version != insightcontract.Version || fixture.Source.Version != insightcontract.Version || fixture.Source.Snapshot.ID == "" || fixture.Source.RequestedScope.History.Start == "" {
+		t.Fatalf("fixture não segue o contrato congelado: config=%+v source=%+v", fixture.Config, fixture.Source)
+	}
+	if fixture.Source.Coverage == nil || fixture.Source.Questions == nil || fixture.Source.Queues == nil || fixture.Source.Evidence == nil || fixture.Source.Links == nil {
+		t.Fatal("coleções canônicas devem ser arrays")
 	}
 }
 
