@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +206,62 @@ func TestServiceCancelsAndRestartDoesNotReplay(t *testing.T) {
 	}
 }
 
+func TestCancelDuringPresentationCannotPublishAnalysis(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("snapshots", "snap-cancel-presentation", struct {
+		ID string `json:"id"`
+	}{"snap-cancel-presentation"}); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	releasePresentation := make(chan struct{})
+	deps := Dependencies{
+		Store: store,
+		Source: sourceFunc(func(_ context.Context, id string, _ insightcontract.AnalysisConfig) (insightcontract.SourceBundle, error) {
+			return insightcontract.SourceBundle{Version: insightcontract.Version, InputHash: "input", Snapshot: insightcontract.SnapshotRef{ID: id}, Limitations: []string{}}, nil
+		}),
+		Facts: func(bundle insightcontract.SourceBundle, _ insightcontract.AnalysisConfig) (insightcontract.FactsResult, error) {
+			return insightcontract.FactsResult{SnapshotID: bundle.Snapshot.ID, InputHash: bundle.InputHash}, nil
+		},
+		Decisions: func(_ context.Context, bundle insightcontract.SourceBundle, _ insightcontract.FactsResult, _ insightcontract.AnalysisConfig, _ insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+			return insightcontract.DecisionAnalysis{SnapshotID: bundle.Snapshot.ID, Status: "complete"}, nil
+		},
+		Presentation: func(_ insightcontract.SourceBundle, _ insightcontract.FactsResult, decisions insightcontract.DecisionAnalysis, _ insightcontract.AnalysisConfig) (insightcontract.ExecutiveReport, error) {
+			close(entered)
+			<-releasePresentation
+			return insightcontract.ExecutiveReport{SnapshotID: decisions.SnapshotID, AnalysisStatus: "complete", SufficiencyStatus: "sufficient"}, nil
+		},
+	}
+	svc, err := NewService(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartAnalysis(context.Background(), insightcontract.AnalysisRequest{SnapshotID: "snap-cancel-presentation", Config: serviceConfig(), IdempotencyKey: "cancel-presentation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	cancelled, err := svc.CancelAnalysis(context.Background(), run.ID)
+	if err != nil || cancelled.State != "cancelled" {
+		t.Fatalf("cancelamento durante presentation: %+v err=%v", cancelled, err)
+	}
+	close(releasePresentation)
+	if err := svc.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.GetAnalysisRun(context.Background(), run.ID)
+	if err != nil || result.State != "cancelled" || result.AnalysisID != nil {
+		t.Fatalf("run cancelada foi publicada como completa: %+v err=%v", result, err)
+	}
+	ids, err := store.List("insightanalyses")
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("análise foi persistida após cancelamento: %v err=%v", ids, err)
+	}
+}
+
 func TestShutdownCancelsAndWaitsForActiveJob(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {
@@ -275,6 +333,149 @@ func TestServiceRejectsMissingSnapshotAndInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestServiceBlocksProviderWhenExternalProcessingIsDisabled(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("snapshots", "snap-policy", struct {
+		ID string `json:"id"`
+	}{"snap-policy"}); err != nil {
+		t.Fatal(err)
+	}
+	providerSeen := make(chan insightcontract.ReasoningProvider, 1)
+	cfg := serviceConfig()
+	cfg.Provider = insightcontract.ProviderConfig{Kind: "configured", Model: "fake", AdapterVersion: "fake-v1"}
+	cfg.Policy.ExternalProcessingAllowed = false
+	deps := Dependencies{
+		Store: store,
+		Source: sourceFunc(func(_ context.Context, id string, _ insightcontract.AnalysisConfig) (insightcontract.SourceBundle, error) {
+			return insightcontract.SourceBundle{Version: insightcontract.Version, InputHash: "input", Snapshot: insightcontract.SnapshotRef{ID: id}, Limitations: []string{}}, nil
+		}),
+		Facts: func(bundle insightcontract.SourceBundle, _ insightcontract.AnalysisConfig) (insightcontract.FactsResult, error) {
+			return insightcontract.FactsResult{SnapshotID: bundle.Snapshot.ID, InputHash: bundle.InputHash}, nil
+		},
+		Decisions: func(_ context.Context, bundle insightcontract.SourceBundle, _ insightcontract.FactsResult, _ insightcontract.AnalysisConfig, provider insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+			providerSeen <- provider
+			return insightcontract.DecisionAnalysis{SnapshotID: bundle.Snapshot.ID, Status: "complete"}, nil
+		},
+		Presentation: func(_ insightcontract.SourceBundle, _ insightcontract.FactsResult, decisions insightcontract.DecisionAnalysis, _ insightcontract.AnalysisConfig) (insightcontract.ExecutiveReport, error) {
+			return insightcontract.ExecutiveReport{SnapshotID: decisions.SnapshotID, AnalysisStatus: "complete", SufficiencyStatus: "sufficient"}, nil
+		},
+	}
+	svc, err := NewService(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartAnalysis(context.Background(), insightcontract.AnalysisRequest{SnapshotID: "snap-policy", Config: cfg, IdempotencyKey: "policy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitRun(t, svc, run.ID); result.State != "completed" {
+		code := "<nil>"
+		if result.ErrorCode != nil {
+			code = *result.ErrorCode
+		}
+		t.Fatalf("análise local não concluiu: %+v error=%s", result, code)
+	}
+	select {
+	case provider := <-providerSeen:
+		if provider != nil {
+			t.Fatal("provider externo foi entregue apesar de ExternalProcessingAllowed=false")
+		}
+	default:
+		t.Fatal("callback de decisões não executado")
+	}
+	if err := svc.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartAnalysisWaitsForIdempotencyLockContention(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("snapshots", "snap-lock", struct {
+		ID string `json:"id"`
+	}{"snap-lock"}); err != nil {
+		t.Fatal(err)
+	}
+	key := "external-lock"
+	releaseLock, err := store.Lock("insightkey-" + storage.Hash([]byte(key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { releaseLock() }()
+	svc, err := NewService(Dependencies{
+		Store: store,
+		Source: sourceFunc(func(context.Context, string, insightcontract.AnalysisConfig) (insightcontract.SourceBundle, error) {
+			return insightcontract.SourceBundle{}, errors.New("stop after start")
+		}),
+		Facts: func(insightcontract.SourceBundle, insightcontract.AnalysisConfig) (insightcontract.FactsResult, error) {
+			return insightcontract.FactsResult{}, nil
+		},
+		Decisions: func(context.Context, insightcontract.SourceBundle, insightcontract.FactsResult, insightcontract.AnalysisConfig, insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+			return insightcontract.DecisionAnalysis{}, nil
+		},
+		Presentation: func(insightcontract.SourceBundle, insightcontract.FactsResult, insightcontract.DecisionAnalysis, insightcontract.AnalysisConfig) (insightcontract.ExecutiveReport, error) {
+			return insightcontract.ExecutiveReport{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type startResult struct {
+		run insightcontract.AnalysisRun
+		err error
+	}
+	started := make(chan startResult, 1)
+	go func() {
+		run, err := svc.StartAnalysis(context.Background(), insightcontract.AnalysisRequest{SnapshotID: "snap-lock", Config: serviceConfig(), IdempotencyKey: key})
+		started <- startResult{run: run, err: err}
+	}()
+	time.Sleep(25 * time.Millisecond)
+	releaseLock()
+	releaseLock = func() {}
+	result := <-started
+	if result.err != nil || result.run.ID == "" {
+		t.Fatalf("contenção transitória de lock impediu StartAnalysis: run=%+v err=%v", result.run, result.err)
+	}
+	if err := svc.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPutImmutableAllowsIdenticalAndRejectsConflictingArtifacts(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := NewService(Dependencies{Store: store, Source: sourceFunc(func(context.Context, string, insightcontract.AnalysisConfig) (insightcontract.SourceBundle, error) {
+		return insightcontract.SourceBundle{}, nil
+	}), Facts: func(insightcontract.SourceBundle, insightcontract.AnalysisConfig) (insightcontract.FactsResult, error) {
+		return insightcontract.FactsResult{}, nil
+	}, Decisions: func(context.Context, insightcontract.SourceBundle, insightcontract.FactsResult, insightcontract.AnalysisConfig, insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+		return insightcontract.DecisionAnalysis{}, nil
+	}, Presentation: func(insightcontract.SourceBundle, insightcontract.FactsResult, insightcontract.DecisionAnalysis, insightcontract.AnalysisConfig) (insightcontract.ExecutiveReport, error) {
+		return insightcontract.ExecutiveReport{}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := insightcontract.AnalysisSummary{ID: "analysis-1", SnapshotID: "snapshot-1", Status: "complete"}
+	if err := svc.putImmutable("insightsummary", value.ID, value); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.putImmutable("insightsummary", value.ID, value); err != nil {
+		t.Fatalf("repetição idêntica não foi idempotente: %v", err)
+	}
+	value.Status = "partial"
+	if err := svc.putImmutable("insightsummary", value.ID, value); err == nil || !strings.Contains(err.Error(), "ERR_AUDIT_FAILED") {
+		t.Fatalf("artefato publicado foi sobrescrito: %v", err)
+	}
+}
+
 func TestServicePersistsCallbackErrorsAtEveryPhase(t *testing.T) {
 	for _, phase := range []string{"source", "facts", "reasoning", "presentation"} {
 		t.Run(phase, func(t *testing.T) {
@@ -323,6 +524,52 @@ func TestServicePersistsCallbackErrorsAtEveryPhase(t *testing.T) {
 			}
 			_ = svc.Shutdown(context.Background())
 		})
+	}
+}
+
+func TestServicePersistsFailureDuringPublication(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("snapshots", "snap-persist-error", struct {
+		ID string `json:"id"`
+	}{"snap-persist-error"}); err != nil {
+		t.Fatal(err)
+	}
+	deps := Dependencies{
+		Store: store,
+		Source: sourceFunc(func(_ context.Context, id string, _ insightcontract.AnalysisConfig) (insightcontract.SourceBundle, error) {
+			return insightcontract.SourceBundle{Version: insightcontract.Version, InputHash: "input", Snapshot: insightcontract.SnapshotRef{ID: id}, Limitations: []string{}}, nil
+		}),
+		Facts: func(bundle insightcontract.SourceBundle, _ insightcontract.AnalysisConfig) (insightcontract.FactsResult, error) {
+			return insightcontract.FactsResult{SnapshotID: bundle.Snapshot.ID, InputHash: bundle.InputHash}, nil
+		},
+		Decisions: func(_ context.Context, bundle insightcontract.SourceBundle, _ insightcontract.FactsResult, _ insightcontract.AnalysisConfig, _ insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+			return insightcontract.DecisionAnalysis{SnapshotID: bundle.Snapshot.ID, Status: "complete"}, nil
+		},
+		Presentation: func(_ insightcontract.SourceBundle, _ insightcontract.FactsResult, decisions insightcontract.DecisionAnalysis, _ insightcontract.AnalysisConfig) (insightcontract.ExecutiveReport, error) {
+			// Make the analysis namespace unwritable after callbacks complete.
+			if err := os.WriteFile(filepath.Join(store.Root, "insightanalyses"), []byte("blocked"), 0o600); err != nil {
+				return insightcontract.ExecutiveReport{}, err
+			}
+			return insightcontract.ExecutiveReport{SnapshotID: decisions.SnapshotID, AnalysisStatus: "complete", SufficiencyStatus: "sufficient"}, nil
+		},
+	}
+	svc, err := NewService(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := svc.StartAnalysis(context.Background(), insightcontract.AnalysisRequest{SnapshotID: "snap-persist-error", Config: serviceConfig(), IdempotencyKey: "persist-error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := waitRun(t, svc, run.ID)
+	if result.State != "failed" || result.ErrorCode == nil || *result.ErrorCode != "ERR_PERSIST_FAILED" {
+		t.Fatalf("falha de publicação não virou estado terminal: %+v", result)
+	}
+	if err := svc.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,8 +43,19 @@ func (c *Core) freezeInsightCoverage(snapshot contract.Snapshot, plan contract.P
 		return fault("ERR_AUDIT_FAILED", "manifesto de cobertura existente corrompido")
 	}
 	coverage := make([]insightcontract.SourceCoverage, 0, len(data.Coverage))
+	coverageByKey := make(map[string]contract.Coverage, len(data.Coverage))
 	queuesByID := make(map[string]insightcontract.QueueProgress)
 	for _, item := range data.Coverage {
+		key := item.Source + ":" + item.ResourceID + ":" + item.Collection
+		if previous, ok := coverageByKey[key]; ok {
+			previousJSON, previousErr := json.Marshal(previous)
+			itemJSON, itemErr := json.Marshal(item)
+			if previousErr != nil || itemErr != nil || !bytes.Equal(previousJSON, itemJSON) {
+				return fault("ERR_AUDIT_FAILED", "registros de cobertura duplicados e divergentes")
+			}
+			continue
+		}
+		coverageByKey[key] = item
 		entry := insightcontract.SourceCoverage{
 			Key:    insightcontract.CoverageKey{Source: item.Source, ResourceID: item.ResourceID, Collection: item.Collection},
 			Status: normalizeCoverageStatus(item.Status), Observed: item.Observed,

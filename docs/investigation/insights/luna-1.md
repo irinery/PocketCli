@@ -3,7 +3,7 @@
 **Estado:** concluído para a fronteira L1, com limites desconhecidos preservados.  
 **Base comum:** `8cbd526ea327b4b3bc5ca2defe0a12a2bc40b901`. **Base auditada:** `b068cfdd40ea72f6c88df1c4ab69d30ab2905b67`.  
 **Branch/worktree:** `codex/luna-1-insights` / `/Users/irinery/.codex/worktrees/luna-1-insights/PocketCli`.  
-**Commits L1:** `51c0e72`, `df24259`, `2c15daa`, `0263329`; ver `git log` para hashes completos.  
+**Commits L1:** `51c0e72`, `df24259`, `2c15daa`, `0263329`; a auditoria posterior descrita abaixo está em commit separado.
 **Contrato:** `investigate.insights.v1`, copiado e formatado no bootstrap comum.  
 **Modelo efetivo:** Codex GPT-6 nesta sessão. O prompt do pacote pede Luna/high; essa configuração não estava disponível neste agente.
 
@@ -45,6 +45,28 @@ Pré-requisitos: Go 1.22+ e `sh`; `GOCACHE` gravável. Nos comandos abaixo usei 
 | `env GOCACHE=/tmp/pocketcli-go-build-cache go build -buildvcs=false -o /tmp/pocketcli-l1 ./cmd/pocket` | Passou. |
 | `env POCKETCLI_GO_BINARY=/tmp/pocketcli-l1 sh tests/run_smoke.sh` | Passou: 7/7. |
 | `sh scripts/run_local_ci.sh` | A suíte shell passou 33/33, mas o agregador encerrou com status de falha porque levou 96 s e tem teto de 45 s; por isso os gates Go seguintes foram rodados manualmente acima. O teste de ambiente `test_ish.sh` fez apenas suas verificações de conectividade/DNS/Tailscale; nenhum provedor GitHub/Linear foi chamado e nenhuma coleta real foi feita. |
+
+## Auditoria complementar da entrega
+
+Uma revisão posterior contra os critérios de aceite encontrou lacunas funcionais que o primeiro handoff não havia detectado. Foram corrigidas nesta branch:
+
+- Artefatos de source, facts, decisions, análise, summary e chave de idempotência agora são gravados por helper imutável: repetição idêntica é idempotente e conteúdo divergente falha fechado (`INV001-R11–R12`).
+- A aquisição concorrente da chave de idempotência aguarda contenção transitória do lock, respeitando cancelamento do request; teste reproduz o lock ocupado (`INV001-R12`).
+- Atualizações de fase, cancelamento e publicação final são serializados. Cancelar durante callback impede que a análise seja publicada como completa (`INV001-R12–R13`).
+- A falha da fase `persisting` também tem teste: falha de escrita resulta em run terminal `failed` com `ERR_PERSIST_FAILED` (`INV001-R12`).
+- Quando `Policy.ExternalProcessingAllowed=false`, o callback recebe provider nulo, mesmo que o config declare um provider; a parte local do pipeline pode continuar (`INV000-R08`, `INV001-R13`).
+- Cobertura duplicada idêntica é deduplicada antes da criação do manifesto; linhas divergentes com a mesma chave falham fechado. O teste também verifica que a fila referenciada aparece uma vez (`INV001-R03`, `INV001-R06`).
+- O teste de vínculos agora cobre endpoint órfão e vínculo sem evidência, ambos preservados como inválidos (`INV001-R09`).
+
+Verificação após essa auditoria:
+
+| Comando | Resultado |
+|---|---|
+| `env GOCACHE=/tmp/pocketcli-go-build-cache go test -buildvcs=false ./internal/investigation/core ./internal/investigation/insights` | Passou. |
+| `env GOCACHE=/tmp/pocketcli-go-build-cache go test -buildvcs=false ./...` | Passou em todos os pacotes. |
+| `env GOCACHE=/tmp/pocketcli-go-build-cache go build -buildvcs=false -o /tmp/pocketcli-l1 ./cmd/pocket` | Passou. |
+| `env POCKETCLI_GO_BINARY=/tmp/pocketcli-l1 sh tests/run_smoke.sh` | Passou: 7/7. |
+| `git diff --check` | Passou. |
 
 ## Limites registrados
 

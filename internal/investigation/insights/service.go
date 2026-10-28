@@ -1,6 +1,7 @@
 package insights
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"pocketcli/internal/investigation/insightcontract"
@@ -50,6 +52,7 @@ type idempotencyRecord struct {
 
 type Service struct {
 	deps     Dependencies
+	startMu  sync.Mutex
 	mu       sync.Mutex
 	stopping bool
 	jobs     map[string]context.CancelFunc
@@ -96,6 +99,11 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 	if err := ctx.Err(); err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
+	// Serialize idempotency lookup and creation within this service. Store.Lock
+	// protects the same key across processes; this mutex makes concurrent calls
+	// in one process observe the record created by the first caller.
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 	if req.SnapshotID == "" || req.IdempotencyKey == "" {
 		return insightcontract.AnalysisRun{}, errors.New("ERR_VALIDATION: snapshot_id e idempotency_key são obrigatórios")
 	}
@@ -113,9 +121,22 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 	}{req.SnapshotID, configHash})
 	requestHash := storage.Hash(requestBytes)
 	keyID := storage.Hash([]byte(req.IdempotencyKey))
-	release, err := s.deps.Store.Lock("insightkey-" + keyID)
-	if err != nil {
-		return insightcontract.AnalysisRun{}, err
+	var release func()
+	for {
+		release, err = s.deps.Store.Lock("insightkey-" + keyID)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return insightcontract.AnalysisRun{}, err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return insightcontract.AnalysisRun{}, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	defer release()
 	var previous idempotencyRecord
@@ -140,7 +161,7 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 	if err := s.deps.Store.Put("insightruns", runID, run); err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
-	if err := s.deps.Store.Put("insightkeys", keyID, idempotencyRecord{RequestHash: requestHash, RunID: runID}); err != nil {
+	if err := s.putImmutable("insightkeys", keyID, idempotencyRecord{RequestHash: requestHash, RunID: runID}); err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
 	jobCtx, cancel := context.WithCancel(context.Background())
@@ -253,6 +274,8 @@ func validateWindow(window insightcontract.Window) error {
 
 func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, cfg insightcontract.AnalysisConfig) {
 	set := func(state, phase string, code *string) bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if ctx.Err() != nil {
 			return false
 		}
@@ -271,7 +294,7 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 		s.fail(&run, ctx, "ERR_SOURCE_INVALID")
 		return
 	}
-	if err := s.deps.Store.Put("insightsources", run.ID, source); err != nil {
+	if err := s.putImmutable("insightsources", run.ID, source); err != nil {
 		s.fail(&run, ctx, "ERR_PERSIST_FAILED")
 		return
 	}
@@ -296,7 +319,7 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 		s.fail(&run, ctx, "ERR_FACTS_INVALID")
 		return
 	}
-	if err := s.deps.Store.Put("insightfacts", run.ID, facts); err != nil {
+	if err := s.putImmutable("insightfacts", run.ID, facts); err != nil {
 		s.fail(&run, ctx, "ERR_PERSIST_FAILED")
 		return
 	}
@@ -304,10 +327,10 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 		return
 	}
 	provider := s.deps.Provider
-	if cfg.Provider.Kind == "none" {
+	if cfg.Provider.Kind == "none" || !cfg.Policy.ExternalProcessingAllowed {
 		provider = nil
 	}
-	if cfg.Provider.Kind == "configured" && provider == nil {
+	if cfg.Provider.Kind == "configured" && cfg.Policy.ExternalProcessingAllowed && provider == nil {
 		s.fail(&run, ctx, "ERR_PROVIDER_UNAVAILABLE")
 		return
 	}
@@ -323,7 +346,7 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 		s.fail(&run, ctx, "ERR_REASONING_INVALID")
 		return
 	}
-	if err := s.deps.Store.Put("insightdecisions", run.ID, decisions); err != nil {
+	if err := s.putImmutable("insightdecisions", run.ID, decisions); err != nil {
 		s.fail(&run, ctx, "ERR_PERSIST_FAILED")
 		return
 	}
@@ -371,24 +394,70 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 		return
 	}
 	artifacts := analysisArtifacts{ID: analysisID, Snapshot: run.SnapshotID, Config: cfg, ConfigHash: run.ConfigHash, Source: source, Facts: facts, Decisions: decisions, Report: report, CreatedAt: s.deps.Now().UTC().Format(time.RFC3339)}
-	if err := s.deps.Store.Put("insightanalyses", analysisID, artifacts); err != nil {
-		s.fail(&run, ctx, "ERR_PERSIST_FAILED")
+	// Serialize cancellation against publication. Once a cancellation wins this
+	// lock, no analysis is published as complete; once publication wins, cancel
+	// observes a terminal run and leaves it intact.
+	s.mu.Lock()
+	if ctx.Err() != nil {
+		run.State, run.Phase = "cancelled", "idle"
+		run.ErrorCode = stringPointer("ERR_CANCELLED")
+		_ = s.deps.Store.Put("insightruns", run.ID, run)
+		s.mu.Unlock()
 		return
 	}
-	if err := s.deps.Store.Put("insightsummary", analysisID, insightcontract.AnalysisSummary{ID: analysisID, SnapshotID: run.SnapshotID, ConfigHash: run.ConfigHash, RequestedScope: cfg.RequestedScope, Status: report.AnalysisStatus, CreatedAt: artifacts.CreatedAt}); err != nil {
-		s.fail(&run, ctx, "ERR_PERSIST_FAILED")
-		return
+	persistErr := s.putImmutable("insightanalyses", analysisID, artifacts)
+	if persistErr == nil {
+		persistErr = s.putImmutable("insightsummary", analysisID, insightcontract.AnalysisSummary{ID: analysisID, SnapshotID: run.SnapshotID, ConfigHash: run.ConfigHash, RequestedScope: cfg.RequestedScope, Status: report.AnalysisStatus, CreatedAt: artifacts.CreatedAt})
 	}
-	run.AnalysisID = stringPointer(analysisID)
-	run.State = "completed"
-	if report.AnalysisStatus == "partial" || report.AnalysisStatus == "not_run" || report.SufficiencyStatus == "insufficient" || report.SufficiencyStatus == "partial" {
-		run.State = "completed_partial"
+	if persistErr != nil {
+		run.State, run.Phase = "failed", "idle"
+		run.ErrorCode = stringPointer("ERR_PERSIST_FAILED")
+	} else {
+		run.AnalysisID = stringPointer(analysisID)
+		run.State = "completed"
+		if report.AnalysisStatus == "partial" || report.AnalysisStatus == "not_run" || report.SufficiencyStatus == "insufficient" || report.SufficiencyStatus == "partial" {
+			run.State = "completed_partial"
+		}
+		run.Phase, run.ErrorCode = "idle", nil
 	}
-	run.Phase, run.ErrorCode = "idle", nil
 	_ = s.deps.Store.Put("insightruns", run.ID, run)
+	s.mu.Unlock()
+}
+
+// putImmutable persists a private artifact once. A repeated identical write is
+// idempotent; a conflicting write fails closed instead of replacing history.
+func (s *Service) putImmutable(kind, id string, value interface{}) error {
+	release, err := s.deps.Store.Lock("insight-artifact-" + storage.Hash([]byte(kind+":"+id)))
+	if err != nil {
+		return err
+	}
+	defer release()
+	expected, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	var existing json.RawMessage
+	err = s.deps.Store.Get(kind, id, &existing)
+	if err == nil {
+		var compact bytes.Buffer
+		if json.Compact(&compact, existing) != nil || !bytes.Equal(compact.Bytes(), expected) {
+			return errors.New("ERR_AUDIT_FAILED: artefato imutável incompatível")
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+	return s.deps.Store.Put(kind, id, value)
 }
 
 func (s *Service) fail(run *insightcontract.AnalysisRun, ctx context.Context, code string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var current insightcontract.AnalysisRun
+	if err := s.deps.Store.Get("insightruns", run.ID, &current); err == nil && isTerminal(current.State) {
+		return
+	}
 	run.Phase = "idle"
 	if ctx.Err() != nil {
 		run.State = "cancelled"
@@ -412,6 +481,8 @@ func (s *Service) GetAnalysisRun(ctx context.Context, runID string) (insightcont
 }
 
 func (s *Service) CancelAnalysis(ctx context.Context, runID string) (insightcontract.AnalysisRun, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	run, err := s.GetAnalysisRun(ctx, runID)
 	if err != nil {
 		return run, err
@@ -419,9 +490,7 @@ func (s *Service) CancelAnalysis(ctx context.Context, runID string) (insightcont
 	if isTerminal(run.State) {
 		return run, nil
 	}
-	s.mu.Lock()
 	cancel := s.jobs[runID]
-	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}

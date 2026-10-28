@@ -29,7 +29,7 @@ func TestReadInsightSourceSeparatesScopeCoverageEvidenceAndLinks(t *testing.T) {
 		Coverage: []contract.Coverage{{Source: "linear", ResourceID: "TEAM", Collection: "issues", Status: "complete", Observed: 1, Expected: nil, CheckedAt: "2026-10-28T00:00:00Z"}},
 		Issues:   []query.Issue{{ID: "ISS-1", Identifier: "TEAM-1", Source: "linear", TeamID: "TEAM", Title: "Release", State: "Backlog", Outcome: "active", EvidenceID: "ev-issue"}, {ID: "ISS-2", Identifier: "TEAM-2", Source: "linear", TeamID: "TEAM", Title: "Related", State: "Backlog", Outcome: "active", EvidenceID: "ev-issue"}, {ID: "OUT-1", Identifier: "OTHER-1", Source: "linear", TeamID: "OTHER", Title: "Outside scope", State: "Done", Outcome: "completed"}},
 		Evidence: []contract.Evidence{{ID: "ev-issue", Source: "linear", Locator: "TEAM-1", ObservedAt: "2026-10-28T00:00:00Z", SHA256: hash}},
-		Links:    []contract.LinkRecord{{ID: "formal", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "blocked_by", Status: "direct", EvidenceID: "ev-issue"}, {ID: "mention", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "mentions", Status: "direct", EvidenceID: "ev-issue"}, {ID: "fix", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-issue"}, {ID: "orphan", SourceID: "ISS-1", TargetID: "MISSING", Relation: "blocked_by", Status: "direct", EvidenceID: "ev-issue"}},
+		Links:    []contract.LinkRecord{{ID: "formal", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "blocked_by", Status: "direct", EvidenceID: "ev-issue"}, {ID: "mention", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "mentions", Status: "direct", EvidenceID: "ev-issue"}, {ID: "fix", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "declares_fix_of", Status: "direct", EvidenceID: "ev-issue"}, {ID: "orphan", SourceID: "ISS-1", TargetID: "MISSING", Relation: "blocked_by", Status: "direct", EvidenceID: "ev-issue"}, {ID: "no-evidence", SourceID: "ISS-1", TargetID: "ISS-2", Relation: "blocked_by", Status: "direct"}},
 	}
 	snapshot, dataset = sealInsightDataset(t, dataset)
 	if err := store.Put("snapshots", snapshot.ID, snapshot); err != nil {
@@ -72,7 +72,7 @@ func TestReadInsightSourceSeparatesScopeCoverageEvidenceAndLinks(t *testing.T) {
 	for _, link := range bundle.Links {
 		statuses[link.ID] = link.Status
 	}
-	if statuses["formal"] != "explicit" || statuses["mention"] != "candidate" || statuses["fix"] != "candidate" || statuses["orphan"] != "invalid" {
+	if statuses["formal"] != "explicit" || statuses["mention"] != "candidate" || statuses["fix"] != "candidate" || statuses["orphan"] != "invalid" || statuses["no-evidence"] != "invalid" {
 		t.Fatalf("status de links incorreto: %v", statuses)
 	}
 	second, err := c.ReadInsightSource(context.Background(), snapshot.ID, cfg)
@@ -194,7 +194,8 @@ func TestCoverageSidecarFreezesIntervalsAndOpaqueCheckpoint(t *testing.T) {
 	if err := store.Put("sourcecursors", cursorID, cursor); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, dataset := sealInsightDataset(t, query.Dataset{Snapshot: contract.Snapshot{Resources: []contract.Resource{resource}}, Coverage: []contract.Coverage{{Source: "linear", ResourceID: resource.ID, Collection: "issues", Status: "partial", Observed: 1}}})
+	coverage := contract.Coverage{Source: "linear", ResourceID: resource.ID, Collection: "issues", Status: "partial", Observed: 1}
+	snapshot, dataset := sealInsightDataset(t, query.Dataset{Snapshot: contract.Snapshot{Resources: []contract.Resource{resource}}, Coverage: []contract.Coverage{coverage, coverage}})
 	if err := core.freezeInsightCoverage(snapshot, plan, dataset); err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +213,9 @@ func TestCoverageSidecarFreezesIntervalsAndOpaqueCheckpoint(t *testing.T) {
 	}
 	if len(manifest.Coverage) != 1 || len(manifest.Coverage[0].HistoryCoveredIntervals) != 1 || manifest.Coverage[0].HistoryCoveredIntervals[0].Start != "2026-10-21T00:00:00Z" {
 		t.Fatalf("sidecar foi atualizado pelo cursor mutável: %+v", manifest.Coverage)
+	}
+	if len(manifest.Coverage) != 1 {
+		t.Fatalf("cobertura duplicada não foi deduplicada: %+v", manifest.Coverage)
 	}
 	if len(manifest.Queues) != 1 || manifest.Queues[0].Pending != nil || manifest.Queues[0].CheckpointID == nil || strings.Contains(*manifest.Queues[0].CheckpointID, "opaque-cursor") || strings.Contains(*manifest.Queues[0].CheckpointID, "newer-secret-cursor") {
 		t.Fatalf("fila expôs checkpoint ou converteu pending nulo: %+v", manifest.Queues)
