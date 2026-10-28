@@ -161,12 +161,53 @@ _cmd_menu() {
 }
 _cmd_doctor() { exec sh "${POCKETCLI_DIR}/tests/test_ish.sh"; }
 
-_cmd_investigate() {
-    _investigate_binary="${POCKETCLI_GO_BINARY:-${POCKETCLI_DIR}/bin/pocket-go}"
-    if [ ! -x "${_investigate_binary}" ]; then
-        die "Investigation Agent unavailable. Build with CGO_ENABLED=1 go build -tags investigate_sqlite -o ${_investigate_binary} ./cmd/pocket"
+# The Investigation Agent is a separate Go binary with the SQLite engine.
+# Nothing installs it, so on first use offer to build it from this checkout.
+# POCKETCLI_INVESTIGATE_BUILD=yes builds without asking, =no never builds.
+# An explicit POCKETCLI_GO_BINARY is never replaced by a build.
+_investigate_ensure_binary() {
+    _inv_bin="${POCKETCLI_GO_BINARY:-${POCKETCLI_DIR}/bin/pocket-go}"
+    [ -x "${_inv_bin}" ] && return 0
+    _inv_cmd="CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o ${_inv_bin} ./cmd/pocket"
+    _inv_mode="${POCKETCLI_INVESTIGATE_BUILD:-ask}"
+    if [ -n "${POCKETCLI_GO_BINARY:-}" ] || [ "${_inv_mode}" = "no" ]; then
+        die "Investigation Agent unavailable. Build with ${_inv_cmd}"
     fi
-    exec "${_investigate_binary}" investigate "$@"
+    command -v go >/dev/null 2>&1 \
+        || die "Investigation Agent unavailable and Go 1.22+ was not found. Install Go, then build with ${_inv_cmd}"
+    [ -d "${POCKETCLI_DIR}/cmd/pocket" ] \
+        || die "Investigation Agent unavailable and ${POCKETCLI_DIR}/cmd/pocket is missing. Build from a PocketCli checkout with ${_inv_cmd}"
+    command -v cc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 \
+        || die "Investigation Agent needs a C compiler (CGO) to build. Install one, then run ${_inv_cmd}"
+    if [ "${_inv_mode}" != "yes" ]; then
+        _inv_interactive=1
+        [ -t 0 ] && [ -t 2 ] || _inv_interactive=0
+        for _inv_arg in "$@"; do
+            [ "${_inv_arg}" = "--json" ] && _inv_interactive=0
+        done
+        [ "${_inv_interactive}" = "1" ] \
+            || die "Investigation Agent not built. Run ${_inv_cmd} (or set POCKETCLI_INVESTIGATE_BUILD=yes to build on demand)"
+        printf "%s" "Investigation Agent ainda não foi compilado. Compilar agora com Go + CGO (cerca de 1 minuto)? [S/n] " >&2
+        read -r _inv_answer || _inv_answer=n
+        case "${_inv_answer}" in
+            ''|s|S|sim|Sim|y|Y|yes|Yes) ;;
+            *) die "Investigation Agent not built. Run ${_inv_cmd}" ;;
+        esac
+    fi
+    mkdir -p "$(dirname "${_inv_bin}")"
+    _inv_tmp="${_inv_bin}.build.$$"
+    printf '%s\n' "[PocketCli] Compilando o Investigation Agent..." >&2
+    if ! (cd "${POCKETCLI_DIR}" && CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o "${_inv_tmp}" ./cmd/pocket) >&2; then
+        rm -f "${_inv_tmp}"
+        die "Build failed. Run it by hand to see the error: ${_inv_cmd}"
+    fi
+    mv "${_inv_tmp}" "${_inv_bin}"
+    printf '%s\n' "[PocketCli] Investigation Agent instalado em ${_inv_bin}. Depois de um pocket update, recompile com o mesmo comando." >&2
+}
+
+_cmd_investigate() {
+    _investigate_ensure_binary "$@"
+    exec "${_inv_bin}" investigate "$@"
 }
 
 _persist_command_if_needed() {
