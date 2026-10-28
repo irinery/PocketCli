@@ -208,6 +208,46 @@ func validateConfig(cfg insightcontract.AnalysisConfig) error {
 	if cfg.Provider.Kind != "none" && cfg.Provider.Kind != "configured" {
 		return errors.New("ERR_VALIDATION: provider.kind inválido")
 	}
+	if cfg.Provider.Kind == "configured" {
+		if cfg.Provider.Model == "" || cfg.Provider.AdapterVersion == "" {
+			return errors.New("ERR_VALIDATION: provider configurado exige model e adapter_version")
+		}
+	}
+	if err := validateWindow(cfg.RequestedScope.History); err != nil {
+		return fmt.Errorf("ERR_VALIDATION: history: %w", err)
+	}
+	if err := validateWindow(cfg.RequestedScope.ReportWindow); err != nil {
+		return fmt.Errorf("ERR_VALIDATION: report_window: %w", err)
+	}
+	seen := make(map[string]bool, len(cfg.RequestedScope.Resources))
+	for _, resource := range cfg.RequestedScope.Resources {
+		if resource.ID == "" || (resource.Source != "github" && resource.Source != "linear" && resource.Source != "git") {
+			return errors.New("ERR_VALIDATION: recurso sem source/id válido")
+		}
+		key := resource.Source + ":" + resource.ID
+		if seen[key] {
+			return errors.New("ERR_VALIDATION: recurso duplicado no escopo")
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
+func validateWindow(window insightcontract.Window) error {
+	start, err := time.Parse(time.RFC3339, window.Start)
+	if err != nil {
+		return errors.New("start inválido")
+	}
+	end, err := time.Parse(time.RFC3339, window.End)
+	if err != nil {
+		return errors.New("end inválido")
+	}
+	if start.Location() != time.UTC || end.Location() != time.UTC {
+		return errors.New("timestamps devem estar em UTC")
+	}
+	if !start.Before(end) {
+		return errors.New("start deve anteceder end")
+	}
 	return nil
 }
 
@@ -263,7 +303,15 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 	if !set("running", "reasoning", nil) {
 		return
 	}
-	decisions, err := s.deps.Decisions(ctx, source, facts, cfg, s.deps.Provider)
+	provider := s.deps.Provider
+	if cfg.Provider.Kind == "none" {
+		provider = nil
+	}
+	if cfg.Provider.Kind == "configured" && provider == nil {
+		s.fail(&run, ctx, "ERR_PROVIDER_UNAVAILABLE")
+		return
+	}
+	decisions, err := s.deps.Decisions(ctx, source, facts, cfg, provider)
 	if err != nil || (decisions.SnapshotID != "" && decisions.SnapshotID != run.SnapshotID) {
 		s.fail(&run, ctx, "ERR_REASONING_FAILED")
 		return
