@@ -67,16 +67,24 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 	metrics := append([]insightcontract.Metric(nil), facts.Metrics...)
 	dimensions := append([]insightcontract.DimensionStatus(nil), decisions.Dimensions...)
 	// DecisionAnalysis.Cases chega na ordem executiva definida pela análise.
-	// A apresentação preserva essa ordem e aplica o teto da política sem
-	// recalcular prioridade nem transformar a seleção em coleção completa.
-	selected := len(decisions.Cases)
+	// O teto é meta de concisão, não autorização para ocultar assessments
+	// explicitamente críticos. A seleção mantém a ordem original e pode exceder
+	// o teto quando isso for necessário para preservar esses casos.
 	if cfg.Policy.MaximumExecutiveCases < 0 {
 		return insightcontract.ExecutiveReport{}, errors.New("maximum executive cases cannot be negative")
 	}
-	if selected > cfg.Policy.MaximumExecutiveCases {
-		selected = cfg.Policy.MaximumExecutiveCases
+	selectedIDs := make(map[string]bool, len(decisions.Cases))
+	for i, decisionCase := range decisions.Cases {
+		if i < cfg.Policy.MaximumExecutiveCases || explicitlyCritical(decisionCase) {
+			selectedIDs[decisionCase.ID] = true
+		}
 	}
-	cases := append([]insightcontract.DecisionCase(nil), decisions.Cases[:selected]...)
+	cases := make([]insightcontract.DecisionCase, 0, len(selectedIDs))
+	for _, decisionCase := range decisions.Cases {
+		if selectedIDs[decisionCase.ID] {
+			cases = append(cases, decisionCase)
+		}
+	}
 	caseIDs := make([]string, len(cases))
 	for i := range cases {
 		caseIDs[i] = cases[i].ID
@@ -90,6 +98,12 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 		Metrics: metrics, Cases: cases, TotalCases: int64(len(decisions.Cases)), CaseIDs: caseIDs,
 		NextActions: []string{}, Limitations: mergeStrings(source.Limitations, facts.Limitations, decisions.Limitations),
 	}, nil
+}
+
+func explicitlyCritical(c insightcontract.DecisionCase) bool {
+	return c.Impact.State == "assessed" && c.Impact.Level == "critical" ||
+		c.Complexity.State == "assessed" && c.Complexity.Level == "critical" ||
+		c.Urgency.State == "assessed" && c.Urgency.Level == "critical"
 }
 
 func sufficiency(source insightcontract.SourceBundle, decisions insightcontract.DecisionAnalysis) string {
@@ -193,6 +207,9 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 		decisionIDs[v.ID] = true
 	}
 	for _, v := range decisions.Cases {
+		if v.ID == "" || caseIDs[v.ID] {
+			return fmt.Errorf("decision analysis contains an empty or duplicate case ID %q", v.ID)
+		}
 		caseIDs[v.ID] = true
 	}
 	objectives := map[string]bool{}

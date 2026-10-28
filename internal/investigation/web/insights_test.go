@@ -143,6 +143,10 @@ func TestAnalysisRunStartsOnlyThroughCanonicalExplicitRoute(t *testing.T) {
 	if got := client.do(http.MethodPost, "/insights/runs", `{"snapshot_id":"snap-demo-001","config":{"version":"wrong"},"idempotency_key":"x"}`, ""); got.Code != http.StatusBadRequest {
 		t.Fatalf("invalid config status: %d %s", got.Code, got.Body.String())
 	}
+	withCredentialField := `{"snapshot_id":"snap-demo-001","config":{"version":"investigate.insights.v1","provider":{"kind":"configured","api_key":"synthetic-secret"}},"idempotency_key":"credential-field"}`
+	if got := client.do(http.MethodPost, "/insights/runs", withCredentialField, ""); got.Code != http.StatusBadRequest {
+		t.Fatalf("credential-like unknown config field status: %d %s", got.Code, got.Body.String())
+	}
 	if fake.starts != 1 {
 		t.Fatalf("invalid config reached controller: %d", fake.starts)
 	}

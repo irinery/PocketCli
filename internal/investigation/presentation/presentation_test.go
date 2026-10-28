@@ -60,12 +60,14 @@ func TestBuildAppliesExecutiveSelectionLimitWithoutChangingTotal(t *testing.T) {
 		t.Fatal("fixture needs at least two cases")
 	}
 	original := append([]insightcontract.DecisionCase(nil), fixture.Analysis.Cases...)
+	criticalID := original[len(original)-1].ID
+	fixture.Analysis.Cases[len(fixture.Analysis.Cases)-1].Urgency = insightcontract.Assessment{State: "assessed", Level: "critical", Rationale: "Criticidade explicitamente marcada."}
 	fixture.Config.Policy.MaximumExecutiveCases = 1
 	report, err := Build(fixture.Source, fixture.Facts, fixture.Analysis, fixture.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Cases) != 1 || report.TotalCases != int64(len(original)) || report.CaseIDs[0] != original[0].ID {
+	if len(report.Cases) != 2 || report.TotalCases != int64(len(original)) || report.CaseIDs[0] != original[0].ID || report.CaseIDs[1] != criticalID {
 		t.Fatalf("selection/total/order mismatch: selected=%v total=%d original=%d", report.CaseIDs, report.TotalCases, len(original))
 	}
 	fixture.Config.Policy.MaximumExecutiveCases = -1

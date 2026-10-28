@@ -97,7 +97,7 @@ func TestExecutiveOverviewDoesNotPreloadLegacyCollectionsOrAllReportPages(t *tes
 
 func TestExecutiveUIShowsMetricContextAndEvidenceIntegrityFields(t *testing.T) {
 	js := realAppJS("investigation-demo", "snap-demo-001")
-	for _, required := range []string{"item.cohort_id", "item.method", "item.limitations", "item.content_hash", "item.excerpt_hash", "item.sanitization_version", "item.source_updated_at"} {
+	for _, required := range []string{"item.cohort_id", "item.method", "item.limitations", "item.content_hash", "item.excerpt_hash", "item.sanitization_version", "item.source_updated_at", "labelPt(value.state) + ' · ' + labelPt(value.level"} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("executive UI omits %s", required)
 		}
@@ -117,6 +117,55 @@ func TestAnalysisUIHasExplicitEmptyStartAndBoundedTerminalPolling(t *testing.T) 
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("analysis UI omits behavior marker %q", required)
+		}
+	}
+}
+
+func TestExecutiveListsRejectCursorCyclesAndDuplicateIDsAcrossPages(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	for _, required := range []string{
+		"analysisPages.requested.has(page.next_cursor)",
+		"analysisPages.ids.has(item.id)",
+		"pageState.requested.has(page.next_cursor)",
+		"pageState.ids.has(item.id)",
+		"pageState.lastID",
+		"O total de análises mudou durante a paginação.",
+	} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("paginated executive UI omits guard %q", required)
+		}
+	}
+}
+
+func TestAnalysisConfigInputWhitelistsCanonicalFieldsBeforeRequest(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	for _, required := range []string{
+		"const analysisConfigFromFile = raw =>",
+		"onlyKeys(raw.provider, ['kind', 'model', 'endpoint_profile', 'adapter_version']",
+		"credenciais e campos extras não são enviados",
+		"analysisConfigFromFile(JSON.parse(await configFile.files[0].text()))",
+		"write('/insights/runs', {snapshot_id: snapshot.id, config, idempotency_key",
+	} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("config input flow omits %q", required)
+		}
+	}
+}
+
+func TestProgressiveNavigationShowsLoadingEmptyAndIncompletePageErrors(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	for _, required := range []string{
+		"Carregando snapshot e análises disponíveis…",
+		"Carregando relatório executivo…",
+		"Carregando casos…",
+		"Carregando evidências e timeline do caso…",
+		"Não há casos nesta página.",
+		"A paginação terminou antes de carregar todas as análises.",
+		"A paginação terminou antes de carregar todos os casos.",
+		"Gerando PDF e validando os dados da análise…",
+	} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("progressive navigation omits state %q", required)
 		}
 	}
 }

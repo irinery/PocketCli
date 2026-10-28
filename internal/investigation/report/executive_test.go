@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"pocketcli/internal/investigation/insightcontract"
 )
@@ -307,6 +308,51 @@ func TestCaseDetailLayoutKeepsIDsTimelineScopeAndEvidenceHashes(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("case detail PDF layout omits %q", want)
+		}
+	}
+}
+
+func TestExecutivePDFLayoutKeepsStatusesSelectionAndInsufficiencyWarning(t *testing.T) {
+	report, _ := executiveFixture(t)
+	report.Cases = report.Cases[:1]
+	report.CaseIDs = report.CaseIDs[:1]
+	layout, err := layoutExecutive(context.Background(), report, nil, "executive", time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := layout.text()
+	for _, want := range []string{
+		"ID da análise: " + report.AnalysisID,
+		"Estado da análise: parcial",
+		"Publicação: pronta",
+		"Suficiência: insuficiente",
+		"Apresentação: " + executiveRendererVersion,
+		"Aviso: a análise não tem suficiência plena.",
+		"Esta seleção é parcial.",
+		"de 3 casos selecionados.",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("executive PDF layout omits %q", want)
+		}
+	}
+}
+
+func TestCaseAssessmentsKeepStateDistinctFromLevel(t *testing.T) {
+	l := newPDFLayout()
+	renderDecisionCase(l, insightcontract.DecisionCase{
+		ID: "case-assessment", Title: "Assessment states",
+		Impact:     insightcontract.Assessment{State: "not_applicable", Level: "unknown", Rationale: "Não se aplica."},
+		Complexity: insightcontract.Assessment{State: "indeterminate", Level: "unknown", Rationale: "Falta evidência."},
+		Urgency:    insightcontract.Assessment{State: "assessed", Level: "low", Rationale: "Sem prazo próximo."},
+		Confidence: insightcontract.Assessment{State: "indeterminate", Level: "unknown", Rationale: "Baixa base."},
+	})
+	text := l.text()
+	for _, want := range []string{
+		"Impacto: não aplicável · desconhecido", "Complexidade: indeterminada · desconhecido",
+		"Urgência: avaliado · baixo", "Confiança: indeterminada · desconhecido",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("assessment state/level distinction omitted %q", want)
 		}
 	}
 }
