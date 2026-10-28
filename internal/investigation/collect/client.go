@@ -237,7 +237,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 					return err
 				}
 				if status == http.StatusUnauthorized || status == http.StatusForbidden {
-					return &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: "leitura negada pela fonte"}
+					return deniedError(source, status)
 				}
 				return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "fonte retornou conteúdo com credencial"}
 			}
@@ -340,7 +340,7 @@ func (c *Client) request(ctx context.Context, source, method, endpoint string, b
 		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite GitHub atingido", Retryable: true}
 	}
 	if status == 401 || status == 403 {
-		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: "leitura negada pela fonte"}
+		return nil, nil, status, wireBytes, deniedError(source, status)
 	}
 	if status == 429 {
 		return nil, nil, status, wireBytes, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite da fonte atingido", Retryable: true}
@@ -567,6 +567,12 @@ func (c *Client) LinearQuery(ctx context.Context, query string, variables map[st
 			if e.Extensions.Code == "RATELIMITED" {
 				return nil, &contract.ErrorResponse{Code: "ERR_RATE_LIMITED", Message: "limite Linear atingido", Retryable: true}
 			}
+			if e.Extensions.Code == "AUTHENTICATION_ERROR" {
+				return nil, deniedError("linear", http.StatusUnauthorized)
+			}
+			if e.Extensions.Code == "FORBIDDEN" {
+				return nil, deniedError("linear", http.StatusForbidden)
+			}
 		}
 		return nil, &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "GraphQL retornou erro parcial"}
 	}
@@ -574,4 +580,22 @@ func (c *Client) LinearQuery(ctx context.Context, query string, variables map[st
 		return nil, errors.New("GraphQL sem data")
 	}
 	return envelope.Data, nil
+}
+
+// deniedError says which source refused and why. 401 means the source does
+// not accept the key (wrong, expired or revoked); 403 means it accepts the key
+// but the key cannot read the resource. The code stays ERR_FORBIDDEN.
+func deniedError(source string, status int) error {
+	name := "GitHub"
+	if source == "linear" {
+		name = "Linear"
+	}
+	if status == http.StatusUnauthorized {
+		return &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: name + " recusou a chave (HTTP 401): inválida, expirada ou revogada"}
+	}
+	message := name + " negou a leitura (HTTP 403): a chave não tem permissão para este recurso"
+	if source == "github" {
+		message += " ou o SSO da organização ainda não autorizou o token"
+	}
+	return &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: message}
 }

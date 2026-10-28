@@ -802,6 +802,11 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 			continue
 		}
 		value := os.Getenv(source.env)
+		if value != "" && allowPrompt {
+			// Say it: a key from the environment skips the prompt, and a stale
+			// one (revoked, from an old session) is a common reason for a refusal.
+			fmt.Fprintf(os.Stderr, "Chave %s: usando %s do ambiente\n", source.name, source.env)
+		}
 		if value == "" {
 			if !allowPrompt {
 				return &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: source.env + " ausente"}
