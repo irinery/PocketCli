@@ -351,8 +351,11 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 		if !entityIDs[link.SourceID] || (allEntityIDs[link.TargetID] && !entityIDs[link.TargetID]) {
 			continue
 		}
-		status := "explicit"
-		if link.Relation == "mentions" || link.Relation == "declares_fix_of" || link.Status == "candidate" {
+		status := "candidate"
+		if link.Status == "direct" && isExplicitSourceRelation(link.Relation) {
+			status = "explicit"
+		}
+		if link.Status == "candidate" {
 			status = "candidate"
 		}
 		evIDs := evidenceList(link.EvidenceID)
@@ -457,6 +460,15 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 	}
 	bundle.InputHash = storage.Hash(canonical)
 	return bundle, nil
+}
+
+func isExplicitSourceRelation(relation string) bool {
+	switch relation {
+	case "blocked_by", "belongs_to_project", "contains_manifest", "declares_service", "depends_on", "includes_commit", "modifies_file", "references_pr":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Core) insightEvidence(item contract.Evidence, policy insightcontract.Policy) insightcontract.EvidenceView {
