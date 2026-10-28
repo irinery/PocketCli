@@ -42,6 +42,38 @@ func TestBuildUsesFixtureWithoutInventingMetrics(t *testing.T) {
 	}
 }
 
+func TestBuildAppliesExecutiveSelectionLimitWithoutChangingTotal(t *testing.T) {
+	raw, err := os.ReadFile("../insightcontract/testdata/fixture_go.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Config   insightcontract.AnalysisConfig   `json:"config"`
+		Source   insightcontract.SourceBundle     `json:"source"`
+		Facts    insightcontract.FactsResult      `json:"facts"`
+		Analysis insightcontract.DecisionAnalysis `json:"analysis"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Analysis.Cases) < 2 {
+		t.Fatal("fixture needs at least two cases")
+	}
+	original := append([]insightcontract.DecisionCase(nil), fixture.Analysis.Cases...)
+	fixture.Config.Policy.MaximumExecutiveCases = 1
+	report, err := Build(fixture.Source, fixture.Facts, fixture.Analysis, fixture.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Cases) != 1 || report.TotalCases != int64(len(original)) || report.CaseIDs[0] != original[0].ID {
+		t.Fatalf("selection/total/order mismatch: selected=%v total=%d original=%d", report.CaseIDs, report.TotalCases, len(original))
+	}
+	fixture.Config.Policy.MaximumExecutiveCases = -1
+	if _, err := Build(fixture.Source, fixture.Facts, fixture.Analysis, fixture.Config); err == nil {
+		t.Fatal("expected negative executive case limit rejection")
+	}
+}
+
 func TestBuildRejectsMissingReference(t *testing.T) {
 	raw, err := os.ReadFile("../insightcontract/testdata/fixture_go.json")
 	if err != nil {

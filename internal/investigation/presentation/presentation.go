@@ -44,7 +44,17 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 	questions := append([]insightcontract.QuestionCoverage(nil), source.Questions...)
 	metrics := append([]insightcontract.Metric(nil), facts.Metrics...)
 	dimensions := append([]insightcontract.DimensionStatus(nil), decisions.Dimensions...)
-	cases := append([]insightcontract.DecisionCase(nil), decisions.Cases...)
+	// DecisionAnalysis.Cases chega na ordem executiva definida pela análise.
+	// A apresentação preserva essa ordem e aplica o teto da política sem
+	// recalcular prioridade nem transformar a seleção em coleção completa.
+	selected := len(decisions.Cases)
+	if cfg.Policy.MaximumExecutiveCases < 0 {
+		return insightcontract.ExecutiveReport{}, errors.New("maximum executive cases cannot be negative")
+	}
+	if selected > cfg.Policy.MaximumExecutiveCases {
+		selected = cfg.Policy.MaximumExecutiveCases
+	}
+	cases := append([]insightcontract.DecisionCase(nil), decisions.Cases[:selected]...)
 	caseIDs := make([]string, len(cases))
 	for i := range cases {
 		caseIDs[i] = cases[i].ID

@@ -95,6 +95,15 @@ func TestExecutiveOverviewDoesNotPreloadLegacyCollectionsOrAllReportPages(t *tes
 	}
 }
 
+func TestExecutiveUIShowsMetricContextAndEvidenceIntegrityFields(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	for _, required := range []string{"item.cohort_id", "item.method", "item.limitations", "item.content_hash", "item.excerpt_hash", "item.sanitization_version", "item.source_updated_at"} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("executive UI omits %s", required)
+		}
+	}
+}
+
 func TestRealSQLConsoleUsesSupportedQueryDefaults(t *testing.T) {
 	js := realAppJS("investigation-demo", "snap-demo-001")
 	if !strings.Contains(js, "const manualSQL = 'SELECT id, window_start, window_end FROM v_snapshot'") ||
