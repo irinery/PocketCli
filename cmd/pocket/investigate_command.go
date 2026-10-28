@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,8 +27,8 @@ import (
 )
 
 func newInvestigateCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "investigate", Short: "Investiga histórico autorizado com snapshots locais", RunE: runInvestigation}
-	cmd.AddCommand(&cobra.Command{Use: "doctor", RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "investigate [flags]", Short: "Investiga histórico autorizado com snapshots locais", Long: investigateHelp, Example: investigateExamples, RunE: runInvestigation}
+	cmd.AddCommand(&cobra.Command{Use: "doctor", Short: "Confere motor SQLite, chaves de API e PDF", RunE: func(cmd *cobra.Command, args []string) error {
 		root, err := os.MkdirTemp("", "pocketcli-investigate-doctor-")
 		if err != nil {
 			return err
@@ -42,6 +43,13 @@ func newInvestigateCommand() *cobra.Command {
 		} else {
 			fmt.Fprintln(cmd.OutOrStdout(), "investigate: Viewer; compile Agent com CGO_ENABLED=1 e -tags investigate_sqlite")
 		}
+		for _, api := range []struct{ name, env string }{{"GitHub", "POCKETCLI_INVESTIGATE_GITHUB_TOKEN"}, {"Linear", "POCKETCLI_INVESTIGATE_LINEAR_KEY"}} {
+			if os.Getenv(api.env) != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "investigate: API %s: chave em %s\n", api.name, api.env)
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "investigate: API %s: sem %s; a chave será pedida no prompt\n", api.name, api.env)
+			}
+		}
 		if _, err := report.New(c, filepath.Join(root, "reports"), false, nil, nil, nil); err != nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "investigate: PDF indisponível: %v\n", err)
 		} else {
@@ -49,7 +57,7 @@ func newInvestigateCommand() *cobra.Command {
 		}
 		return nil
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "stats RUN_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "stats RUN_ID", Short: "Mostra requests, bytes e itens de um run", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := newInvestigationCore(secrets.NewSessionStore())
 		if err != nil {
 			return err
@@ -60,7 +68,7 @@ func newInvestigateCommand() *cobra.Command {
 		}
 		return writeJSON(cmd.OutOrStdout(), stats)
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "start PLAN_ID --confirm CÓDIGO", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "start PLAN_ID -c CÓDIGO", Short: "Inicia um plano já preparado", Args: cobra.MinimumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		f, err := parseInvestigationFlags(args[1:])
 		if err != nil {
 			return err
@@ -84,13 +92,13 @@ func newInvestigateCommand() *cobra.Command {
 		if _, err := rand.Read(key[:]); err != nil {
 			return err
 		}
-		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: expandPlanConfirmation(f.confirm, plan.Hash), IdempotencyKey: hex.EncodeToString(key[:])})
+		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: startConfirmation(f, plan.Hash), IdempotencyKey: hex.EncodeToString(key[:])})
 		if err != nil {
 			return err
 		}
 		return waitInvestigation(cmd, c, run, f.json)
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "resume RUN_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "resume RUN_ID", Short: "Retoma um run pausado", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		store := secrets.NewSessionStore()
 		c, err := newInvestigationCore(store)
 		if err != nil {
@@ -116,8 +124,8 @@ func newInvestigateCommand() *cobra.Command {
 		}
 		return waitInvestigation(cmd, c, run, false)
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "refresh INVESTIGATION_ID", Args: cobra.MinimumNArgs(1), RunE: runRefresh})
-	cmd.AddCommand(&cobra.Command{Use: "import-runtime INVESTIGATION_ID FILE", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "refresh INVESTIGATION_ID", Short: "Atualiza uma investigação com novo plano", Args: cobra.MinimumNArgs(1), RunE: runRefresh})
+	cmd.AddCommand(&cobra.Command{Use: "import-runtime INVESTIGATION_ID FILE", Short: "Importa o estado de runtime (local, sem API)", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		file, err := os.Open(args[1])
 		if err != nil {
 			return err
@@ -138,16 +146,39 @@ func newInvestigateCommand() *cobra.Command {
 		fmt.Fprintln(cmd.OutOrStdout(), "runtime_import="+hash)
 		return nil
 	}})
-	cmd.AddCommand(&cobra.Command{Use: "serve INVESTIGATION_ID", Args: cobra.MinimumNArgs(1), RunE: serveInvestigation})
-	cmd.AddCommand(&cobra.Command{Use: "report INVESTIGATION_ID", Args: cobra.MinimumNArgs(1), RunE: reportInvestigation})
+	cmd.AddCommand(&cobra.Command{Use: "show INVESTIGATION_ID [issues|prs|findings|events|coverage|sql \"SELECT …\"]", Short: "Mostra no terminal o que a coleta real extraiu", Args: cobra.MinimumNArgs(1), RunE: showInvestigation})
+	cmd.AddCommand(&cobra.Command{Use: "serve INVESTIGATION_ID", Short: "Abre a interface web local", Args: cobra.MinimumNArgs(1), RunE: serveInvestigation})
+	cmd.AddCommand(&cobra.Command{Use: "report INVESTIGATION_ID", Short: "Gera o PDF do último snapshot (local)", Args: cobra.MinimumNArgs(1), RunE: reportInvestigation})
 	return cmd
 }
 
 type investigationFlags struct {
-	scope, period, from, to, timezone, confirm, investigation string
-	repos, teams                                              []string
-	noGitHub, noLinear, json, prepare                         bool
-	discoveryBudget                                           int
+	scope, period, since, from, to, timezone, confirm, investigation string
+	repos, teams                                                     []string
+	github, linear, noGitHub, noLinear, json, prepare, yes           bool
+	discoveryBudget                                                  int
+}
+
+// shortInvestigationFlags are the one-letter forms of the flags typed most.
+var shortInvestigationFlags = map[string]string{"-p": "--period", "-r": "--repo", "-t": "--team", "-c": "--confirm", "-s": "--source"}
+
+// investigationValueFlags are the flags that take a value.
+var investigationValueFlags = map[string]bool{"--scope": true, "--period": true, "--since": true, "--from": true, "--to": true, "--until": true, "--timezone": true, "--confirm": true, "--investigation": true, "--discovery-budget": true, "--repo": true, "--team": true, "--source": true}
+
+var isoDateFlag = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// investigationNow is replaced by tests that need a fixed "today".
+var investigationNow = time.Now
+
+// splitFlagList turns "a,b" into ["a","b"]; repeated flags append.
+func splitFlagList(value string) []string {
+	out := []string{}
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func parseInvestigationFlags(args []string) (investigationFlags, error) {
@@ -164,12 +195,27 @@ func parseInvestigationFlags(args []string) (investigationFlags, error) {
 		case "--json":
 			f.json = true
 			continue
-		case "--prepare":
+		case "--prepare", "--plan":
 			f.prepare = true
+			continue
+		case "--yes", "-y":
+			f.yes = true
+			continue
+		case "--github":
+			f.github = true
+			continue
+		case "--linear":
+			f.linear = true
 			continue
 		}
 		parts := strings.SplitN(a, "=", 2)
 		name := parts[0]
+		if long, ok := shortInvestigationFlags[name]; ok {
+			name = long
+		}
+		if !investigationValueFlags[name] {
+			return f, fmt.Errorf("flag inválida: %s (veja pocket investigate --help)", name)
+		}
 		value := ""
 		if len(parts) == 2 {
 			value = parts[1]
@@ -185,9 +231,11 @@ func parseInvestigationFlags(args []string) (investigationFlags, error) {
 			f.scope = value
 		case "--period":
 			f.period = value
+		case "--since":
+			f.since = value
 		case "--from":
 			f.from = value
-		case "--to":
+		case "--to", "--until":
 			f.to = value
 		case "--timezone":
 			f.timezone = value
@@ -201,15 +249,77 @@ func parseInvestigationFlags(args []string) (investigationFlags, error) {
 				return f, fmt.Errorf("--discovery-budget deve ser um inteiro positivo")
 			}
 			f.discoveryBudget = budget
+		case "--source":
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "github", "git":
+				f.github = true
+			case "linear":
+				f.linear = true
+			case "both", "ambos", "all":
+				f.github, f.linear = true, true
+			default:
+				return f, fmt.Errorf("ERR_VALIDATION: --source aceita github, linear ou both")
+			}
 		case "--repo":
-			f.repos = append(f.repos, value)
+			f.repos = append(f.repos, splitFlagList(value)...)
 		case "--team":
-			f.teams = append(f.teams, value)
+			f.teams = append(f.teams, splitFlagList(value)...)
 		default:
-			return f, fmt.Errorf("flag inválida: %s", name)
+			return f, fmt.Errorf("flag inválida: %s (veja pocket investigate --help)", name)
 		}
 	}
+	if f.yes && (f.prepare || f.confirm != "") {
+		return f, fmt.Errorf("ERR_VALIDATION: --yes não combina com --plan nem --confirm")
+	}
+	if f.since != "" {
+		if f.period != "" || f.from != "" {
+			return f, fmt.Errorf("ERR_VALIDATION: --since não combina com --period nem --from")
+		}
+		if isoDateFlag.MatchString(f.since) {
+			// "--since 2026-09-01" is a custom window up to today.
+			f.period, f.from = "custom", f.since
+			if f.to == "" {
+				zone := f.timezone
+				if zone == "" {
+					zone = "America/Sao_Paulo"
+				}
+				loc, err := time.LoadLocation(zone)
+				if err != nil {
+					loc = time.UTC
+				}
+				f.to = investigationNow().In(loc).Format("2006-01-02")
+			}
+		} else {
+			f.period = f.since
+		}
+		f.since = ""
+	}
 	return f, nil
+}
+
+// selectInvestigationSources makes a selector imply its source: --team alone
+// means Linear only and --repo alone means GitHub only, so the common call
+// needs no --no-github/--no-linear. --github and --linear add a source
+// explicitly. Nothing selected keeps both sources. It returns a one-line
+// explanation, or "" when the default (both sources) applies.
+func selectInvestigationSources(f *investigationFlags) (string, error) {
+	wantGitHub := f.github || len(f.repos) > 0
+	wantLinear := f.linear || len(f.teams) > 0
+	if wantGitHub && f.noGitHub {
+		return "", fmt.Errorf("ERR_VALIDATION: --github/--repo conflita com --no-github")
+	}
+	if wantLinear && f.noLinear {
+		return "", fmt.Errorf("ERR_VALIDATION: --linear/--team conflita com --no-linear")
+	}
+	switch {
+	case wantGitHub && !wantLinear:
+		f.noLinear = true
+		return "Fontes: só GitHub (por --repo/--github). Inclua o Linear com --linear.", nil
+	case wantLinear && !wantGitHub:
+		f.noGitHub = true
+		return "Fontes: só Linear (por --team/--linear). Inclua o GitHub com --github.", nil
+	}
+	return "", nil
 }
 
 func runInvestigation(cmd *cobra.Command, args []string) error {
@@ -228,7 +338,9 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		return &contract.ErrorResponse{Code: "ERR_UNAVAILABLE", Message: "motor completo indisponível; compile com CGO_ENABLED=1 e -tags investigate_sqlite"}
 	}
 	interactive := term.IsTerminal(int(os.Stdin.Fd())) && !f.json
+	wizardRan := false
 	if shouldPromptInvestigationWizard(f, interactive) {
+		wizardRan = true
 		input, err = promptInvestigationWizard(os.Stdin, os.Stderr, input)
 		if err != nil {
 			return err
@@ -249,6 +361,12 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 			return e
 		}
 		input = parsed.Input
+	}
+	sourcesNote := ""
+	if f.scope == "" && !wizardRan {
+		if sourcesNote, err = selectInvestigationSources(&f); err != nil {
+			return err
+		}
 	}
 	input, overrides, err := applyInvestigationFlags(input, f)
 	if err != nil {
@@ -297,7 +415,19 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		if f.prepare {
 			return writeJSON(cmd.OutOrStdout(), plan)
 		}
+		if f.yes {
+			// The plan runs unreviewed: keep it in the log.
+			if err := json.NewEncoder(os.Stderr).Encode(struct {
+				Type string        `json:"type"`
+				Plan contract.Plan `json:"plan"`
+			}{Type: "plan", Plan: plan}); err != nil {
+				return err
+			}
+		}
 	} else {
+		if sourcesNote != "" {
+			fmt.Fprintln(cmd.OutOrStdout(), newPalette(cmd.OutOrStdout()).dim(sourcesNote))
+		}
 		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
 			return err
 		}
@@ -309,9 +439,12 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	confirm := f.confirm
+	if f.yes {
+		confirm = plan.Hash
+	}
 	if confirm == "" {
 		if !interactive {
-			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano)"}
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano) ou --yes"}
 		}
 		confirm, err = promptLine("Digite " + planCode(plan.Hash) + " para iniciar (Enter cancela): ")
 		if err != nil {
@@ -398,6 +531,15 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		if f.prepare {
 			return writeJSON(cmd.OutOrStdout(), plan)
 		}
+		if f.yes {
+			// The plan runs unreviewed: keep it in the log.
+			if err := json.NewEncoder(os.Stderr).Encode(struct {
+				Type string        `json:"type"`
+				Plan contract.Plan `json:"plan"`
+			}{Type: "plan", Plan: plan}); err != nil {
+				return err
+			}
+		}
 	} else {
 		if err := printInvestigationOverrides(cmd.OutOrStdout(), overrides); err != nil {
 			return err
@@ -410,9 +552,12 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	confirm := f.confirm
+	if f.yes {
+		confirm = plan.Hash
+	}
 	if confirm == "" {
 		if !interactive {
-			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano)"}
+			return &contract.ErrorResponse{Code: "ERR_CONFIRMATION_REQUIRED", Message: "confirme com --confirm CÓDIGO (8 primeiros caracteres do hash do plano) ou --yes"}
 		}
 		confirm, err = promptLine("Digite " + planCode(plan.Hash) + " para iniciar (Enter cancela): ")
 		if err != nil {
@@ -516,6 +661,7 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s %s\n", p.cyan("●"), p.bold(title), p.dim("· código ")+p.bold(p.yellow(planCode(plan.Hash))))
+	b.WriteString(row("APIs", investigationAPIsLine(input, p)))
 	b.WriteString(row("Janela", formatWindow(plan.WindowStart, plan.WindowEnd, input.Period)))
 	b.WriteString(row("Recursos", strings.Join(resources, p.dim(" · "))))
 	if len(modules) > 0 {
@@ -538,6 +684,33 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 	}
 	_, err = io.WriteString(out, b.String())
 	return err
+}
+
+// investigationAPIsLine states which remote APIs the run will call and with
+// which keys, so API use is never implicit.
+func investigationAPIsLine(input contract.PlanInput, p palette) string {
+	var apis, keys []string
+	if input.GitHubEnabled {
+		apis = append(apis, "GitHub")
+		keys = append(keys, "POCKETCLI_INVESTIGATE_GITHUB_TOKEN")
+	}
+	if input.LinearEnabled {
+		apis = append(apis, "Linear")
+		keys = append(keys, "POCKETCLI_INVESTIGATE_LINEAR_KEY")
+	}
+	if len(apis) == 0 {
+		return p.dim("nenhuma — somente importação local, sem chamadas de rede")
+	}
+	return p.bold(strings.Join(apis, " + ")) + p.dim(" · somente leitura · chave: "+strings.Join(keys, ", "))
+}
+
+// startConfirmation is the hash sent to StartRun: --yes confirms the plan
+// as prepared, otherwise the typed code (or full hash) is expanded.
+func startConfirmation(f investigationFlags, hash string) string {
+	if f.yes {
+		return hash
+	}
+	return expandPlanConfirmation(f.confirm, hash)
 }
 
 // planCode is the short form of the plan hash the operator types to start.
@@ -634,7 +807,7 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 				return &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: source.env + " ausente"}
 			}
 			fmt.Fprintln(os.Stderr, source.hint)
-			fmt.Fprint(os.Stderr, "Chave "+source.name+": ")
+			fmt.Fprint(os.Stderr, "Chave "+source.name+" (ou defina "+source.env+"; usada só para ler a API, nunca gravada): ")
 			data, err := term.ReadPassword(int(os.Stdin.Fd()))
 			fmt.Fprintln(os.Stderr)
 			if err != nil {
@@ -656,6 +829,10 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonM
 	if !jsonMode {
 		bar = newProgressBar(cmd.OutOrStdout())
 		defer bar.done()
+		if plan, err := c.LoadPlan(run.PlanID); err == nil {
+			p := newPalette(cmd.OutOrStdout())
+			fmt.Fprintln(cmd.OutOrStdout(), p.dim("Coletando pelas APIs: ")+investigationAPIsLine(plan.Input, p))
+		}
 	}
 	finish := func(completed contract.Run) error {
 		if jsonMode {
@@ -719,7 +896,16 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonM
 					if plan, err := c.LoadPlan(run.PlanID); err == nil {
 						investigationID = plan.InvestigationID
 					}
-					bar.finish(run, investigationID)
+					var rows [][2]string
+					if run.SnapshotID != "" && run.State != "failed" && run.State != "cancelled" {
+						rows = collectedRows(context.Background(), c, run.SnapshotID, bar.palette)
+					}
+					bar.finish(run, investigationID, rows)
+					if !bar.live {
+						for _, row := range rows {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", strings.ToLower(row[0]), row[1])
+						}
+					}
 				}
 			}
 			switch run.State {
@@ -736,3 +922,39 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonM
 		}
 	}
 }
+
+const investigateHelp = `Coleta, pelas APIs do GitHub e do Linear (somente leitura), o histórico autorizado
+e publica um snapshot local com SQL, interface web e PDF.
+
+Por padrão usa as duas APIs, com as chaves POCKETCLI_INVESTIGATE_GITHUB_TOKEN e
+POCKETCLI_INVESTIGATE_LINEAR_KEY (ou prompt sem eco). Escolher só --team usa só o
+Linear; escolher só --repo usa só o GitHub. Antes de coletar, o plano mostra as APIs
+e pede o código de 8 caracteres.
+
+Flags:
+  -p, --period P     janela: 12h, 7d, 30d, 90d, 1y, all ou custom
+      --since P|DATA igual a --period; uma data AAAA-MM-DD vai até hoje
+      --until DATA   fim da janela com data (igual a --to)
+  -r, --repo R       owner/repo; repita ou separe por vírgula
+  -t, --team T       chave ou ID de team Linear; repita ou separe por vírgula
+      --github       inclui o GitHub (todos os repositórios autorizados)
+      --linear       inclui o Linear (todos os teams autorizados)
+      --no-github    exclui o GitHub
+      --no-linear    exclui o Linear
+      --plan         mostra o plano e para (igual a --prepare)
+  -s, --source S     github, linear ou both (atalho para --github/--linear)
+  -c, --confirm COD  código do plano (8 primeiros caracteres do hash) ou hash completo
+  -y, --yes          mostra o plano e coleta sem pedir o código (um passo só)
+      --scope ARQ    YAML de escopo (ou - para stdin)
+      --timezone TZ  fuso da janela (padrão America/Sao_Paulo)
+      --json         saída estruturada para scripts`
+
+const investigateExamples = `  pocket investigate                                 # assistente interativo
+  pocket investigate -t ENG --since 12h              # só Linear, time ENG, últimas 12h
+  pocket investigate -r owner/repo -p 30d            # só GitHub
+  pocket investigate -r owner/repo -t ENG --since 2026-09-01
+  pocket investigate --github --linear -p 90d        # tudo que a chave enxerga
+  pocket investigate -s linear -p 7d -y              # um passo só: plano + coleta
+  pocket investigate -t ENG --since 7d --plan        # só mostra o plano
+  pocket investigate start PLAN_ID -c CODIGO         # inicia um plano preparado
+  pocket investigate show ID issues -n 20            # vê no terminal o que foi extraído`
