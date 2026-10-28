@@ -78,7 +78,7 @@ func (b *progressBar) done() {
 
 // finish prints the outcome under the bar: what ended, where the data is and
 // the next command. investigationID may be empty when the plan is unreadable.
-func (b *progressBar) finish(run contract.Run, investigationID string) {
+func (b *progressBar) finish(run contract.Run, investigationID string, details [][2]string) {
 	if !b.live {
 		return
 	}
@@ -96,14 +96,22 @@ func (b *progressBar) finish(run contract.Run, investigationID string) {
 		}
 		fmt.Fprintf(b.out, "%s %s  %s\n", p.green("✓"), p.bold(outcome), stats)
 		row("Snapshot", run.SnapshotID)
+		for _, detail := range details {
+			row(detail[0], detail[1])
+		}
 		if investigationID != "" {
-			row("Abrir", p.cyan("pocket investigate serve "+investigationID))
+			row("Ver dados", p.cyan("pocket investigate show "+investigationID))
+			row("Abrir na UI", p.cyan("pocket investigate serve "+investigationID))
 		}
 	case "report_failed":
 		fmt.Fprintf(b.out, "%s %s  %s\n", p.yellow("!"), p.bold("Snapshot pronto, PDF pendente"), stats)
 		row("Snapshot", run.SnapshotID)
+		for _, detail := range details {
+			row(detail[0], detail[1])
+		}
 		if investigationID != "" {
 			row("Gerar PDF", p.cyan("pocket investigate report "+investigationID))
+			row("Ver dados", p.cyan("pocket investigate show "+investigationID))
 		}
 	case "paused":
 		fmt.Fprintf(b.out, "%s %s  %s\n", p.yellow("⏸"), p.bold("Investigação pausada"), stats)
