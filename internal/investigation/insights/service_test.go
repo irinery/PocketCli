@@ -124,6 +124,17 @@ func TestServiceRunsAsyncIdempotentlyAndPagesCases(t *testing.T) {
 	if _, err := svc.ListInsightCases(context.Background(), "snap-1", "other-analysis", all.NextCursor, 1); err == nil {
 		t.Fatal("cursor de outra análise aceito")
 	}
+	analyses, err := svc.ListAnalyses(context.Background(), "snap-1", "", 1)
+	if err != nil || analyses.Total != 1 || len(analyses.Items) != 1 || analyses.Items[0].ID != *completed.AnalysisID {
+		t.Fatalf("listagem de análises: %+v err=%v", analyses, err)
+	}
+	detail, err := svc.GetInsightCase(context.Background(), "snap-1", *completed.AnalysisID, "case-a")
+	if err != nil || detail.Case.ID != "case-a" || len(detail.Facts) != 1 || detail.Facts[0].ID != "f1" {
+		t.Fatalf("detalhe de caso: %+v err=%v", detail, err)
+	}
+	if _, err := svc.GetInsightCase(context.Background(), "different-snapshot", *completed.AnalysisID, "case-a"); err == nil {
+		t.Fatal("leitura de análise em outro snapshot foi aceita")
+	}
 	report, err := svc.GetExecutiveReport(context.Background(), "snap-1", *completed.AnalysisID)
 	if err != nil || report.AnalysisID != *completed.AnalysisID || report.TotalCases != 2 {
 		t.Fatalf("report: %+v err=%v", report, err)
