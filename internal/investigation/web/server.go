@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,6 +371,30 @@ func validExecutiveReport(report insightcontract.ExecutiveReport) bool {
 		seen[c.ID] = true
 	}
 	return true
+}
+
+func validExecutiveArtifact(artifact insightcontract.ExecutiveArtifact) bool {
+	if artifact.ID == "" || artifact.SnapshotID == "" || artifact.AnalysisID == "" ||
+		(artifact.Mode != "executive" && artifact.Mode != "analysis_detail") ||
+		artifact.Revision < 1 || artifact.PageCount < 1 || artifact.SelectedCaseCount < 0 ||
+		artifact.TotalCaseCount < 0 || artifact.SelectedCaseCount > artifact.TotalCaseCount || artifact.RendererVersion == "" {
+		return false
+	}
+	for _, r := range artifact.ID {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	for _, hash := range []string{artifact.ContentHash, artifact.AnalysisHash} {
+		decoded, err := hex.DecodeString(hash)
+		if err != nil || len(decoded) != 32 {
+			return false
+		}
+	}
+	if _, err := time.Parse(time.RFC3339, artifact.CreatedAt); err != nil {
+		return false
+	}
+	return artifact.DownloadPath == "/api/v1/insights/exports/"+artifact.ID+"/download"
 }
 
 func (h *Handler) decode(w http.ResponseWriter, r *http.Request, dst any, max int64) bool {
@@ -870,7 +895,7 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.fail(w, err)
 			return
 		}
-		if out.SnapshotID != in.SnapshotID || out.AnalysisID != in.AnalysisID {
+		if out.SnapshotID != in.SnapshotID || out.AnalysisID != in.AnalysisID || out.Mode != in.Mode || !validExecutiveArtifact(out) {
 			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O artefato retornou outro snapshot ou análise.")
 			return
 		}
@@ -890,6 +915,10 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			h.fail(w, err)
 			return
 		}
+		if out.ID != parts[2] || !validExecutiveArtifact(out) {
+			h.writeError(w, 502, "ERR_INSIGHT_ARTIFACT", "O artefato retornou uma identidade ou metadados inválidos.")
+			return
+		}
 		if !h.ownsSnapshot(w, r.Context(), out.SnapshotID) {
 			return
 		}
@@ -907,6 +936,10 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		artifact, err := h.executiveExports.GetExecutiveArtifact(r.Context(), parts[2])
 		if err != nil {
 			h.fail(w, err)
+			return
+		}
+		if artifact.ID != parts[2] || !validExecutiveArtifact(artifact) {
+			h.writeError(w, 502, "ERR_INSIGHT_ARTIFACT", "O artefato retornou uma identidade ou metadados inválidos.")
 			return
 		}
 		if !h.ownsSnapshot(w, r.Context(), artifact.SnapshotID) {

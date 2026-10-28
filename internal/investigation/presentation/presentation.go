@@ -37,6 +37,28 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 			return insightcontract.ExecutiveReport{}, fmt.Errorf("unknown dimension status %q", d.Status)
 		}
 	}
+	for _, metric := range facts.Metrics {
+		if !oneOf(metric.State, "observed", "not_calculable", "immature", "unknown") {
+			return insightcontract.ExecutiveReport{}, fmt.Errorf("unknown metric state %q", metric.State)
+		}
+		if strings.TrimSpace(metric.CohortID) == "" {
+			return insightcontract.ExecutiveReport{}, fmt.Errorf("metric %q has no cohort", metric.ID)
+		}
+		if metric.State == "observed" && (metric.Value == nil || strings.TrimSpace(metric.Unit) == "") {
+			return insightcontract.ExecutiveReport{}, fmt.Errorf("observed metric %q must have a value and unit", metric.ID)
+		}
+	}
+	for _, c := range decisions.Cases {
+		if !oneOf(c.State, "actionable", "monitor", "needs_evidence", "resolved") {
+			return insightcontract.ExecutiveReport{}, fmt.Errorf("unknown decision case state %q", c.State)
+		}
+		if !validAssessment(c.Impact, "critical", "high", "medium", "low", "unknown") ||
+			!validAssessment(c.Complexity, "critical", "high", "medium", "low", "unknown") ||
+			!validAssessment(c.Urgency, "critical", "high", "medium", "low", "unknown") ||
+			!validAssessment(c.Confidence, "high", "medium", "low", "unknown") {
+			return insightcontract.ExecutiveReport{}, fmt.Errorf("decision case %q has an invalid assessment", c.ID)
+		}
+	}
 	if err := validateReferences(source, facts, decisions, cfg); err != nil {
 		return insightcontract.ExecutiveReport{}, err
 	}
@@ -139,8 +161,12 @@ func oneOf(value string, allowed ...string) bool {
 	return false
 }
 
+func validAssessment(assessment insightcontract.Assessment, levels ...string) bool {
+	return oneOf(assessment.State, "assessed", "indeterminate", "not_applicable") && oneOf(assessment.Level, levels...)
+}
+
 func validateReferences(source insightcontract.SourceBundle, facts insightcontract.FactsResult, decisions insightcontract.DecisionAnalysis, cfg insightcontract.AnalysisConfig) error {
-	entities, evidence, factCases, metrics, claims, decisionIDs, caseIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	entities, evidence, factCases, metrics, cohorts, claims, decisionIDs, caseIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, v := range source.Entities {
 		entities[v.ID] = true
 	}
@@ -153,6 +179,9 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 	}
 	for _, v := range facts.Cases {
 		factCases[v.ID] = true
+	}
+	for _, v := range facts.Cohorts {
+		cohorts[v.ID] = true
 	}
 	for _, v := range facts.Metrics {
 		metrics[v.ID] = true
@@ -192,6 +221,13 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 		}
 		return nil
 	}
+	for _, entity := range source.Entities {
+		for _, id := range entity.EvidenceIDs {
+			if err := checkCitation("entity evidence", insightcontract.Citation{EvidenceID: id}); err != nil {
+				return err
+			}
+		}
+	}
 	for _, o := range cfg.Objectives {
 		for _, id := range o.EntityIDs {
 			if err := check("objective entity", id, entities); err != nil {
@@ -199,7 +235,7 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 			}
 		}
 		for _, id := range o.EvidenceIDs {
-			if err := check("objective evidence", id, evidence); err != nil {
+			if err := checkCitation("objective evidence", insightcontract.Citation{EvidenceID: id}); err != nil {
 				return err
 			}
 		}
@@ -216,7 +252,7 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 			}
 		}
 		for _, id := range f.EvidenceIDs {
-			if err := check("fact evidence", id, evidence); err != nil {
+			if err := checkCitation("fact evidence", insightcontract.Citation{EvidenceID: id}); err != nil {
 				return err
 			}
 		}
@@ -226,9 +262,21 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 			}
 		}
 	}
+	for _, metric := range facts.Metrics {
+		if err := check("metric cohort", metric.CohortID, cohorts); err != nil {
+			return err
+		}
+	}
 	for _, o := range cfg.Objectives {
 		if err := check("objective metric", o.MetricID, metrics); err != nil {
 			return err
+		}
+		if o.MetricID != "" && o.Unit != "" {
+			for _, metric := range facts.Metrics {
+				if metric.ID == o.MetricID && metric.Unit != "" && metric.Unit != o.Unit {
+					return fmt.Errorf("objective %q unit %q differs from metric %q unit %q", o.ID, o.Unit, metric.ID, metric.Unit)
+				}
+			}
 		}
 	}
 	for _, c := range decisions.Claims {
@@ -295,6 +343,13 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 		}
 	}
 	for _, c := range decisions.Cases {
+		for _, assessment := range []insightcontract.Assessment{c.Impact, c.Complexity, c.Urgency, c.Confidence} {
+			for _, id := range assessment.EvidenceIDs {
+				if err := checkCitation("assessment evidence", insightcontract.Citation{EvidenceID: id}); err != nil {
+					return err
+				}
+			}
+		}
 		for _, id := range c.FactCaseIDs {
 			if err := check("case fact", id, factCases); err != nil {
 				return err
@@ -331,13 +386,19 @@ func validateReferences(source insightcontract.SourceBundle, facts insightcontra
 			}
 		}
 		for _, a := range c.Alternatives {
+			if !oneOf(a.Basis, "source", "inference", "hypothesis") {
+				return fmt.Errorf("alternative %q has unknown basis %q", a.ID, a.Basis)
+			}
 			for _, id := range a.EvidenceIDs {
-				if err := check("alternative evidence", id, evidence); err != nil {
+				if err := checkCitation("alternative evidence", insightcontract.Citation{EvidenceID: id}); err != nil {
 					return err
 				}
 			}
 		}
 		if c.RecommendedAlternativeID != nil {
+			if !oneOf(c.RecommendationBasis, "source", "inference", "hypothesis") {
+				return fmt.Errorf("decision case %q has unknown recommendation basis %q", c.ID, c.RecommendationBasis)
+			}
 			found := false
 			for _, a := range c.Alternatives {
 				if a.ID == *c.RecommendedAlternativeID {

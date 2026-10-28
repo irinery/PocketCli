@@ -104,6 +104,23 @@ func TestExecutiveUIShowsMetricContextAndEvidenceIntegrityFields(t *testing.T) {
 	}
 }
 
+func TestAnalysisUIHasExplicitEmptyStartAndBoundedTerminalPolling(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	for _, required := range []string{
+		"Este snapshot ainda não tem análise executiva",
+		"somente pelo botão abaixo",
+		"attempts < 60",
+		"Date.now() < deadline",
+		"['completed', 'completed_partial', 'failed', 'cancelled']",
+		"if (current.analysis_id)",
+		"AnalysisID indisponível; selecione uma versão listada",
+	} {
+		if !strings.Contains(js, required) {
+			t.Fatalf("analysis UI omits behavior marker %q", required)
+		}
+	}
+}
+
 func TestRealSQLConsoleUsesSupportedQueryDefaults(t *testing.T) {
 	js := realAppJS("investigation-demo", "snap-demo-001")
 	if !strings.Contains(js, "const manualSQL = 'SELECT id, window_start, window_end FROM v_snapshot'") ||

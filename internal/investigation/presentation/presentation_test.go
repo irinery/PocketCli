@@ -94,6 +94,46 @@ func TestBuildRejectsMissingReference(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsAssessmentEvidenceAndObjectiveUnitMismatch(t *testing.T) {
+	readFixture := func() struct {
+		Config   insightcontract.AnalysisConfig   `json:"config"`
+		Source   insightcontract.SourceBundle     `json:"source"`
+		Facts    insightcontract.FactsResult      `json:"facts"`
+		Analysis insightcontract.DecisionAnalysis `json:"analysis"`
+	} {
+		t.Helper()
+		raw, err := os.ReadFile("../insightcontract/testdata/fixture_go.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fixture struct {
+			Config   insightcontract.AnalysisConfig   `json:"config"`
+			Source   insightcontract.SourceBundle     `json:"source"`
+			Facts    insightcontract.FactsResult      `json:"facts"`
+			Analysis insightcontract.DecisionAnalysis `json:"analysis"`
+		}
+		if err := json.Unmarshal(raw, &fixture); err != nil {
+			t.Fatal(err)
+		}
+		return fixture
+	}
+	t.Run("assessment evidence must exist", func(t *testing.T) {
+		f := readFixture()
+		f.Analysis.Cases[0].Impact.EvidenceIDs = []string{"missing-evidence"}
+		if _, err := Build(f.Source, f.Facts, f.Analysis, f.Config); err == nil {
+			t.Fatal("expected invalid assessment evidence rejection")
+		}
+	})
+	t.Run("objective and metric units must agree", func(t *testing.T) {
+		f := readFixture()
+		f.Config.Objectives[0].MetricID = f.Facts.Metrics[0].ID
+		f.Config.Objectives[0].Unit = "hours"
+		if _, err := Build(f.Source, f.Facts, f.Analysis, f.Config); err == nil {
+			t.Fatal("expected objective/metric unit mismatch rejection")
+		}
+	})
+}
+
 func TestBuildRejectsCitationOutsideEvidenceExcerpt(t *testing.T) {
 	raw, err := os.ReadFile("../insightcontract/testdata/fixture_go.json")
 	if err != nil {

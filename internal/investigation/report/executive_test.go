@@ -114,6 +114,11 @@ func TestExecutiveExportUsesSelectionAndCompleteDetailWithIdempotency(t *testing
 	if err != nil || again.ID != short.ID {
 		t.Fatalf("idempotent export: %+v %v", again, err)
 	}
+	request.IdempotencyKey = "a-distinct-client-key"
+	again, err = exporter.ExportExecutive(context.Background(), request)
+	if err != nil || again.ID != short.ID {
+		t.Fatalf("semantic export identity changed with request key: %+v %v", again, err)
+	}
 
 	request.Mode = "analysis_detail"
 	request.IdempotencyKey = "export-2"
@@ -268,10 +273,42 @@ func TestSyntheticCaseC15KeepsExecutiveSelectionSeparateFromFullExport(t *testin
 }
 
 func TestTimelineLeavesAmbiguousDatesUnordered(t *testing.T) {
-	known := newTimelineEntry("2026-10-28T12:00:00Z", "Decisão", "texto", "escopo", nil)
-	ambiguous := newTimelineEntry("28/10/2026", "Observação", "texto", "escopo", nil)
-	unknown := newTimelineEntry("", "Afirmação", "texto", "escopo", nil)
+	known := newTimelineEntry("2026-10-28T12:00:00Z", "decision-1", "Decisão", "texto", "escopo", nil)
+	ambiguous := newTimelineEntry("28/10/2026", "observation-1", "Observação", "texto", "escopo", nil)
+	unknown := newTimelineEntry("", "claim-1", "Afirmação", "texto", "escopo", nil)
 	if !known.ordered || ambiguous.ordered || unknown.ordered {
 		t.Fatalf("unexpected timeline ordering: known=%t ambiguous=%t unknown=%t", known.ordered, ambiguous.ordered, unknown.ordered)
 	}
 }
+
+func TestCaseDetailLayoutKeepsIDsTimelineScopeAndEvidenceHashes(t *testing.T) {
+	caseDetail := insightcontract.CaseDetail{
+		Case: insightcontract.DecisionCase{
+			ID: "case-C15", FactCaseIDs: []string{"fact-1"}, ClaimIDs: []string{"claim-1", "claim-2"},
+			DecisionIDs: []string{"decision-1"}, RelationIDs: []string{"relation-1"}, ObjectiveIDs: []string{"objective-1"},
+		},
+		Facts: []insightcontract.FactCase{{ID: "fact-1", Kind: "delivery", Classification: "observed", Title: "Entrega"}},
+		Claims: []insightcontract.Claim{
+			{ID: "claim-1", Kind: "result", Status: "supported", Text: "Resultado observado", EventAt: strptr("28/10/2026"), Scope: insightcontract.ContextScope{Description: "ambiente de teste"}},
+			{ID: "claim-2", Kind: "outcome", Status: "disputed", Text: "Resultado contraditório", EventAt: strptr("28/10/2026"), Scope: insightcontract.ContextScope{Description: "ambiente de teste"}},
+		},
+		ClaimRelations: []insightcontract.ClaimRelation{{ID: "claim-relation-1", FromClaimID: "claim-1", ToClaimID: "claim-2", Kind: "contradicts", Status: "candidate", Reason: "Fontes simultâneas divergentes"}},
+		Decisions:      []insightcontract.DecisionRecord{{ID: "decision-1", Question: "Como seguir?", Choice: "Aguardar", Status: "superseded", DecidedAt: strptr("2026-10-28T12:00:00Z"), Scope: insightcontract.ContextScope{Description: "time A"}}},
+		Relations:      []insightcontract.DecisionRelation{{ID: "relation-1", FromDecisionID: "decision-1", ToDecisionID: "decision-0", Kind: "supersedes", Status: "valid"}},
+		Evidence:       []insightcontract.EvidenceView{{ID: "evidence-1", Source: "tracker", Locator: "issue/1", ObservedAt: "2026-10-28T13:00:00Z", EventAt: strptr("2026-10-28T12:00:00Z"), ContentHash: "content-hash", ExcerptHash: "excerpt-hash", ContentStatus: "available", IntegrityStatus: "verified", SanitizationVersion: "sanitize-v1"}},
+	}
+	l := newPDFLayout()
+	renderCaseDetail(l, caseDetail)
+	text := l.text()
+	for _, want := range []string{
+		"case-C15", "fact-1", "claim-1", "claim-2", "Resultado observado", "Resultado contraditório", "Fontes simultâneas divergentes", "decision-1", "relation-1", "objective-1",
+		"data/ordem desconhecida (28/10/2026)", "2026-10-28T12:00:00Z", "ambiente de teste", "time A",
+		"content-hash", "excerpt-hash", "sanitize-v1", "observada 2026-10-28T13:00:00Z",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("case detail PDF layout omits %q", want)
+		}
+	}
+}
+
+func strptr(value string) *string { return &value }
