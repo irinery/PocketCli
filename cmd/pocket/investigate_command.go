@@ -149,6 +149,7 @@ func newInvestigateCommand() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{Use: "show INVESTIGATION_ID [issues|prs|findings|events|coverage|sql \"SELECT …\"]", Short: "Mostra no terminal o que a coleta real extraiu", Args: cobra.MinimumNArgs(1), RunE: showInvestigation})
 	cmd.AddCommand(&cobra.Command{Use: "serve INVESTIGATION_ID", Short: "Abre a interface web local", Args: cobra.MinimumNArgs(1), RunE: serveInvestigation})
 	cmd.AddCommand(&cobra.Command{Use: "report INVESTIGATION_ID", Short: "Gera o PDF do último snapshot (local)", Args: cobra.MinimumNArgs(1), RunE: reportInvestigation})
+	cmd.AddCommand(newInvestigateAnalyzeCommand())
 	return cmd
 }
 
@@ -952,7 +953,11 @@ Flags:
   -y, --yes          mostra o plano e coleta sem pedir o código (um passo só)
       --scope ARQ    YAML de escopo (ou - para stdin)
       --timezone TZ  fuso da janela (padrão America/Sao_Paulo)
-      --json         saída estruturada para scripts`
+      --json         saída estruturada para scripts
+
+Análise de insights não recolhe dados de novo. Para iniciá-la, use
+pocket investigate analyze --snapshot ID --config CAMINHO_LOCAL_JSON; veja
+docs/investigation/insights/README.md para configuração de provider e orçamento.`
 
 const investigateExamples = `  pocket investigate                                 # assistente interativo
   pocket investigate -t ENG --since 12h              # só Linear, time ENG, últimas 12h
@@ -962,4 +967,5 @@ const investigateExamples = `  pocket investigate                               
   pocket investigate -s linear -p 7d -y              # um passo só: plano + coleta
   pocket investigate -t ENG --since 7d --plan        # só mostra o plano
   pocket investigate start PLAN_ID -c CODIGO         # inicia um plano preparado
+  pocket investigate analyze --snapshot ID --config ./analysis.json
   pocket investigate show ID issues -n 20            # vê no terminal o que foi extraído`

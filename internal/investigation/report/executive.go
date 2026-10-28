@@ -350,7 +350,15 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"ID da análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Estado da análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
 		l.paragraph(9, colorText, bold(row[0]), plain(row[1]))
 	}
-	l.heading(report.Headline, 15, 8, true)
+	headline := report.Headline
+	if mode == "analysis_detail" {
+		unit := "casos"
+		if report.TotalCases == 1 {
+			unit = "caso"
+		}
+		headline = fmt.Sprintf("Análise detalhada · %d %s", report.TotalCases, unit)
+	}
+	l.heading(headline, 15, 8, true)
 	l.paragraph(10, colorText, plain(report.Summary))
 	if report.SufficiencyStatus == "partial" || report.SufficiencyStatus == "insufficient" {
 		l.banner(9.5, plain("Aviso: a análise não tem suficiência plena. A exportação concluída comprova a geração do arquivo, não a sustentação de todas as conclusões."))

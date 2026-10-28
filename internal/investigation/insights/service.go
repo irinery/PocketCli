@@ -110,11 +110,14 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 	if err := validateConfig(req.Config); err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
-	configBytes, err := json.Marshal(req.Config)
+	schemaVersion, queryCatalogVersion, err := s.validateSnapshot(req.SnapshotID, req.Config.RequestedScope)
 	if err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
-	configHash := storage.Hash(configBytes)
+	configHash, err := insightcontract.ConfigHash(req.Config, schemaVersion, queryCatalogVersion)
+	if err != nil {
+		return insightcontract.AnalysisRun{}, fmt.Errorf("ERR_VALIDATION: hash de configuração inválido: %w", err)
+	}
 	requestBytes, _ := json.Marshal(struct {
 		Snapshot   string `json:"snapshot"`
 		ConfigHash string `json:"config_hash"`
@@ -148,9 +151,6 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 		return s.GetAnalysisRun(ctx, previous.RunID)
 	}
 	if !os.IsNotExist(err) {
-		return insightcontract.AnalysisRun{}, err
-	}
-	if err := s.validateSnapshot(req.SnapshotID, req.Config.RequestedScope); err != nil {
 		return insightcontract.AnalysisRun{}, err
 	}
 	runID, err := storage.ID()
@@ -189,17 +189,19 @@ func (s *Service) StartAnalysis(ctx context.Context, req insightcontract.Analysi
 // Store snapshot validation is injected through the store's bound core data namespace:
 // the snapshot record is written alongside each published dataset.
 
-func (s *Service) validateSnapshot(snapshotID string, scope insightcontract.Scope) error {
+func (s *Service) validateSnapshot(snapshotID string, scope insightcontract.Scope) (string, string, error) {
 	var snap struct {
-		ID        string `json:"id"`
-		Resources []struct {
+		ID                  string `json:"id"`
+		SchemaVersion       string `json:"schema_version"`
+		QueryCatalogVersion string `json:"query_catalog_version"`
+		Resources           []struct {
 			ID     string `json:"id"`
 			Source string `json:"source"`
 			Name   string `json:"name"`
 		} `json:"resources"`
 	}
 	if err := s.deps.Store.Get("snapshots", snapshotID, &snap); err != nil || snap.ID != snapshotID {
-		return errors.New("ERR_NOT_FOUND: snapshot não encontrado")
+		return "", "", errors.New("ERR_NOT_FOUND: snapshot não encontrado")
 	}
 	for _, requested := range scope.Resources {
 		found := false
@@ -210,10 +212,10 @@ func (s *Service) validateSnapshot(snapshotID string, scope insightcontract.Scop
 			}
 		}
 		if !found {
-			return errors.New("ERR_SCOPE_FORBIDDEN: recurso solicitado não pertence ao snapshot")
+			return "", "", errors.New("ERR_SCOPE_FORBIDDEN: recurso solicitado não pertence ao snapshot")
 		}
 	}
-	return nil
+	return snap.SchemaVersion, snap.QueryCatalogVersion, nil
 }
 
 func validateConfig(cfg insightcontract.AnalysisConfig) error {
@@ -330,10 +332,6 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 	if cfg.Provider.Kind == "none" || !cfg.Policy.ExternalProcessingAllowed {
 		provider = nil
 	}
-	if cfg.Provider.Kind == "configured" && cfg.Policy.ExternalProcessingAllowed && provider == nil {
-		s.fail(&run, ctx, "ERR_PROVIDER_UNAVAILABLE")
-		return
-	}
 	decisions, err := s.deps.Decisions(ctx, source, facts, cfg, provider)
 	if err != nil || (decisions.SnapshotID != "" && decisions.SnapshotID != run.SnapshotID) {
 		s.fail(&run, ctx, "ERR_REASONING_FAILED")
@@ -342,9 +340,12 @@ func (s *Service) execute(ctx context.Context, run insightcontract.AnalysisRun, 
 	if decisions.SnapshotID == "" {
 		decisions.SnapshotID = run.SnapshotID
 	}
-	if decisions.Provenance.InputHash != "" && decisions.Provenance.InputHash != source.InputHash {
-		s.fail(&run, ctx, "ERR_REASONING_INVALID")
-		return
+	if decisions.Provenance.InputHash != "" {
+		decisionInputHash, hashErr := insightcontract.AnalysisInputHash(source, facts)
+		if hashErr != nil || decisions.Provenance.InputHash != decisionInputHash {
+			s.fail(&run, ctx, "ERR_REASONING_INVALID")
+			return
+		}
 	}
 	if err := s.putImmutable("insightdecisions", run.ID, decisions); err != nil {
 		s.fail(&run, ctx, "ERR_PERSIST_FAILED")

@@ -98,29 +98,7 @@ func Analyze(bundle insightcontract.SourceBundle, cfg insightcontract.AnalysisCo
 }
 
 func stableConfigHash(cfg insightcontract.AnalysisConfig, schema, catalog string) (string, error) {
-	// Canonicalize set-valued config slices before hashing.
-	copyCfg := cfg
-	copyCfg.RequestedScope.Resources = append([]insightcontract.ResourceRef{}, cfg.RequestedScope.Resources...)
-	sort.Slice(copyCfg.RequestedScope.Resources, func(i, j int) bool {
-		a, b := copyCfg.RequestedScope.Resources[i], copyCfg.RequestedScope.Resources[j]
-		return a.Source+"\x00"+a.ID < b.Source+"\x00"+b.ID
-	})
-	copyCfg.Objectives = append([]insightcontract.Objective{}, cfg.Objectives...)
-	for i := range copyCfg.Objectives {
-		copyCfg.Objectives[i].EntityIDs = uniqueSorted(copyCfg.Objectives[i].EntityIDs)
-		copyCfg.Objectives[i].EvidenceIDs = uniqueSorted(copyCfg.Objectives[i].EvidenceIDs)
-	}
-	sort.Slice(copyCfg.Objectives, func(i, j int) bool { return copyCfg.Objectives[i].ID < copyCfg.Objectives[j].ID })
-	b, err := json.Marshal(struct {
-		SchemaVersion       string                         `json:"schema_version"`
-		QueryCatalogVersion string                         `json:"query_catalog_version"`
-		Config              insightcontract.AnalysisConfig `json:"config"`
-	}{schema, catalog, copyCfg})
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return insightcontract.ConfigHash(cfg, schema, catalog)
 }
 
 func completionTimestampCohort(bundle insightcontract.SourceBundle, cfg insightcontract.AnalysisConfig, start, end time.Time, coverage string) insightcontract.Cohort {

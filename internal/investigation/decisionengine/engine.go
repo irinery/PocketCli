@@ -238,10 +238,7 @@ func validateInputs(b insightcontract.SourceBundle, f insightcontract.FactsResul
 }
 
 func deterministic(b insightcontract.SourceBundle, f insightcontract.FactsResult, c insightcontract.AnalysisConfig) insightcontract.DecisionAnalysis {
-	inputHash := hash(struct {
-		Bundle insightcontract.SourceBundle
-		Facts  insightcontract.FactsResult
-	}{b, f})
+	inputHash, _ := insightcontract.AnalysisInputHash(b, f)
 	configHash := hash(c)
 	key := hash([]string{insightcontract.Version, inputHash, configHash, AdapterVersion, PromptVersion, RubricVersion, b.Snapshot.RulesetVersion, c.Policy.Version, c.Provider.Model})
 	status := "partial"
