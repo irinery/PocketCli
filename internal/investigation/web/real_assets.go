@@ -113,6 +113,8 @@ const realAppJSTemplate = `(() => {
     available: 'disponível', metadata_only: 'somente metadados', unavailable: 'indisponível', redacted_all: 'conteúdo todo redigido', integrity_error: 'erro de integridade',
     verified: 'verificada', unverified: 'não verificada', mismatch: 'divergente', missing: 'ausente',
     supported: 'sustentada', inferred: 'inferida', disputed: 'contestada', proposed: 'proposta', accepted: 'aceita',
+    known: 'conhecido', established: 'estabelecida', candidate: 'candidata', known_interval: 'intervalo conhecido', open_ended: 'fim em aberto', ambiguous: 'ambígua',
+    human: 'humano', rule: 'regra', model: 'modelo',
     implemented: 'implementada', superseded: 'superada', revoked: 'revogada', conflicting: 'conflitante'
     ,source: 'fonte', facts: 'fatos', reasoning: 'interpretação', presentation: 'apresentação', persisting: 'salvando', idle: 'ocioso'
   }[value] || String(value || 'não determinado').replaceAll('_', ' '));
@@ -445,12 +447,19 @@ const realAppJSTemplate = `(() => {
     const summary = card('Resumo da análise');
     summary.append(node('h3', '', report.headline), node('p', '', report.summary));
     summary.append(node('p', 'muted', 'Publicação: ' + labelPt(report.publication_status) + ' · Análise: ' + labelPt(report.analysis_status) + ' · Suficiência: ' + labelPt(report.sufficiency_status)));
+    const requestedScope = report.requested_scope || {};
+    const rangeLabel = value => value ? (value.start || 'início não informado') + ' — ' + (value.end || 'fim não informado') : 'não informado';
+    const resourceLabels = (requestedScope.resources || []).map(resource => (resource.source || 'fonte não informada') + ' · ' + (resource.name || resource.id || 'recurso não informado') + (resource.name && resource.id ? ' (' + resource.id + ')' : ''));
+    summary.append(node('p', 'muted', 'Histórico solicitado: ' + rangeLabel(requestedScope.history) + ' · Janela do relatório: ' + rangeLabel(requestedScope.report_window)));
+    summary.append(node('p', 'muted', 'Recursos solicitados: ' + (resourceLabels.length ? resourceLabels.join('; ') : 'não informados')));
     summary.append(node('p', 'muted', 'Casos selecionados: ' + (report.cases || []).length + ' de ' + report.total_cases + (report.total_cases > (report.cases || []).length ? ' · seleção parcial' : '')));
     (report.limitations || []).forEach(item => summary.append(node('p', 'callout', item)));
+    (report.next_actions || []).forEach(item => summary.append(node('p', 'muted', 'Próxima ação: ' + item)));
     parent.append(summary);
     const questions = card('Cobertura por pergunta');
     (report.questions || []).forEach(item => {
       questions.append(node('h3', '', labelPt(item.question_id) + ' · ' + labelPt(item.status)), node('p', '', item.reason || 'Sem justificativa informada.'));
+      (item.required_collections || []).forEach(collection => questions.append(node('p', 'muted', 'Coleção exigida: ' + collection.source + ' · ' + collection.resource_id + ' · ' + collection.collection)));
       (item.missing || []).forEach(missing => questions.append(node('p', 'callout', 'Falta: ' + missing)));
     });
     parent.append(questions);
@@ -469,7 +478,7 @@ const realAppJSTemplate = `(() => {
       const denominators = item.denominator === null || item.denominator === undefined ? '' : ' · denominador ' + item.denominator;
       const numerator = item.numerator === null || item.numerator === undefined ? '' : ' · numerador ' + item.numerator;
       const sample = ' · amostra ' + item.sample_size + (item.eligible_size === null || item.eligible_size === undefined ? '' : ' de ' + item.eligible_size);
-      dimensions.append(node('p', 'muted', item.name + ': ' + (observed ? item.value + ' ' + item.unit : 'não determinado') + numerator + denominators + sample + ' · ' + item.definition + ' · coorte ' + (item.cohort_id || 'não informada') + ' · método ' + (item.method || 'não informado')));
+      dimensions.append(node('p', 'muted', item.id + ' · ' + item.name + ': ' + (observed ? item.value + ' ' + item.unit : 'não determinado') + numerator + denominators + sample + ' · ' + item.definition + ' · coorte ' + (item.cohort_id || 'não informada') + ' · método ' + (item.method || 'não informado')));
       (item.limitations || []).forEach(limitation => dimensions.append(node('p', 'callout', 'Limitação da métrica: ' + limitation)));
     });
     parent.append(dimensions);
@@ -477,12 +486,20 @@ const realAppJSTemplate = `(() => {
     (report.cases || []).forEach(item => {
       const row = card(item.title + ' · ' + labelPt(item.state));
       row.append(node('p', '', item.summary));
+      const references = [
+        ['Fatos', item.fact_case_ids], ['Afirmações', item.claim_ids], ['Decisões', item.decision_ids], ['Relações', item.relation_ids]
+      ].filter(([, ids]) => ids && ids.length).map(([name, ids]) => name + ': ' + ids.join(', '));
+      if (references.length) row.append(node('p', 'muted', references.join(' · ')));
       if (item.objective_ids && item.objective_ids.length) row.append(node('p', 'muted', 'Objetivos relacionados: ' + item.objective_ids.join(', ')));
       if (item.entity_ids && item.entity_ids.length) row.append(node('p', 'muted', 'Entidades: ' + item.entity_ids.join(', ')));
+      if (item.owner_id) row.append(node('p', 'muted', 'Responsável: ' + item.owner_id));
       row.append(valueAssessment('Impacto', item.impact), valueAssessment('Complexidade', item.complexity), valueAssessment('Urgência', item.urgency), valueAssessment('Confiança', item.confidence));
-      if (item.recommended_alternative_id) row.append(node('p', 'callout', 'Alternativa recomendada: ' + item.recommended_alternative_id + ' · base ' + labelPt(item.recommendation_basis)));
+      if (item.recommended_alternative_id) {
+        const recommended = (item.alternatives || []).find(alternative => alternative.id === item.recommended_alternative_id);
+        row.append(node('p', 'callout', 'Alternativa recomendada: ' + (recommended ? recommended.action : item.recommended_alternative_id) + ' · ID ' + item.recommended_alternative_id + ' · base ' + labelPt(item.recommendation_basis)));
+      }
       (item.alternatives || []).forEach(alternative => {
-        const option = card('Alternativa · ' + alternative.action + ' · base ' + labelPt(alternative.basis));
+        const option = card('Alternativa ' + alternative.id + ' · ' + alternative.action + ' · base ' + labelPt(alternative.basis));
         option.append(node('p', '', alternative.expected_effect));
         if (alternative.evidence_ids && alternative.evidence_ids.length) option.append(node('p', 'muted', 'Evidências: ' + alternative.evidence_ids.join(', ')));
         (alternative.tradeoffs || []).forEach(value => option.append(node('p', 'muted', 'Trade-off: ' + value)));
@@ -553,14 +570,17 @@ const realAppJSTemplate = `(() => {
     box.append(node('p', 'muted', 'Fatos: ' + (links.fact_case_ids || []).join(', ') + ' · Afirmações: ' + (links.claim_ids || []).join(', ') + ' · Decisões: ' + (links.decision_ids || []).join(', ') + ' · Relações: ' + (links.relation_ids || []).join(', ') + ' · Objetivos: ' + (links.objective_ids || []).join(', ')));
     (detailRecord.facts || []).forEach(item => {
       const fact = card('Fato ' + item.id + ' · ' + labelPt(item.kind) + ' / ' + labelPt(item.classification) + ' · ' + item.title);
+      for (const [name, ids] of [['Sujeitos', item.subject_ids], ['Relacionados', item.related_ids], ['Objetivos', item.objective_ids], ['Links', item.link_ids], ['Métricas', item.metric_ids], ['Evidências', item.evidence_ids]]) {
+        if (ids && ids.length) fact.append(node('p', 'muted', name + ': ' + ids.join(', ')));
+      }
       (item.observed_facts || []).forEach(text => fact.append(node('p', '', 'Observado: ' + text)));
       (item.open_questions || []).forEach(text => fact.append(node('p', 'callout', 'Em aberto: ' + text)));
       box.append(fact);
     });
-    (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
+    (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.source + ' · recurso ' + item.resource_id + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
     const timeline = [];
-    (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, text: item.text, evidence: item.citations || []}));
-    (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
+    (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, text: item.text, evidence: item.citations || []}));
+    (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, claims: item.claim_ids, objectives: item.objective_ids, decisionMaker: item.decision_maker_id, recordedBy: item.recorded_by_id, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
     const timelineTime = item => {
       if (!item.at || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item.at)) return null;
       const value = Date.parse(item.at); return Number.isFinite(value) ? value : null;
@@ -572,10 +592,21 @@ const realAppJSTemplate = `(() => {
       const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
       timelineBox.append(node('h3', '', dateLabel + ' · ' + item.id + ' · ' + item.kind), node('p', '', item.text));
       if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
+      if (item.method || item.validity || item.validFrom || item.validTo) timelineBox.append(node('p', 'muted', 'Método: ' + labelPt(item.method) + ' · validade: ' + labelPt(item.validity) + ' · de ' + (item.validFrom || 'data desconhecida') + ' até ' + (item.validTo || 'fim não determinado')));
+      if (item.entities && item.entities.length) timelineBox.append(node('p', 'muted', 'Entidades: ' + item.entities.join(', ')));
+      if (item.claims && item.claims.length) timelineBox.append(node('p', 'muted', 'Afirmações relacionadas: ' + item.claims.join(', ')));
+      if (item.objectives && item.objectives.length) timelineBox.append(node('p', 'muted', 'Objetivos: ' + item.objectives.join(', ')));
+      if (item.decisionMaker || item.recordedBy) timelineBox.append(node('p', 'muted', 'Responsável pela decisão: ' + (item.decisionMaker || 'não informado') + ' · registrado por: ' + (item.recordedBy || 'não informado')));
       (item.evidence || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
     });
-    (detailRecord.relations || []).forEach(item => timelineBox.append(node('p', 'callout', item.kind + ' · ' + item.from_decision_id + ' → ' + item.to_decision_id + ' · ' + item.status + ' · ' + item.reason)));
-    (detailRecord.claim_relations || []).forEach(item => timelineBox.append(node('p', 'callout', item.kind + ' · ' + item.from_claim_id + ' → ' + item.to_claim_id + ' · ' + item.status + ' · ' + item.reason)));
+    (detailRecord.relations || []).forEach(item => {
+      timelineBox.append(node('p', 'callout', item.id + ' · ' + item.kind + ' · ' + item.from_decision_id + ' → ' + item.to_decision_id + ' · ' + labelPt(item.status) + ' · validade ' + labelPt(item.validity_status) + ' · ' + (item.reason || 'Sem justificativa informada.')));
+      (item.citations || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
+    });
+    (detailRecord.claim_relations || []).forEach(item => {
+      timelineBox.append(node('p', 'callout', item.id + ' · ' + item.kind + ' · ' + item.from_claim_id + ' → ' + item.to_claim_id + ' · ' + labelPt(item.status) + ' · validade ' + labelPt(item.validity_status) + ' · ' + (item.reason || 'Sem justificativa informada.')));
+      (item.citations || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
+    });
     box.append(timelineBox);
     (detailRecord.evidence || []).forEach(item => {
       const evidence = card(item.id + ' · ' + item.source + ' · ' + item.locator);
