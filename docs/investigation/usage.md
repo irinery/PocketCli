@@ -24,12 +24,22 @@ O preview é só para testar a interface: não chama GitHub nem Linear e não l�
 
 ## Início rápido: coletar pelas APIs
 
-Requer Go 1.22+ e um compilador C (o motor SQLite usa CGO). Na raiz do clone:
+Requer Go 1.22+ e um compilador C (o motor SQLite usa CGO).
+
+**Pelo `pocket` instalado** (`~/.pocketcli`): na primeira vez, `pocket investigate` percebe que o binário `~/.pocketcli/bin/pocket-go` não existe e pergunta `Compilar agora com Go + CGO (cerca de 1 minuto)? [S/n]`; Enter compila e já executa o comando pedido. Sem terminal ou com `--json` ele não pergunta e mostra o comando de build. `POCKETCLI_INVESTIGATE_BUILD=yes` compila sem perguntar (scripts) e `=no` nunca compila; com `POCKETCLI_GO_BINARY` definido, o binário apontado nunca é substituído. A compilação grava num arquivo temporário e só instala se terminar bem. Depois de um `pocket update` que traga código novo do `investigate`, recompile à mão:
+
+```sh
+cd ~/.pocketcli && CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o bin/pocket-go ./cmd/pocket
+```
+
+**A partir de um clone de desenvolvimento**, na raiz do clone:
 
 ```sh
 CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o /tmp/pocket ./cmd/pocket
 /tmp/pocket investigate doctor
 ```
+
+Nos exemplos abaixo, `pocket` é o comando instalado; troque por `/tmp/pocket` se usar o clone.
 
 O `doctor` confere o motor, **quais chaves de API já estão no ambiente** e o PDF:
 

@@ -391,3 +391,45 @@ func TestUnknownCredentialDoesNotProbeDuringProviderHold(t *testing.T) {
 		t.Fatalf("unknown credential probed during hold: identity=%d business=%d err=%v", identityCalls, businessCalls, err)
 	}
 }
+
+// A refused key names the source and the cause, so the operator knows which
+// of two keys to fix and whether it is wrong (401) or short on permission (403).
+func TestDeniedKeyNamesSourceAndCause(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		status int
+		want   []string
+	}{
+		{401, []string{"GitHub recusou a chave", "HTTP 401", "revogada"}},
+		{403, []string{"GitHub negou a leitura", "HTTP 403", "SSO"}},
+	} {
+		client := principalClient(t, store, "token-denied", transportFunc(func(r *http.Request) (*http.Response, error) {
+			return response(test.status, `{"message":"denied"}`), nil
+		}))
+		_, _, _, _, err := client.GetGitHubWithBytes(context.Background(), "https://api.github.com/user")
+		var coded *contract.ErrorResponse
+		if !errors.As(err, &coded) || coded.Code != "ERR_FORBIDDEN" {
+			t.Fatalf("HTTP %d: erro %v", test.status, err)
+		}
+		for _, want := range test.want {
+			if !strings.Contains(coded.Message, want) {
+				t.Fatalf("HTTP %d: mensagem %q sem %q", test.status, coded.Message, want)
+			}
+		}
+	}
+	linear := secrets.NewSessionStore()
+	if _, err := linear.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "lin_api_revoked", Persistence: "session"}); err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(&http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return response(200, `{"errors":[{"message":"Authentication required","extensions":{"code":"AUTHENTICATION_ERROR"}}]}`), nil
+	})}, linear)
+	_, err = client.LinearQuery(context.Background(), "query Viewer { viewer { id } }", nil)
+	var coded *contract.ErrorResponse
+	if !errors.As(err, &coded) || coded.Code != "ERR_FORBIDDEN" || !strings.Contains(coded.Message, "Linear recusou a chave") {
+		t.Fatalf("Linear AUTHENTICATION_ERROR: %v", err)
+	}
+}
