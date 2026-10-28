@@ -339,6 +339,26 @@ func TestExecutivePDFLayoutKeepsStatusesSelectionAndInsufficiencyWarning(t *test
 	}
 }
 
+func TestExecutiveAndDetailPDFUseModeSpecificHeadline(t *testing.T) {
+	report, _ := executiveFixture(t)
+	report.Headline = "1 caso(s) para leitura executiva"
+	report.TotalCases = 1
+	executive, err := layoutExecutive(context.Background(), report, nil, "executive", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := layoutExecutive(context.Background(), report, nil, "analysis_detail", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(executive.text(), report.Headline) {
+		t.Fatal("executive PDF should preserve the report headline")
+	}
+	if !strings.Contains(detail.text(), "Análise detalhada · 1 caso") || strings.Contains(detail.text(), "caso(s) para leitura executiva") {
+		t.Fatal("detail PDF must identify its complete analysis mode")
+	}
+}
+
 func TestCaseAssessmentsKeepStateDistinctFromLevel(t *testing.T) {
 	l := newPDFLayout()
 	renderDecisionCase(l, insightcontract.DecisionCase{
