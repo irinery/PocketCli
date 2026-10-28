@@ -451,11 +451,14 @@ const realAppJSTemplate = `(() => {
     (report.cases || []).forEach(item => {
       const row = card(item.title + ' · ' + labelPt(item.state));
       row.append(node('p', '', item.summary));
+      if (item.objective_ids && item.objective_ids.length) row.append(node('p', 'muted', 'Objetivos relacionados: ' + item.objective_ids.join(', ')));
+      if (item.entity_ids && item.entity_ids.length) row.append(node('p', 'muted', 'Entidades: ' + item.entity_ids.join(', ')));
       row.append(valueAssessment('Impacto', item.impact), valueAssessment('Complexidade', item.complexity), valueAssessment('Urgência', item.urgency), valueAssessment('Confiança', item.confidence));
       if (item.recommended_alternative_id) row.append(node('p', 'callout', 'Alternativa recomendada: ' + item.recommended_alternative_id + ' · base ' + labelPt(item.recommendation_basis)));
       (item.alternatives || []).forEach(alternative => {
         const option = card('Alternativa · ' + alternative.action + ' · base ' + labelPt(alternative.basis));
         option.append(node('p', '', alternative.expected_effect));
+        if (alternative.evidence_ids && alternative.evidence_ids.length) option.append(node('p', 'muted', 'Evidências: ' + alternative.evidence_ids.join(', ')));
         (alternative.tradeoffs || []).forEach(value => option.append(node('p', 'muted', 'Trade-off: ' + value)));
         (alternative.preconditions || []).forEach(value => option.append(node('p', 'muted', 'Pré-condição: ' + value)));
         row.append(option);
@@ -494,23 +497,28 @@ const realAppJSTemplate = `(() => {
     detail.replaceChildren();
     const box = card(detailRecord.case.title + ' · ' + detailRecord.case.id);
     box.append(button('Fechar', () => { detail.hidden = true; }, 'close'), node('p', '', detailRecord.case.summary));
+    const links = detailRecord.case;
+    box.append(node('p', 'muted', 'Fatos: ' + (links.fact_case_ids || []).join(', ') + ' · Afirmações: ' + (links.claim_ids || []).join(', ') + ' · Decisões: ' + (links.decision_ids || []).join(', ') + ' · Relações: ' + (links.relation_ids || []).join(', ') + ' · Objetivos: ' + (links.objective_ids || []).join(', ')));
     (detailRecord.facts || []).forEach(item => {
-      const fact = card('Fato · ' + labelPt(item.kind) + ' / ' + labelPt(item.classification) + ' · ' + item.title);
+      const fact = card('Fato ' + item.id + ' · ' + labelPt(item.kind) + ' / ' + labelPt(item.classification) + ' · ' + item.title);
       (item.observed_facts || []).forEach(text => fact.append(node('p', '', 'Observado: ' + text)));
       (item.open_questions || []).forEach(text => fact.append(node('p', 'callout', 'Em aberto: ' + text)));
       box.append(fact);
     });
     (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
     const timeline = [];
-    (detailRecord.claims || []).forEach(item => timeline.push({kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, text: item.text, evidence: item.citations || []}));
-    (detailRecord.decisions || []).forEach(item => timeline.push({kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
-    const timelineTime = item => { const value = item.at ? Date.parse(item.at) : NaN; return Number.isFinite(value) ? value : null; };
+    (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, text: item.text, evidence: item.citations || []}));
+    (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
+    const timelineTime = item => {
+      if (!item.at || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item.at)) return null;
+      const value = Date.parse(item.at); return Number.isFinite(value) ? value : null;
+    };
     timeline.sort((a, b) => { const at = timelineTime(a), bt = timelineTime(b); if (at === null) return bt === null ? 0 : 1; if (bt === null) return -1; return at - bt; });
     const timelineBox = card('Timeline');
     timeline.forEach(item => {
       const time = timelineTime(item);
       const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
-      timelineBox.append(node('h3', '', dateLabel + ' · ' + item.kind), node('p', '', item.text));
+      timelineBox.append(node('h3', '', dateLabel + ' · ' + item.id + ' · ' + item.kind), node('p', '', item.text));
       if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
       (item.evidence || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
     });
@@ -562,6 +570,7 @@ const realAppJSTemplate = `(() => {
           if (['completed', 'completed_partial', 'failed', 'cancelled'].includes(current.state)) {
             cancel.disabled = true;
             if (current.analysis_id) { await loadExecutiveReport(current.analysis_id, true); await overview(); }
+            else status.textContent += ' · AnalysisID indisponível; selecione uma versão listada para abrir relatório.';
             break;
           }
         }

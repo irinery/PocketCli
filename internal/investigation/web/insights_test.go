@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"pocketcli/internal/investigation/insightcontract"
@@ -14,6 +15,8 @@ import (
 type insightFake struct {
 	report                              insightcontract.ExecutiveReport
 	starts, lists, gets, pages, details int
+	analysisPages                       map[string]insightcontract.AnalysisPage
+	omitRunAnalysisID                   bool
 }
 
 func (f *insightFake) GetExecutiveReport(_ context.Context, snapshot, analysis string) (insightcontract.ExecutiveReport, error) {
@@ -34,6 +37,9 @@ func (f *insightFake) ListInsightCases(_ context.Context, snapshot, analysis, cu
 func (f *insightFake) StartAnalysis(_ context.Context, req insightcontract.AnalysisRequest) (insightcontract.AnalysisRun, error) {
 	f.starts++
 	id := "analysis-1"
+	if f.omitRunAnalysisID {
+		return insightcontract.AnalysisRun{ID: "run-1", SnapshotID: req.SnapshotID, State: "queued", Phase: "source"}, nil
+	}
 	return insightcontract.AnalysisRun{ID: "run-1", SnapshotID: req.SnapshotID, State: "queued", Phase: "source", AnalysisID: &id}, nil
 }
 func (f *insightFake) GetAnalysisRun(_ context.Context, id string) (insightcontract.AnalysisRun, error) {
@@ -44,7 +50,35 @@ func (f *insightFake) CancelAnalysis(_ context.Context, id string) (insightcontr
 }
 func (f *insightFake) ListAnalyses(_ context.Context, snapshot, cursor string, limit int) (insightcontract.AnalysisPage, error) {
 	f.lists++
+	if f.analysisPages != nil {
+		return f.analysisPages[cursor], nil
+	}
 	return insightcontract.AnalysisPage{SnapshotID: snapshot, Total: 1, Items: []insightcontract.AnalysisSummary{{ID: "analysis-1", SnapshotID: snapshot, Status: "complete"}}}, nil
+}
+
+func TestAnalysisListingPagesAuthorizeOnlyReturnedVersions(t *testing.T) {
+	fake := &insightFake{
+		report: insightcontract.ExecutiveReport{Version: insightcontract.Version, PublicationStatus: "ready", AnalysisStatus: "complete", SufficiencyStatus: "sufficient", Cases: []insightcontract.DecisionCase{}, CaseIDs: []string{}},
+		analysisPages: map[string]insightcontract.AnalysisPage{
+			"":       {SnapshotID: "snap-demo-001", Total: 2, Items: []insightcontract.AnalysisSummary{{ID: "analysis-a", SnapshotID: "snap-demo-001", Status: "complete"}}, NextCursor: "page-2"},
+			"page-2": {SnapshotID: "snap-demo-001", Total: 2, Items: []insightcontract.AnalysisSummary{{ID: "analysis-b", SnapshotID: "snap-demo-001", Status: "partial"}}},
+		},
+	}
+	client := newUnlockedClient(t, &scopeCore{Core: mock.New()}, nil, PreviewOptions{InvestigationID: "investigation-demo", InsightReader: fake, AnalysisController: fake})
+	first := client.do(http.MethodGet, "/snapshots/snap-demo-001/insights?limit=1", "", "")
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), `"next_cursor":"page-2"`) {
+		t.Fatalf("first analysis page: %d %s", first.Code, first.Body.String())
+	}
+	if got := client.do(http.MethodGet, "/snapshots/snap-demo-001/insights/analysis-b", "", ""); got.Code != http.StatusNotFound {
+		t.Fatalf("unlisted analysis became authorized: %d", got.Code)
+	}
+	second := client.do(http.MethodGet, "/snapshots/snap-demo-001/insights?limit=1&cursor=page-2", "", "")
+	if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), "analysis-b") {
+		t.Fatalf("second analysis page: %d %s", second.Code, second.Body.String())
+	}
+	if got := client.do(http.MethodGet, "/snapshots/snap-demo-001/insights/analysis-b", "", ""); got.Code != http.StatusOK {
+		t.Fatalf("listed second-page analysis not authorized: %d %s", got.Code, got.Body.String())
+	}
 }
 
 func TestInsightReadRoutesAreScopedAndValidateReturnedIdentity(t *testing.T) {
@@ -114,6 +148,36 @@ func TestAnalysisRunStartsOnlyThroughCanonicalExplicitRoute(t *testing.T) {
 	}
 }
 
+func TestRunWithoutAnalysisIDDoesNotAuthorizeInventedReport(t *testing.T) {
+	fake := &insightFake{omitRunAnalysisID: true}
+	client := newUnlockedClient(t, &scopeCore{Core: mock.New()}, nil, PreviewOptions{InvestigationID: "investigation-demo", InsightReader: fake, AnalysisController: fake})
+	config := insightcontract.AnalysisConfig{Version: insightcontract.Version, RequestedScope: insightcontract.Scope{Resources: []insightcontract.ResourceRef{}}, Objectives: []insightcontract.Objective{}, Policy: insightcontract.Policy{}, Budget: insightcontract.Budget{}, Provider: insightcontract.ProviderConfig{Kind: "none"}}
+	raw, _ := json.Marshal(insightcontract.AnalysisRequest{SnapshotID: "snap-demo-001", Config: config, IdempotencyKey: "without-analysis-id"})
+	start := client.do(http.MethodPost, "/insights/runs", string(raw), "")
+	if start.Code != http.StatusAccepted {
+		t.Fatalf("start without analysis ID: %d %s", start.Code, start.Body.String())
+	}
+	if got := client.do(http.MethodGet, "/snapshots/snap-demo-001/insights/analysis-guessed", "", ""); got.Code != http.StatusNotFound {
+		t.Fatalf("invented report ID became authorized: %d", got.Code)
+	}
+}
+
+func TestRunEnumsAcceptEveryTerminalAndIntermediateState(t *testing.T) {
+	for _, state := range []string{"queued", "running", "completed", "completed_partial", "failed", "cancelled"} {
+		if !validRunState(state) {
+			t.Errorf("valid run state rejected: %s", state)
+		}
+	}
+	for _, phase := range []string{"source", "facts", "reasoning", "presentation", "persisting", "idle"} {
+		if !validRunPhase(phase) {
+			t.Errorf("valid run phase rejected: %s", phase)
+		}
+	}
+	if validRunState("paused") || validRunPhase("unknown") {
+		t.Fatal("unknown run enum accepted")
+	}
+}
+
 type executiveExportFake struct {
 	artifact         insightcontract.ExecutiveArtifact
 	exported, opened int
@@ -121,7 +185,12 @@ type executiveExportFake struct {
 
 func (f *executiveExportFake) ExportExecutive(_ context.Context, req insightcontract.ExecutiveExportRequest) (insightcontract.ExecutiveArtifact, error) {
 	f.exported++
-	f.artifact = insightcontract.ExecutiveArtifact{ID: "artifact-1", SnapshotID: req.SnapshotID, AnalysisID: req.AnalysisID, Mode: req.Mode, DownloadPath: "/api/v1/insights/exports/artifact-1/download"}
+	f.artifact = insightcontract.ExecutiveArtifact{
+		ID: "artifact-1", SnapshotID: req.SnapshotID, AnalysisID: req.AnalysisID, Mode: req.Mode,
+		Revision: 1, PageCount: 1, ContentHash: strings.Repeat("a", 64), AnalysisHash: strings.Repeat("b", 64),
+		RendererVersion: "pdf-native/1", CreatedAt: "2026-10-28T00:00:00Z",
+		DownloadPath: "/api/v1/insights/exports/artifact-1/download",
+	}
 	return f.artifact, nil
 }
 func (f *executiveExportFake) GetExecutiveArtifact(_ context.Context, id string) (insightcontract.ExecutiveArtifact, error) {
@@ -154,5 +223,20 @@ func TestExecutiveExportRouteUsesArtifactIDAndChecksScope(t *testing.T) {
 	}
 	if got := client.do(http.MethodGet, "/insights/exports/unknown/download", "", ""); got.Code == http.StatusOK {
 		t.Fatal("unknown artifact downloaded")
+	}
+}
+
+func TestExecutiveArtifactMetadataMustBeCompleteAndRouteRelative(t *testing.T) {
+	artifact := insightcontract.ExecutiveArtifact{
+		ID: "artifact-1", SnapshotID: "snapshot-1", AnalysisID: "analysis-1", Mode: "executive",
+		Revision: 1, PageCount: 1, ContentHash: strings.Repeat("a", 64), AnalysisHash: strings.Repeat("b", 64),
+		RendererVersion: "pdf-native/1", CreatedAt: "2026-10-28T00:00:00Z", DownloadPath: "/api/v1/insights/exports/artifact-1/download",
+	}
+	if !validExecutiveArtifact(artifact) {
+		t.Fatal("valid artifact rejected")
+	}
+	artifact.DownloadPath = "/tmp/report.pdf"
+	if validExecutiveArtifact(artifact) {
+		t.Fatal("filesystem path accepted as download path")
 	}
 }

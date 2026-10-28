@@ -22,10 +22,10 @@ const executiveRendererVersion = "pdf-nativo-executivo/1"
 const executivePageSize = 100
 
 type executiveTimelineEntry struct {
-	at, kind, text, scope string
-	citations             []insightcontract.Citation
-	orderedAt             time.Time
-	ordered               bool
+	at, id, kind, text, scope string
+	citations                 []insightcontract.Citation
+	orderedAt                 time.Time
+	ordered                   bool
 }
 
 type executiveManifest struct {
@@ -125,7 +125,10 @@ func (f *ExecutiveFinalizer) ExportExecutive(ctx context.Context, req insightcon
 	}
 	analysisSum := sha256.Sum256(analysisBytes)
 	analysisHash := hex.EncodeToString(analysisSum[:])
-	idemBytes, _ := json.Marshal([]string{analysisHash, req.Mode, executiveRendererVersion, req.IdempotencyKey})
+	// A nova chave de request não cria outra revisão quando os bytes semânticos,
+	// o modo e o renderer são iguais. O conteúdo completo (inclusive os trechos
+	// permitidos que chegaram pelo leitor) entra em analysisHash.
+	idemBytes, _ := json.Marshal([]string{analysisHash, req.Mode, executiveRendererVersion})
 	idemSum := sha256.Sum256(idemBytes)
 	idem := hex.EncodeToString(idemSum[:])
 	f.mu.Lock()
@@ -355,6 +358,12 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	}
 	for _, d := range report.Dimensions {
 		l.paragraph(9.5, colorText, bold(label(d.Dimension)+" · "+label(d.Status)), plain("· "+d.Reason))
+		if len(d.MetricIDs) > 0 {
+			l.paragraph(8.2, colorMuted, plain("Métricas: "+strings.Join(d.MetricIDs, ", ")))
+		}
+		if len(d.CaseIDs) > 0 {
+			l.paragraph(8.2, colorMuted, plain("Casos relacionados: "+strings.Join(d.CaseIDs, ", ")))
+		}
 		for _, missing := range d.Missing {
 			l.paragraph(8.5, colorMuted, plain("Falta: "+missing))
 		}
@@ -430,6 +439,12 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 	recordHeader(l, c.ID+" · "+label(c.State))
 	l.heading(c.Title, 11.5, 0, false)
 	l.paragraph(9.5, colorText, plain(c.Summary))
+	if len(c.ObjectiveIDs) > 0 {
+		l.paragraph(8.2, colorMuted, plain("Objetivos relacionados: "+strings.Join(c.ObjectiveIDs, ", ")))
+	}
+	if len(c.EntityIDs) > 0 {
+		l.paragraph(8.2, colorMuted, plain("Entidades: "+strings.Join(c.EntityIDs, ", ")))
+	}
 	for _, row := range []struct {
 		name  string
 		value insightcontract.Assessment
@@ -440,6 +455,9 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 			level = "indeterminado"
 		}
 		l.paragraph(9, colorText, bold(row.name+":"), plain(level+" · "+a.Rationale))
+		if len(a.EvidenceIDs) > 0 {
+			l.paragraph(8.2, colorMuted, plain("Evidências: "+strings.Join(a.EvidenceIDs, ", ")))
+		}
 		for _, missing := range a.Missing {
 			l.paragraph(8.5, colorMuted, plain("Falta: "+missing))
 		}
@@ -456,6 +474,9 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 	}
 	for _, alternative := range c.Alternatives {
 		l.paragraph(8.8, colorText, bold("Alternativa:"), plain(alternative.Action+" · base "+label(alternative.Basis)))
+		if len(alternative.EvidenceIDs) > 0 {
+			l.paragraph(8.2, colorMuted, plain("Evidências: "+strings.Join(alternative.EvidenceIDs, ", ")))
+		}
 		if alternative.ExpectedEffect != "" {
 			l.paragraph(8.5, colorMuted, plain("Efeito esperado: "+alternative.ExpectedEffect))
 		}
@@ -476,8 +497,18 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 
 func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 	recordHeader(l, "Caso "+d.Case.ID)
+	for _, row := range []struct {
+		label string
+		ids   []string
+	}{
+		{"Fatos", d.Case.FactCaseIDs}, {"Afirmações", d.Case.ClaimIDs}, {"Decisões", d.Case.DecisionIDs}, {"Relações", d.Case.RelationIDs}, {"Objetivos", d.Case.ObjectiveIDs},
+	} {
+		if len(row.ids) > 0 {
+			l.paragraph(8.2, colorMuted, bold(row.label+":"), plain(strings.Join(row.ids, ", ")))
+		}
+	}
 	for _, f := range d.Facts {
-		l.paragraph(8.8, colorText, bold("Fato · "+label(f.Kind)+" / "+label(f.Classification)+":"), plain(f.Title))
+		l.paragraph(8.8, colorText, bold("Fato "+f.ID+" · "+label(f.Kind)+" / "+label(f.Classification)+":"), plain(f.Title))
 		for _, fact := range f.ObservedFacts {
 			l.paragraph(8.2, colorMuted, plain("Observado: "+fact))
 		}
@@ -491,14 +522,14 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		if c.EventAt != nil {
 			at = *c.EventAt
 		}
-		timeline = append(timeline, newTimelineEntry(at, "Afirmação · "+label(c.Kind)+" · "+label(c.Status), c.Text, c.Scope.Description, c.Citations))
+		timeline = append(timeline, newTimelineEntry(at, c.ID, "Afirmação · "+label(c.Kind)+" · "+label(c.Status), c.Text, c.Scope.Description, c.Citations))
 	}
 	for _, decision := range d.Decisions {
 		at := ""
 		if decision.DecidedAt != nil {
 			at = *decision.DecidedAt
 		}
-		timeline = append(timeline, newTimelineEntry(at, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations))
+		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations))
 	}
 	sort.SliceStable(timeline, func(i, j int) bool {
 		if !timeline[i].ordered {
@@ -520,7 +551,7 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 				at += " (" + item.at + ")"
 			}
 		}
-		l.paragraph(9, colorText, bold(at+" · "+item.kind+":"), plain(item.text))
+		l.paragraph(9, colorText, bold(at+" · "+item.id+" · "+item.kind+":"), plain(item.text))
 		if item.scope != "" {
 			l.paragraph(8.2, colorMuted, plain("Escopo: "+item.scope))
 		}
@@ -555,8 +586,8 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 	}
 }
 
-func newTimelineEntry(at, kind, text, scope string, citations []insightcontract.Citation) executiveTimelineEntry {
-	entry := executiveTimelineEntry{at: at, kind: kind, text: text, scope: scope, citations: citations}
+func newTimelineEntry(at, id, kind, text, scope string, citations []insightcontract.Citation) executiveTimelineEntry {
+	entry := executiveTimelineEntry{at: at, id: id, kind: kind, text: text, scope: scope, citations: citations}
 	if at != "" {
 		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
 			if parsed, err := time.Parse(layout, at); err == nil {
