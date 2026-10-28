@@ -42,9 +42,6 @@ func (c *Command) executeArgs(args []string) error {
 			}
 		}
 	}
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		return c.Help()
-	}
 
 	if c.Args != nil {
 		if err := c.Args(c, args); err != nil {

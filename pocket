@@ -29,7 +29,6 @@ _cmd_help() {
     printf "  ${C_CYAN}run${C_NC}      <host> <cmd>    Run command remotely\n"
     printf "  ${C_CYAN}copy${C_NC}     <src>  <dst>    scp wrapper (host:path)\n"
     printf "  ${C_CYAN}fleet${C_NC}    <sub>  [args]   Commands across machines\n"
-    printf "  ${C_CYAN}investigate${C_NC} [args]       Investigate authorized history (Agent)\n"
     printf "  ${C_CYAN}ansible${C_NC}  <sub>  [args]   Run Ansible playbooks through PocketCli\n"
     printf "  ${C_CYAN}status${C_NC}                   Local node status\n"
     printf "  ${C_CYAN}radar${C_NC}                    Radar dashboard\n"
@@ -160,14 +159,6 @@ _cmd_menu() {
     exec sh "${SCRIPTS}/pocketcli_menu.sh"
 }
 _cmd_doctor() { exec sh "${POCKETCLI_DIR}/tests/test_ish.sh"; }
-
-_cmd_investigate() {
-    _investigate_binary="${POCKETCLI_GO_BINARY:-${POCKETCLI_DIR}/bin/pocket-go}"
-    if [ ! -x "${_investigate_binary}" ]; then
-        die "Investigation Agent unavailable. Build with CGO_ENABLED=1 go build -tags investigate_sqlite -o ${_investigate_binary} ./cmd/pocket"
-    fi
-    exec "${_investigate_binary}" investigate "$@"
-}
 
 _persist_command_if_needed() {
     case "${1:-}" in
@@ -438,7 +429,6 @@ case "${CMD}" in
     run)                        _cmd_run "$@" ;;
     copy|cp)                    _cmd_copy "$@" ;;
     fleet)                      _cmd_fleet "$@" ;;
-    investigate)                _cmd_investigate "$@" ;;
     ansible)                    _cmd_ansible "$@" ;;
     scan)                       exec sh "${POCKETCLI_DIR}/discovery/pocketcli-scan.sh" ;;
     status)                     _cmd_status ;;

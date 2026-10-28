@@ -71,31 +71,6 @@ func TestRootCommand_NoSubcommandShowsHelpWithoutError(t *testing.T) {
 	}
 }
 
-func TestInvestigateHelpDoesNotParseHelpAsValue(t *testing.T) {
-	for _, args := range [][]string{
-		{"pocket", "investigate", "--help"},
-		{"pocket", "investigate", "start", "-h"},
-	} {
-		withArgs(t, args)
-		reader, writer, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		original := os.Stdout
-		os.Stdout = writer
-		runErr := newRootCommand().Execute()
-		os.Stdout = original
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-		output, err := io.ReadAll(reader)
-		reader.Close()
-		if err != nil || runErr != nil || !strings.Contains(string(output), "Usage: ") {
-			t.Fatalf("args=%v output=%q err=%v read=%v", args, output, runErr, err)
-		}
-	}
-}
-
 func TestSSHCommand_UsesConnectOrchestrator(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
