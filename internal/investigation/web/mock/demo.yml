@@ -1,4 +1,0 @@
-schema_version: investigate.v1
-name: PocketCli Demo
-period: 90d
-scope: all_authorized

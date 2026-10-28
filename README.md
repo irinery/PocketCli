@@ -183,10 +183,6 @@ Alguns usos que ficam possíveis com o runtime novo:
 - usar `pocket ask --explain-context` para debugar o contexto antes de gastar chamada em LLM;
 - usar `pocket fleet plan` para revisar impacto antes de rodar comando em várias máquinas.
 
-## Investigation
-
-O preview web local e o fluxo real `pocket investigate` têm objetivos diferentes. Veja o [guia de uso do Investigation](docs/investigation/usage.md) para iniciar a demonstração ao vivo, operar dentro de um checkout Git e conferir os limites de cobertura.
-
 ---
 
 ## Estrutura do projeto
