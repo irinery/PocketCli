@@ -207,6 +207,12 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		d.Snapshot.DatasetHash = storage.Hash(canonical)
 		d.Snapshot.ID = "snap-" + d.Snapshot.DatasetHash[:24]
 		d.Snapshot.PublishedAt = c.setup.now().UTC().Format(time.RFC3339)
+		if err := c.freezeInsightCoverage(d.Snapshot, plan, d); err != nil {
+			run.State = "failed"
+			run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao fixar cobertura analítica"}
+			c.saveRun(&run)
+			return
+		}
 		if err := c.saveRunBuild(run.ID, plan, d); err != nil {
 			run.State = "failed"
 			run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao persistir build"}
@@ -240,6 +246,12 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 	if err := c.putImmutable("datasets", d.Snapshot.ID, d); err != nil {
 		run.State = "failed"
 		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao publicar dados"}
+		c.saveRun(&run)
+		return
+	}
+	if err := c.freezeInsightCoverage(d.Snapshot, plan, d); err != nil {
+		run.State = "failed"
+		run.LastError = &contract.ErrorResponse{Code: "ERR_AUDIT_FAILED", Message: "falha ao fixar cobertura analítica"}
 		c.saveRun(&run)
 		return
 	}
