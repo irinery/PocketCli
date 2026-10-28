@@ -1,0 +1,1345 @@
+{
+  "meta": {
+    "synthetic": true,
+    "purpose": "Entrada e saídas esperadas para desenvolvimento paralelo; não é benchmark executado.",
+    "hash_note": "InputHash/ConfigHash são marcadores de fixture. Implementação calcula digests reais; comparar comportamento e referências. Hashes dos objetos e excertos abaixo são SHA-256 reais dos bytes indicados.",
+    "type_mapping": {
+      "config": "AnalysisConfig",
+      "source": "SourceBundle",
+      "facts": "FactsResult",
+      "analysis": "DecisionAnalysis",
+      "report": "ExecutiveReport"
+    }
+  },
+  "config": {
+    "version": "investigate.insights.v1",
+    "id": "CFG-DEMO",
+    "requested_scope": {
+      "history": {
+        "start": "2022-10-28T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "report_window": {
+        "start": "2026-10-21T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "resources": [
+        {
+          "source": "linear",
+          "id": "TEAM-DEMO",
+          "name": "Equipe sintética"
+        }
+      ]
+    },
+    "objectives": [
+      {
+        "id": "OBJ-DIRECTION",
+        "title": "Reconstruir a direção do componente demonstrativo",
+        "dimension": "direction",
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "metric_id": "",
+        "target": null,
+        "comparator": "none",
+        "unit": "",
+        "deadline": null,
+        "owner_id": null,
+        "baseline_value": null,
+        "baseline_snapshot_id": null,
+        "baseline_cohort_id": null,
+        "evidence_ids": []
+      }
+    ],
+    "policy": {
+      "id": "POL-DEMO",
+      "version": "1",
+      "minimum_quantile_sample": 10,
+      "maximum_executive_cases": 5,
+      "excerpt_max_runes": 1200,
+      "content_mode": "export_excerpts",
+      "external_processing_allowed": false
+    },
+    "budget": {
+      "max_requests": 12,
+      "max_input_tokens": 16000,
+      "max_output_tokens": 8000,
+      "max_elapsed_ms": 120000,
+      "max_cost": null,
+      "currency": null
+    },
+    "provider": {
+      "kind": "configured",
+      "model": "fake-sem-rede",
+      "endpoint_profile": "fixture-only",
+      "adapter_version": "fixture-v1"
+    }
+  },
+  "source": {
+    "version": "investigate.insights.v1",
+    "input_hash": "fixture-source-hash-not-a-production-digest",
+    "snapshot": {
+      "id": "SNAP-DEMO",
+      "schema_version": "investigate.v1",
+      "query_catalog_version": "fixture-1",
+      "dataset_hash": "fixture-dataset-hash",
+      "window": {
+        "start": "2026-10-21T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "analysis_reference_at": "2026-10-28T00:00:00Z",
+      "observation_started_at": "2026-10-28T00:00:00Z",
+      "observation_finished_at": "2026-10-28T00:00:00Z",
+      "ruleset_version": "fixture-1",
+      "mapping_version": "fixture-1"
+    },
+    "requested_scope": {
+      "history": {
+        "start": "2022-10-28T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "report_window": {
+        "start": "2026-10-21T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "resources": [
+        {
+          "source": "linear",
+          "id": "TEAM-DEMO",
+          "name": "Equipe sintética"
+        }
+      ]
+    },
+    "observed_resources": [
+      {
+        "source": "linear",
+        "id": "TEAM-DEMO",
+        "name": "Equipe sintética"
+      }
+    ],
+    "coverage": [
+      {
+        "key": {
+          "source": "linear",
+          "resource_id": "TEAM-DEMO",
+          "collection": "history"
+        },
+        "status": "partial",
+        "observed": 1,
+        "expected": null,
+        "history_observed_from": "2024-10-28T00:00:00Z",
+        "history_observed_to": "2026-10-25T12:00:00Z",
+        "history_covered_intervals": [
+          {
+            "start": "2026-10-21T00:00:00Z",
+            "end": "2026-10-28T00:00:00Z"
+          }
+        ],
+        "checked_at": "2026-10-28T00:00:00Z",
+        "reason": "Dados sintéticos limitados; envelope antigo não comprova cobertura histórica contínua.",
+        "queue_ids": [
+          "QUEUE-DEMO"
+        ]
+      }
+    ],
+    "questions": [
+      {
+        "question_id": "history_scope",
+        "status": "insufficient",
+        "required_collections": [
+          {
+            "source": "linear",
+            "resource_id": "TEAM-DEMO",
+            "collection": "history"
+          }
+        ],
+        "missing": [
+          "Cobertura verificável do histórico solicitado entre 2022 e 2026."
+        ],
+        "reason": "A fixture contém apenas uma janela recente e referências antigas de contexto."
+      }
+    ],
+    "queues": [
+      {
+        "id": "QUEUE-DEMO",
+        "source": "linear",
+        "resource_id": "TEAM-DEMO",
+        "collections": [
+          "history",
+          "comments"
+        ],
+        "scope_hash": "fixture-scope-hash",
+        "status": "pending",
+        "pending": 2,
+        "checkpoint_id": "CHECKPOINT-DEMO",
+        "retry_after": null,
+        "error_code": null
+      }
+    ],
+    "entities": [
+      {
+        "id": "ISS-OLD",
+        "kind": "issue",
+        "source": "linear",
+        "resource_id": "TEAM-DEMO",
+        "identifier": "DEMO-1",
+        "title": "Estoque antigo sintético",
+        "url": null,
+        "team_id": "TEAM-DEMO",
+        "team_name": "Equipe sintética",
+        "owner_id": null,
+        "project_id": null,
+        "component_ids": [],
+        "state": "backlog",
+        "outcome": "active",
+        "state_temporal_status": "known_at_reference",
+        "workflow_state": "Backlog",
+        "created_at": "2024-10-28T00:00:00Z",
+        "updated_at": "2026-09-20T00:00:00Z",
+        "started_at": null,
+        "completed_at": null,
+        "due_at": null,
+        "is_context": true,
+        "estimate_current": null,
+        "estimate_before_start": null,
+        "estimate_scale_id": null,
+        "evidence_ids": [
+          "EV-OLD"
+        ]
+      },
+      {
+        "id": "ISS-PLAN",
+        "kind": "issue",
+        "source": "linear",
+        "resource_id": "TEAM-DEMO",
+        "identifier": "DEMO-2",
+        "title": "Dependência planejada sintética",
+        "url": null,
+        "team_id": "TEAM-DEMO",
+        "team_name": "Equipe sintética",
+        "owner_id": null,
+        "project_id": null,
+        "component_ids": [],
+        "state": "backlog",
+        "outcome": "active",
+        "state_temporal_status": "known_at_reference",
+        "workflow_state": "Backlog",
+        "created_at": "2026-10-20T00:00:00Z",
+        "updated_at": "2026-10-26T00:00:00Z",
+        "started_at": null,
+        "completed_at": null,
+        "due_at": null,
+        "is_context": false,
+        "estimate_current": null,
+        "estimate_before_start": null,
+        "estimate_scale_id": null,
+        "evidence_ids": [
+          "EV-PLAN"
+        ]
+      },
+      {
+        "id": "ISS-DONE",
+        "kind": "issue",
+        "source": "linear",
+        "resource_id": "TEAM-DEMO",
+        "identifier": "DEMO-3",
+        "title": "Conclusão sintética na janela",
+        "url": null,
+        "team_id": "TEAM-DEMO",
+        "team_name": "Equipe sintética",
+        "owner_id": null,
+        "project_id": null,
+        "component_ids": [],
+        "state": "completed",
+        "outcome": "completed",
+        "state_temporal_status": "known_at_reference",
+        "workflow_state": "Done",
+        "created_at": "2026-10-20T00:00:00Z",
+        "updated_at": "2026-10-25T12:00:00Z",
+        "started_at": "2026-10-22T00:00:00Z",
+        "completed_at": "2026-10-25T12:00:00Z",
+        "due_at": null,
+        "is_context": false,
+        "estimate_current": null,
+        "estimate_before_start": null,
+        "estimate_scale_id": null,
+        "evidence_ids": [
+          "EV-DONE",
+          "EV-HISTORY"
+        ]
+      },
+      {
+        "id": "CMP-DEMO",
+        "kind": "component",
+        "source": "linear",
+        "resource_id": "TEAM-DEMO",
+        "identifier": "CMP-DEMO",
+        "title": "Componente demonstrativo",
+        "url": null,
+        "team_id": null,
+        "team_name": null,
+        "owner_id": null,
+        "project_id": null,
+        "component_ids": [],
+        "state": "unknown",
+        "outcome": "unknown",
+        "state_temporal_status": "unknown",
+        "workflow_state": "",
+        "created_at": null,
+        "updated_at": null,
+        "started_at": null,
+        "completed_at": null,
+        "due_at": null,
+        "is_context": false,
+        "estimate_current": null,
+        "estimate_before_start": null,
+        "estimate_scale_id": null,
+        "evidence_ids": [
+          "EV-COMP"
+        ]
+      }
+    ],
+    "evidence": [
+      {
+        "id": "EV-OLD",
+        "source": "linear",
+        "locator": "fixture:EV-OLD",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": null,
+        "content_hash": "d4dff1e97ce8a71ae9dc29cb3383f53bc8a7144d3dc946cffc05fd12f0014edd",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "Item sintético antigo em Backlog, criado em 28/10/2024 e sem trabalho iniciado.",
+        "excerpt_hash": "0acf284fd025d0213ffd2e3a7ab85bf134c9f3c388d6c8e3142924d631297549",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-PLAN",
+        "source": "linear",
+        "locator": "fixture:EV-PLAN",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": null,
+        "content_hash": "748789669a02cfc830760a48ce77cc351d7a988269a7d43e227759c9b73a90c9",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "Item sintético de planejamento em Backlog, criado em 20/10/2026, sem prazo assumido.",
+        "excerpt_hash": "6e348c349bcb3c9711d8a4e04c6ad7b3ef138fd0e78d3d3d4a86b15a78ddad0c",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-DONE",
+        "source": "linear",
+        "locator": "fixture:EV-DONE",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": null,
+        "content_hash": "877605a12478096ce3d2965093c26332dc51fe198733c47aa51f37a09ec34bee",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "Item sintético concluído em 25/10/2026 às 12:00 UTC.",
+        "excerpt_hash": "2ab79cbc235c16c1bc3f2af50491dd637323d6b5b91ffa8cef7bbced11ecaa96",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-LINK",
+        "source": "linear",
+        "locator": "fixture:EV-LINK",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": null,
+        "content_hash": "2b4452ff9770aee16b4f0bf9de7c66bf14ea7de400e45c77279c3e42b41702b3",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "ISS-PLAN depende de ISS-OLD. Ambos estão no Backlog. Nenhum compromisso de entrega foi registrado.",
+        "excerpt_hash": "d17a428edab901c0223494284f689523505e5fb39a618e464a02763e72c0f515",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-HISTORY",
+        "source": "linear",
+        "locator": "fixture:EV-HISTORY",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": "2026-10-25T12:00:00Z",
+        "content_hash": "ca0916b68f9fbdf39383ed58ddf6125eeab440ee7e8ef59337addf1e24655340",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "ISS-DONE passou de started para completed em 25/10/2026 às 12:00 UTC.",
+        "excerpt_hash": "27de482168428c8f4820b65b419ed03c712ddf5f35f00ca36261ed9b24b0d922",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-DEC-OLD",
+        "source": "linear",
+        "locator": "fixture:EV-DEC-OLD",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": "2024-10-28T00:00:00Z",
+        "content_hash": "0b80eb2f40986b66d885d42c09a064f57e404e5fce69507b1d7bdf7a6bfcac13",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono.",
+        "excerpt_hash": "afa41135364823c5dc3c6c7582822562f8b0c1992f4d1a5a540cfb0d58da0d15",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-DEC-NEW",
+        "source": "linear",
+        "locator": "fixture:EV-DEC-NEW",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": "2026-10-24T00:00:00Z",
+        "content_hash": "e1b082262a467caa56554c60f5d299036971c54e8d9e489d41ddc973924b456f",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data.",
+        "excerpt_hash": "2248a7251ed841efcdbfeb126ce70bf19f7e847d58b392af45e724eb2b3843fe",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      },
+      {
+        "id": "EV-COMP",
+        "source": "linear",
+        "locator": "fixture:EV-COMP",
+        "url": null,
+        "observed_at": "2026-10-28T00:00:00Z",
+        "source_updated_at": null,
+        "event_at": null,
+        "content_hash": "75d9b8cb58df912c476655909a15014d6076080e8a37ae3d84521aa72bee55e4",
+        "content_status": "available",
+        "integrity_status": "verified",
+        "excerpt": "CMP-DEMO é um componente sintético em produção, usado apenas como exemplo de teste.",
+        "excerpt_hash": "800dc84fe9520485dd0c450acf68169428e975c253ccf26e00fdc04ad982b7d0",
+        "redacted": false,
+        "truncated": false,
+        "sanitization_version": "fixture-1"
+      }
+    ],
+    "links": [
+      {
+        "id": "LINK-DEMO",
+        "from_id": "ISS-PLAN",
+        "to_id": "ISS-OLD",
+        "relation": "blocked_by",
+        "status": "explicit",
+        "temporal_status": "observed_at_reference",
+        "valid_from": null,
+        "valid_to": null,
+        "evidence_ids": [
+          "EV-LINK"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "EVENT-DONE",
+        "entity_id": "ISS-DONE",
+        "type": "state_changed",
+        "event_at": "2026-10-25T12:00:00Z",
+        "observed_at": "2026-10-28T00:00:00Z",
+        "actor_id": null,
+        "old_value": "started",
+        "new_value": "completed",
+        "evidence_ids": [
+          "EV-HISTORY"
+        ]
+      }
+    ],
+    "stages": [],
+    "estimates": [],
+    "deliveries": [],
+    "legacy_findings": [
+      {
+        "id": "FINDING-DEMO",
+        "rule_id": "R-BLOCK-001",
+        "subject_id": "ISS-PLAN",
+        "severity": "medium",
+        "evidence_ids": [
+          "EV-LINK"
+        ]
+      }
+    ],
+    "limitations": [
+      "Fixture sintética; não reproduz dados privados da organização."
+    ]
+  },
+  "facts": {
+    "version": "investigate.insights.v1",
+    "snapshot_id": "SNAP-DEMO",
+    "input_hash": "fixture-source-hash-not-a-production-digest",
+    "config_hash": "fixture-config-hash-not-a-production-digest",
+    "cohorts": [
+      {
+        "id": "COHORT-OPEN",
+        "definition": "Issues abertas no instante de referência, incluindo contexto com estado conhecido.",
+        "window": {
+          "start": "2026-10-21T00:00:00Z",
+          "end": "2026-10-28T00:00:00Z"
+        },
+        "reference_at": "2026-10-28T00:00:00Z",
+        "entity_ids": [
+          "ISS-OLD",
+          "ISS-PLAN"
+        ],
+        "count": 2,
+        "eligible_count": 2,
+        "coverage_status": "partial",
+        "exclusions": []
+      },
+      {
+        "id": "COHORT-DONE",
+        "definition": "Issues com completed_at dentro da janela pedida.",
+        "window": {
+          "start": "2026-10-21T00:00:00Z",
+          "end": "2026-10-28T00:00:00Z"
+        },
+        "reference_at": "2026-10-28T00:00:00Z",
+        "entity_ids": [
+          "ISS-DONE"
+        ],
+        "count": 1,
+        "eligible_count": 1,
+        "coverage_status": "partial",
+        "exclusions": []
+      }
+    ],
+    "metrics": [
+      {
+        "id": "METRIC-OPEN",
+        "name": "Itens abertos observados",
+        "state": "observed",
+        "value": 2,
+        "unit": "items",
+        "numerator": 2,
+        "denominator": null,
+        "sample_size": 2,
+        "eligible_size": 2,
+        "cohort_id": "COHORT-OPEN",
+        "method": "count-distinct",
+        "definition": "Issues abertas no instante de referência, incluindo contexto com estado conhecido.",
+        "limitations": [
+          "Universo remoto desconhecido."
+        ]
+      },
+      {
+        "id": "METRIC-AGE",
+        "name": "Mediana da idade do estoque",
+        "state": "not_calculable",
+        "value": null,
+        "unit": "seconds",
+        "numerator": null,
+        "denominator": null,
+        "sample_size": 2,
+        "eligible_size": 2,
+        "cohort_id": "COHORT-OPEN",
+        "method": "median",
+        "definition": "Idade desde criação no corte, incluindo contexto.",
+        "limitations": [
+          "Amostra abaixo do mínimo de comparação configurado nesta fixture."
+        ]
+      },
+      {
+        "id": "METRIC-REWORK",
+        "name": "Reabertura após maturação de 30 dias",
+        "state": "immature",
+        "value": null,
+        "unit": "items",
+        "numerator": null,
+        "denominator": null,
+        "sample_size": 1,
+        "eligible_size": null,
+        "cohort_id": "COHORT-DONE",
+        "method": "mature-cohort",
+        "definition": "Conclusões com seguimento completo por 30 dias.",
+        "limitations": [
+          "A única conclusão ocorreu há menos de 30 dias."
+        ]
+      }
+    ],
+    "cases": [
+      {
+        "id": "FACT-DEP",
+        "kind": "dependency",
+        "classification": "planned_dependency",
+        "title": "Dependência planejada",
+        "subject_ids": [
+          "ISS-PLAN"
+        ],
+        "related_ids": [
+          "ISS-OLD"
+        ],
+        "link_ids": [
+          "LINK-DEMO"
+        ],
+        "objective_ids": [],
+        "evidence_ids": [
+          "EV-LINK"
+        ],
+        "metric_ids": [],
+        "legacy_finding_ids": [
+          "FINDING-DEMO"
+        ],
+        "observed_facts": [
+          "Há uma relação explícita entre dois itens de Backlog."
+        ],
+        "open_questions": [
+          "Não há compromisso ou prazo conhecido que transforme a relação em urgência."
+        ]
+      },
+      {
+        "id": "FACT-COVER",
+        "kind": "coverage",
+        "classification": "unclassified",
+        "title": "Histórico insuficiente para o escopo solicitado",
+        "subject_ids": [],
+        "related_ids": [],
+        "link_ids": [],
+        "objective_ids": [],
+        "evidence_ids": [],
+        "metric_ids": [],
+        "legacy_finding_ids": [],
+        "observed_facts": [
+          "A cobertura disponível não comprova os quatro anos solicitados."
+        ],
+        "open_questions": [
+          "Quais intervalos faltam coletar para cada recurso selecionado?"
+        ]
+      }
+    ],
+    "limitations": [
+      "Contagens pertencem somente à fixture."
+    ]
+  },
+  "analysis": {
+    "version": "investigate.insights.v1",
+    "id": "ANALYSIS-DEMO",
+    "snapshot_id": "SNAP-DEMO",
+    "status": "partial",
+    "claims": [
+      {
+        "id": "CLAIM-OLD",
+        "text": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono.",
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "scope": {
+          "resource_ids": [
+            "TEAM-DEMO"
+          ],
+          "entity_ids": [
+            "CMP-DEMO"
+          ],
+          "component_ids": [
+            "CMP-DEMO"
+          ],
+          "environment": "production",
+          "conditions": [],
+          "description": "Mesmo componente demonstrativo em produção.",
+          "status": "known"
+        },
+        "kind": "decision",
+        "method": "model",
+        "event_at": "2024-10-28T00:00:00Z",
+        "valid_from": "2024-10-28T00:00:00Z",
+        "valid_to": "2026-10-24T00:00:00Z",
+        "validity_status": "known_interval",
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-OLD",
+            "quote": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono."
+          },
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ],
+        "status": "supported"
+      },
+      {
+        "id": "CLAIM-NEW",
+        "text": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data.",
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "scope": {
+          "resource_ids": [
+            "TEAM-DEMO"
+          ],
+          "entity_ids": [
+            "CMP-DEMO"
+          ],
+          "component_ids": [
+            "CMP-DEMO"
+          ],
+          "environment": "production",
+          "conditions": [],
+          "description": "Mesmo componente demonstrativo em produção.",
+          "status": "known"
+        },
+        "kind": "decision",
+        "method": "model",
+        "event_at": "2026-10-24T00:00:00Z",
+        "valid_from": "2026-10-24T00:00:00Z",
+        "valid_to": null,
+        "validity_status": "open_ended",
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ],
+        "status": "supported"
+      }
+    ],
+    "claim_relations": [
+      {
+        "id": "REL-CLAIM",
+        "from_claim_id": "CLAIM-NEW",
+        "to_claim_id": "CLAIM-OLD",
+        "kind": "supersedes",
+        "status": "established",
+        "valid_from": "2026-10-24T00:00:00Z",
+        "valid_to": null,
+        "validity_status": "open_ended",
+        "reason": "A nova escolha substitui expressamente a decisão anterior.",
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-OLD",
+            "quote": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono."
+          },
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ]
+      }
+    ],
+    "decisions": [
+      {
+        "id": "DEC-OLD",
+        "question": "Qual modo de processamento usar?",
+        "choice": "Síncrono",
+        "rationale": "Escolha registrada em 2024.",
+        "scope": {
+          "resource_ids": [
+            "TEAM-DEMO"
+          ],
+          "entity_ids": [
+            "CMP-DEMO"
+          ],
+          "component_ids": [
+            "CMP-DEMO"
+          ],
+          "environment": "production",
+          "conditions": [],
+          "description": "Mesmo componente demonstrativo em produção.",
+          "status": "known"
+        },
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "claim_ids": [
+          "CLAIM-OLD"
+        ],
+        "status": "superseded",
+        "method": "model",
+        "decided_at": "2024-10-28T00:00:00Z",
+        "valid_from": "2024-10-28T00:00:00Z",
+        "valid_to": "2026-10-24T00:00:00Z",
+        "validity_status": "known_interval",
+        "decision_maker_id": null,
+        "recorded_by_id": null,
+        "objective_ids": [
+          "OBJ-DIRECTION"
+        ],
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-OLD",
+            "quote": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono."
+          },
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ]
+      },
+      {
+        "id": "DEC-NEW",
+        "question": "Qual modo de processamento usar?",
+        "choice": "Assíncrono",
+        "rationale": "Substituição expressa na decisão de 2026.",
+        "scope": {
+          "resource_ids": [
+            "TEAM-DEMO"
+          ],
+          "entity_ids": [
+            "CMP-DEMO"
+          ],
+          "component_ids": [
+            "CMP-DEMO"
+          ],
+          "environment": "production",
+          "conditions": [],
+          "description": "Mesmo componente demonstrativo em produção.",
+          "status": "known"
+        },
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "claim_ids": [
+          "CLAIM-NEW"
+        ],
+        "status": "accepted",
+        "method": "model",
+        "decided_at": "2026-10-24T00:00:00Z",
+        "valid_from": "2026-10-24T00:00:00Z",
+        "valid_to": null,
+        "validity_status": "open_ended",
+        "decision_maker_id": null,
+        "recorded_by_id": null,
+        "objective_ids": [
+          "OBJ-DIRECTION"
+        ],
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "id": "REL-DEC",
+        "from_decision_id": "DEC-NEW",
+        "to_decision_id": "DEC-OLD",
+        "kind": "supersedes",
+        "status": "established",
+        "valid_from": "2026-10-24T00:00:00Z",
+        "valid_to": null,
+        "validity_status": "open_ended",
+        "reason": "A nova escolha substitui expressamente a decisão anterior.",
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-OLD",
+            "quote": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono."
+          },
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ]
+      }
+    ],
+    "cases": [
+      {
+        "id": "CASE-COVER",
+        "title": "Completar a evidência para julgar o histórico",
+        "state": "needs_evidence",
+        "fact_case_ids": [
+          "FACT-COVER"
+        ],
+        "decision_ids": [],
+        "claim_ids": [],
+        "relation_ids": [],
+        "objective_ids": [
+          "OBJ-DIRECTION"
+        ],
+        "entity_ids": [],
+        "summary": "O escopo solicitado não está suficientemente coberto.",
+        "impact": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "complexity": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "urgency": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "confidence": {
+          "state": "assessed",
+          "level": "high",
+          "rationale": "Limitação declarada pelo manifesto de cobertura sintético.",
+          "evidence_ids": [],
+          "missing": []
+        },
+        "alternatives": [
+          {
+            "id": "ALT-COVER",
+            "action": "Completar a coleta histórica em lotes retomáveis e reanalisar.",
+            "expected_effect": "Ampliar a base para responder ao objetivo histórico.",
+            "tradeoffs": [
+              "Exige tempo e orçamento de coleta."
+            ],
+            "preconditions": [
+              "Confirmar fontes e intervalos do plano de coleta."
+            ],
+            "basis": "inference",
+            "evidence_ids": []
+          }
+        ],
+        "recommended_alternative_id": "ALT-COVER",
+        "recommendation_basis": "inference",
+        "owner_id": null,
+        "next_evidence": [
+          "Intervalos cobertos e conteúdo semântico das fontes selecionadas."
+        ],
+        "citations": []
+      },
+      {
+        "id": "CASE-DEP",
+        "title": "Dependência planejada no Backlog",
+        "state": "monitor",
+        "fact_case_ids": [
+          "FACT-DEP"
+        ],
+        "decision_ids": [],
+        "claim_ids": [],
+        "relation_ids": [],
+        "objective_ids": [],
+        "entity_ids": [
+          "ISS-PLAN",
+          "ISS-OLD"
+        ],
+        "summary": "Uma dependência planejada não comprova impedimento atual.",
+        "impact": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "complexity": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "urgency": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "confidence": {
+          "state": "assessed",
+          "level": "high",
+          "rationale": "A relação e os estados estão explícitos nesta fixture.",
+          "evidence_ids": [
+            "EV-LINK"
+          ],
+          "missing": []
+        },
+        "alternatives": [],
+        "recommended_alternative_id": null,
+        "recommendation_basis": "inference",
+        "owner_id": null,
+        "next_evidence": [],
+        "citations": [
+          {
+            "evidence_id": "EV-LINK",
+            "quote": "Ambos estão no Backlog."
+          }
+        ]
+      },
+      {
+        "id": "CASE-DEC",
+        "title": "Orientação anterior substituída",
+        "state": "resolved",
+        "fact_case_ids": [],
+        "decision_ids": [
+          "DEC-OLD",
+          "DEC-NEW"
+        ],
+        "claim_ids": [
+          "CLAIM-OLD",
+          "CLAIM-NEW"
+        ],
+        "relation_ids": [
+          "REL-DEC",
+          "REL-CLAIM"
+        ],
+        "objective_ids": [
+          "OBJ-DIRECTION"
+        ],
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "summary": "A troca de orientação está documentada; não é conflito atual nesta fixture.",
+        "impact": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "complexity": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "urgency": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "confidence": {
+          "state": "assessed",
+          "level": "high",
+          "rationale": "Trechos sintéticos são explícitos; não é uma medida calibrada de qualidade de modelo.",
+          "evidence_ids": [
+            "EV-DEC-OLD",
+            "EV-DEC-NEW"
+          ],
+          "missing": []
+        },
+        "alternatives": [],
+        "recommended_alternative_id": null,
+        "recommendation_basis": "source",
+        "owner_id": null,
+        "next_evidence": [],
+        "citations": [
+          {
+            "evidence_id": "EV-DEC-OLD",
+            "quote": "Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono."
+          },
+          {
+            "evidence_id": "EV-DEC-NEW",
+            "quote": "Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data."
+          }
+        ]
+      }
+    ],
+    "dimensions": [
+      {
+        "objective_id": "OBJ-DIRECTION",
+        "dimension": "direction",
+        "status": "indeterminate",
+        "reason": "A fixture resolve uma mudança de direção, mas não reconstrói os quatro anos.",
+        "metric_ids": [],
+        "case_ids": [
+          "CASE-COVER",
+          "CASE-DEC"
+        ],
+        "missing": [
+          "Cobertura histórica completa do escopo."
+        ]
+      }
+    ],
+    "limitations": [
+      "Saída esperada sintética para fakes, não execução de modelo real."
+    ],
+    "provenance": {
+      "input_hash": "fixture-source-hash-not-a-production-digest",
+      "config_hash": "fixture-config-hash-not-a-production-digest",
+      "provider": "fixture",
+      "model": "fake-sem-rede",
+      "adapter_version": "fixture-v1",
+      "prompt_version": "fixture-1",
+      "rubric_version": "fixture-1",
+      "policy_version": "1",
+      "ruleset_version": "fixture-1",
+      "created_at": "2026-10-28T00:00:00Z",
+      "cache_key": "fixture-cache-key"
+    },
+    "usage": {
+      "requests": 0,
+      "input_tokens": null,
+      "output_tokens": null,
+      "elapsed_ms": 0,
+      "cost": null,
+      "currency": null,
+      "price_version": null,
+      "cache_hits": 0
+    }
+  },
+  "report": {
+    "version": "investigate.insights.v1",
+    "snapshot_id": "SNAP-DEMO",
+    "analysis_id": "ANALYSIS-DEMO",
+    "publication_status": "ready",
+    "analysis_status": "partial",
+    "sufficiency_status": "insufficient",
+    "headline": "Cobertura insuficiente para julgar os quatro anos",
+    "summary": "Há fatos e uma substituição de decisão demonstráveis; o objetivo histórico permanece indeterminado.",
+    "requested_scope": {
+      "history": {
+        "start": "2022-10-28T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "report_window": {
+        "start": "2026-10-21T00:00:00Z",
+        "end": "2026-10-28T00:00:00Z"
+      },
+      "resources": [
+        {
+          "source": "linear",
+          "id": "TEAM-DEMO",
+          "name": "Equipe sintética"
+        }
+      ]
+    },
+    "questions": [
+      {
+        "question_id": "history_scope",
+        "status": "insufficient",
+        "required_collections": [
+          {
+            "source": "linear",
+            "resource_id": "TEAM-DEMO",
+            "collection": "history"
+          }
+        ],
+        "missing": [
+          "Cobertura verificável do histórico solicitado entre 2022 e 2026."
+        ],
+        "reason": "A fixture contém apenas uma janela recente e referências antigas de contexto."
+      }
+    ],
+    "dimensions": [
+      {
+        "objective_id": "OBJ-DIRECTION",
+        "dimension": "direction",
+        "status": "indeterminate",
+        "reason": "A fixture resolve uma mudança de direção, mas não reconstrói os quatro anos.",
+        "metric_ids": [],
+        "case_ids": [
+          "CASE-COVER",
+          "CASE-DEC"
+        ],
+        "missing": [
+          "Cobertura histórica completa do escopo."
+        ]
+      }
+    ],
+    "metrics": [
+      {
+        "id": "METRIC-OPEN",
+        "name": "Itens abertos observados",
+        "state": "observed",
+        "value": 2,
+        "unit": "items",
+        "numerator": 2,
+        "denominator": null,
+        "sample_size": 2,
+        "eligible_size": 2,
+        "cohort_id": "COHORT-OPEN",
+        "method": "count-distinct",
+        "definition": "Issues abertas no instante de referência, incluindo contexto com estado conhecido.",
+        "limitations": [
+          "Universo remoto desconhecido."
+        ]
+      },
+      {
+        "id": "METRIC-AGE",
+        "name": "Mediana da idade do estoque",
+        "state": "not_calculable",
+        "value": null,
+        "unit": "seconds",
+        "numerator": null,
+        "denominator": null,
+        "sample_size": 2,
+        "eligible_size": 2,
+        "cohort_id": "COHORT-OPEN",
+        "method": "median",
+        "definition": "Idade desde criação no corte, incluindo contexto.",
+        "limitations": [
+          "Amostra abaixo do mínimo de comparação configurado nesta fixture."
+        ]
+      },
+      {
+        "id": "METRIC-REWORK",
+        "name": "Reabertura após maturação de 30 dias",
+        "state": "immature",
+        "value": null,
+        "unit": "items",
+        "numerator": null,
+        "denominator": null,
+        "sample_size": 1,
+        "eligible_size": null,
+        "cohort_id": "COHORT-DONE",
+        "method": "mature-cohort",
+        "definition": "Conclusões com seguimento completo por 30 dias.",
+        "limitations": [
+          "A única conclusão ocorreu há menos de 30 dias."
+        ]
+      }
+    ],
+    "cases": [
+      {
+        "id": "CASE-COVER",
+        "title": "Completar a evidência para julgar o histórico",
+        "state": "needs_evidence",
+        "fact_case_ids": [
+          "FACT-COVER"
+        ],
+        "decision_ids": [],
+        "claim_ids": [],
+        "relation_ids": [],
+        "objective_ids": [
+          "OBJ-DIRECTION"
+        ],
+        "entity_ids": [],
+        "summary": "O escopo solicitado não está suficientemente coberto.",
+        "impact": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "complexity": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "urgency": {
+          "state": "indeterminate",
+          "level": "unknown",
+          "rationale": "Não há dados suficientes para esta dimensão.",
+          "evidence_ids": [],
+          "missing": [
+            "Critério ou evidência de consequência."
+          ]
+        },
+        "confidence": {
+          "state": "assessed",
+          "level": "high",
+          "rationale": "Limitação declarada pelo manifesto de cobertura sintético.",
+          "evidence_ids": [],
+          "missing": []
+        },
+        "alternatives": [
+          {
+            "id": "ALT-COVER",
+            "action": "Completar a coleta histórica em lotes retomáveis e reanalisar.",
+            "expected_effect": "Ampliar a base para responder ao objetivo histórico.",
+            "tradeoffs": [
+              "Exige tempo e orçamento de coleta."
+            ],
+            "preconditions": [
+              "Confirmar fontes e intervalos do plano de coleta."
+            ],
+            "basis": "inference",
+            "evidence_ids": []
+          }
+        ],
+        "recommended_alternative_id": "ALT-COVER",
+        "recommendation_basis": "inference",
+        "owner_id": null,
+        "next_evidence": [
+          "Intervalos cobertos e conteúdo semântico das fontes selecionadas."
+        ],
+        "citations": []
+      }
+    ],
+    "total_cases": 3,
+    "case_ids": [
+      "CASE-COVER"
+    ],
+    "next_actions": [
+      "Completar os intervalos históricos faltantes antes de avaliar direção global."
+    ],
+    "limitations": [
+      "Fixture inteiramente sintética."
+    ]
+  },
+  "objects": {
+    "EV-OLD": {
+      "raw_json": "{\"body\":\"Item sintético antigo em Backlog, criado em 28/10/2024 e sem trabalho iniciado.\"}",
+      "sha256": "d4dff1e97ce8a71ae9dc29cb3383f53bc8a7144d3dc946cffc05fd12f0014edd"
+    },
+    "EV-PLAN": {
+      "raw_json": "{\"body\":\"Item sintético de planejamento em Backlog, criado em 20/10/2026, sem prazo assumido.\"}",
+      "sha256": "748789669a02cfc830760a48ce77cc351d7a988269a7d43e227759c9b73a90c9"
+    },
+    "EV-DONE": {
+      "raw_json": "{\"body\":\"Item sintético concluído em 25/10/2026 às 12:00 UTC.\"}",
+      "sha256": "877605a12478096ce3d2965093c26332dc51fe198733c47aa51f37a09ec34bee"
+    },
+    "EV-LINK": {
+      "raw_json": "{\"body\":\"ISS-PLAN depende de ISS-OLD. Ambos estão no Backlog. Nenhum compromisso de entrega foi registrado.\"}",
+      "sha256": "2b4452ff9770aee16b4f0bf9de7c66bf14ea7de400e45c77279c3e42b41702b3"
+    },
+    "EV-HISTORY": {
+      "raw_json": "{\"body\":\"ISS-DONE passou de started para completed em 25/10/2026 às 12:00 UTC.\"}",
+      "sha256": "ca0916b68f9fbdf39383ed58ddf6125eeab440ee7e8ef59337addf1e24655340"
+    },
+    "EV-DEC-OLD": {
+      "raw_json": "{\"body\":\"Decisão aprovada em 2024: o componente demonstrativo em produção usa processamento síncrono.\"}",
+      "sha256": "0b80eb2f40986b66d885d42c09a064f57e404e5fce69507b1d7bdf7a6bfcac13"
+    },
+    "EV-DEC-NEW": {
+      "raw_json": "{\"body\":\"Decisão aprovada em 24/10/2026: substituir a decisão de 2024 pelo processamento assíncrono no mesmo componente demonstrativo em produção, a partir desta data.\"}",
+      "sha256": "e1b082262a467caa56554c60f5d299036971c54e8d9e489d41ddc973924b456f"
+    },
+    "EV-COMP": {
+      "raw_json": "{\"body\":\"CMP-DEMO é um componente sintético em produção, usado apenas como exemplo de teste.\"}",
+      "sha256": "75d9b8cb58df912c476655909a15014d6076080e8a37ae3d84521aa72bee55e4"
+    }
+  }
+}
