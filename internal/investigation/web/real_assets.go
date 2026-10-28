@@ -40,6 +40,7 @@ const realAppJSTemplate = `(() => {
   const contractVersion = 'investigate.v1';
   let csrf = '', capabilities = null, snapshot = null, snapshots = [], findings = [], queries = [], activeView = 'overview';
   let analyses = [], analysesCursor = '', activeAnalysisID = '', executiveReport = null;
+  let analysisPages = {requested: new Set(), ids: new Set(), total: null};
   let findingsLoaded = false, queriesLoaded = false;
 
   const node = (tag, className, value) => {
@@ -51,7 +52,10 @@ const realAppJSTemplate = `(() => {
   const button = (label, action, className = '') => {
     const item = node('button', className, label);
     item.type = 'button';
-    item.addEventListener('click', action);
+    item.addEventListener('click', async event => {
+      try { await action(event); }
+      catch (error) { fail(item.parentElement || main, error); }
+    });
     return item;
   };
   const card = title => {
@@ -137,14 +141,29 @@ const realAppJSTemplate = `(() => {
     snapshot = await api('/snapshots/' + segment(id));
     if (snapshot.investigation_id !== investigationId) throw new Error('Snapshot de outra investigação.');
     findings = []; queries = []; findingsLoaded = false; queriesLoaded = false; analyses = []; analysesCursor = ''; activeAnalysisID = ''; executiveReport = null;
+    analysisPages = {requested: new Set(['']), ids: new Set(), total: null};
     if (capabilities && capabilities.analysis_available && capabilities.insights_available) {
       const page = await api('/snapshots/' + segment(id) + '/insights?limit=50');
-      if (page.snapshot_id !== id) throw new Error('A lista de análises pertence a outro snapshot.');
-      analyses = page.items || []; analysesCursor = page.next_cursor || '';
+      acceptAnalysisPage(page, '');
     }
     $('#snapshot-label').textContent = 'Snapshot ' + id + ' · ' + (snapshot.published_at || snapshot.status);
   }
+  function acceptAnalysisPage(page, requestedCursor) {
+    if (!snapshot || page.snapshot_id !== snapshot.id || !Array.isArray(page.items) || !Number.isSafeInteger(page.total) || page.total < 0 || page.items.length > 50 || page.items.length > page.total) throw new Error('A lista de análises retornou uma página inválida ou de outro snapshot.');
+    if (analysisPages.total !== null && analysisPages.total !== page.total) throw new Error('O total de análises mudou durante a paginação.');
+    analysisPages.total = page.total;
+    if (page.next_cursor && (page.next_cursor === requestedCursor || analysisPages.requested.has(page.next_cursor))) throw new Error('A paginação de análises repetiu um cursor.');
+    for (const item of page.items) {
+      if (!item.id || item.snapshot_id !== snapshot.id || analysisPages.ids.has(item.id)) throw new Error('A página contém análise vazia, duplicada ou de outro snapshot.');
+      analysisPages.ids.add(item.id);
+    }
+    if (page.next_cursor && analysisPages.ids.size >= page.total) throw new Error('A lista de análises avançou além do total informado.');
+    if (!page.next_cursor && analysisPages.ids.size !== page.total) throw new Error('A paginação terminou antes de carregar todas as análises.');
+    analyses.push(...page.items);
+    analysesCursor = page.next_cursor || '';
+  }
   async function init() {
+    main.replaceChildren(node('p', 'loading', 'Carregando snapshot e análises disponíveis…'));
     try {
       csrf = (await api('/session')).csrf_token;
       capabilities = await api('/capabilities');
@@ -389,12 +408,19 @@ const realAppJSTemplate = `(() => {
         option.value = item.id; select.append(option);
       });
       select.value = activeAnalysisID;
-      select.onchange = async () => { if (!select.value) { activeAnalysisID = ''; executiveReport = null; return overview(); } await loadExecutiveReport(select.value); overview(); };
+      select.onchange = async () => {
+        if (!select.value) { activeAnalysisID = ''; executiveReport = null; return overview(); }
+        const loading = card('Resumo da análise'); loading.append(node('p', 'loading', 'Carregando relatório executivo…')); parent.replaceChildren(loading);
+        try { await loadExecutiveReport(select.value); await overview(); }
+        catch (error) { await overview(); fail(parent, error); }
+      };
       box.append(field('Versão da análise', select));
       if (analysesCursor) box.append(button('Carregar mais análises', async () => {
-        const page = await api('/snapshots/' + segment(snapshot.id) + '/insights?limit=50&cursor=' + segment(analysesCursor));
-        if (page.snapshot_id !== snapshot.id) throw new Error('A página pertence a outro snapshot.');
-        analyses.push(...(page.items || [])); analysesCursor = page.next_cursor || ''; overview();
+        const cursor = analysesCursor;
+        if (analysisPages.requested.has(cursor)) throw new Error('A paginação de análises repetiu um cursor.');
+        analysisPages.requested.add(cursor);
+        const page = await api('/snapshots/' + segment(snapshot.id) + '/insights?limit=50&cursor=' + segment(cursor));
+        acceptAnalysisPage(page, cursor); overview();
       }));
     }
     parent.append(box);
@@ -409,7 +435,7 @@ const realAppJSTemplate = `(() => {
     activeAnalysisID = id; executiveReport = report;
   }
   function valueAssessment(title, value) {
-    const box = card(title + ' · ' + (value.state === 'assessed' ? labelPt(value.level) : 'indeterminado'));
+    const box = card(title + ' · ' + labelPt(value.state) + ' · ' + labelPt(value.level || 'unknown'));
     box.append(node('p', '', value.rationale || 'Sem racional informado.'));
     (value.missing || []).forEach(item => box.append(node('p', 'callout', 'Falta: ' + item)));
     if (value.evidence_ids && value.evidence_ids.length) box.append(node('p', 'muted', 'Evidências: ' + value.evidence_ids.join(', ')));
@@ -465,32 +491,58 @@ const realAppJSTemplate = `(() => {
       });
       (item.next_evidence || []).forEach(value => row.append(node('p', 'callout', 'Próxima evidência: ' + value)));
       (item.citations || []).forEach(value => row.append(node('p', 'muted', value.evidence_id + ': ' + value.quote)));
-      const open = button('Abrir evidências e timeline', async () => { const detail = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(item.id)); renderCaseDetail(detail); });
+      const open = button('Abrir evidências e timeline', () => openInsightCase(item.id));
       row.append(open); cases.append(row);
     });
     if (report.total_cases > (report.cases || []).length) cases.append(button('Abrir lista completa de casos', async () => { await renderInsightCases(cases, ''); }));
     parent.append(cases);
     const actions = card('Exportações');
     ['executive', 'analysis_detail'].forEach(mode => actions.append(button(mode === 'executive' ? 'Exportar resumo executivo' : 'Exportar análise detalhada', async () => {
-      const artifact = await write('/insights/exports', {snapshot_id: snapshot.id, analysis_id: activeAnalysisID, mode, idempotency_key: crypto.randomUUID()});
-      const link = node('a', 'primary', mode + ' · ' + artifact.page_count + ' páginas · baixar PDF'); link.href = artifact.download_path;
-      actions.append(link, node('p', 'muted', 'Exportado · ' + artifact.selected_case_count + ' de ' + artifact.total_case_count + ' casos · suficiência ' + report.sufficiency_status));
+      const loading = node('p', 'loading', 'Gerando PDF e validando os dados da análise…'); actions.append(loading);
+      try {
+        const artifact = await write('/insights/exports', {snapshot_id: snapshot.id, analysis_id: activeAnalysisID, mode, idempotency_key: crypto.randomUUID()});
+        const link = node('a', 'primary', mode + ' · ' + artifact.page_count + ' páginas · baixar PDF'); link.href = artifact.download_path;
+        actions.append(link, node('p', 'muted', 'Exportado · ' + artifact.selected_case_count + ' de ' + artifact.total_case_count + ' casos · suficiência ' + report.sufficiency_status));
+      } catch (error) { fail(actions, error); }
+      finally { loading.remove(); }
     })));
     parent.append(actions);
   }
-  async function renderInsightCases(parent, cursor) {
+  async function renderInsightCases(parent, cursor, pageState = {requested: new Set(['']), ids: new Set(), total: null, lastID: ''}) {
+    if (cursor && pageState.requested.has(cursor)) throw new Error('A paginação de casos repetiu um cursor.');
+    if (cursor) pageState.requested.add(cursor);
+    parent.replaceChildren(node('p', 'loading', 'Carregando casos…'));
     const params = new URLSearchParams({limit: '50'}); if (cursor) params.set('cursor', cursor);
     const page = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases?' + params);
     if (page.snapshot_id !== snapshot.id || page.analysis_id !== activeAnalysisID) throw new Error('A página de casos pertence a outra análise.');
     if (executiveReport && page.total !== executiveReport.total_cases) throw new Error('O total de casos diverge do relatório executivo.');
-    const listing = card('Casos · ' + (page.cases || []).length + ' nesta página de ' + page.total);
+    if (!Array.isArray(page.cases) || !Number.isSafeInteger(page.total) || page.total < 0 || page.cases.length > 50 || page.cases.length > page.total || (pageState.total !== null && page.total !== pageState.total)) throw new Error('A página de casos excedeu os limites ou mudou o total.');
+    pageState.total = page.total;
+    if (page.next_cursor && (page.next_cursor === cursor || pageState.requested.has(page.next_cursor))) throw new Error('A paginação de casos repetiu um cursor.');
+    const listing = card('Casos · ' + page.cases.length + ' nesta página de ' + page.total);
+    if (page.cases.length === 0) listing.append(node('p', 'empty', 'Não há casos nesta página.'));
     (page.cases || []).forEach(item => {
+      if (!item.id || pageState.ids.has(item.id) || (pageState.lastID && item.id < pageState.lastID)) throw new Error('A lista de casos tem ID vazio, repetido ou fora da ordem estável.');
+      pageState.ids.add(item.id); pageState.lastID = item.id;
       const row = card(item.title + ' · ' + labelPt(item.state)); row.append(node('p', '', item.summary));
-      row.append(button('Abrir evidências e timeline', async () => { const detail = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(item.id)); renderCaseDetail(detail); }));
+      row.append(button('Abrir evidências e timeline', () => openInsightCase(item.id)));
       listing.append(row);
     });
-    if (page.next_cursor) listing.append(button('Próxima página', () => renderInsightCases(parent, page.next_cursor)));
+    if (page.next_cursor && pageState.ids.size >= page.total) throw new Error('A lista de casos avançou além do total informado.');
+    if (!page.next_cursor && pageState.ids.size !== page.total) throw new Error('A paginação terminou antes de carregar todos os casos.');
+    if (page.next_cursor) listing.append(button('Próxima página', () => renderInsightCases(parent, page.next_cursor, pageState)));
     parent.replaceChildren(listing);
+  }
+  async function openInsightCase(caseID) {
+    detail.hidden = false;
+    detail.replaceChildren(node('p', 'loading', 'Carregando evidências e timeline do caso…'));
+    try {
+      const record = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(caseID));
+      if (record.snapshot_id !== snapshot.id || record.analysis_id !== activeAnalysisID || record.case.id !== caseID) throw new Error('O detalhe pertence a outro snapshot, análise ou caso.');
+      renderCaseDetail(record);
+    } catch (error) {
+      detail.replaceChildren(); fail(detail, error);
+    }
   }
   function renderCaseDetail(detailRecord) {
     detail.hidden = false;
@@ -543,19 +595,38 @@ const realAppJSTemplate = `(() => {
     box.append(node('p', 'muted', 'Abrir snapshot e selecionar análise não chama o provedor. A execução começa somente pelo botão abaixo.'));
     const configFile = node('input'); configFile.type = 'file'; configFile.accept = 'application/json,.json';
     const configView = node('pre', 'code', 'Selecione um arquivo JSON AnalysisConfig. O arquivo e seu caminho ficam no navegador; somente o conteúdo tipado será enviado.');
+    const onlyKeys = (value, allowed, label) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(label + ' deve ser um objeto JSON.');
+      const extra = Object.keys(value).find(key => !allowed.includes(key));
+      if (extra) throw new Error(label + ' contém o campo não permitido "' + extra + '"; credenciais e campos extras não são enviados.');
+    };
+    const analysisConfigFromFile = raw => {
+      onlyKeys(raw, ['version', 'id', 'requested_scope', 'objectives', 'policy', 'budget', 'provider'], 'AnalysisConfig');
+      onlyKeys(raw.requested_scope, ['history', 'report_window', 'resources'], 'requested_scope');
+      onlyKeys(raw.requested_scope.history, ['start', 'end'], 'requested_scope.history');
+      onlyKeys(raw.requested_scope.report_window, ['start', 'end'], 'requested_scope.report_window');
+      if (!Array.isArray(raw.requested_scope.resources) || !Array.isArray(raw.objectives)) throw new Error('Escopo e objetivos devem ser listas no formato AnalysisConfig v1.');
+      raw.requested_scope.resources.forEach(item => onlyKeys(item, ['source', 'id', 'name'], 'resource'));
+      raw.objectives.forEach(item => onlyKeys(item, ['id', 'title', 'dimension', 'entity_ids', 'metric_id', 'target', 'comparator', 'unit', 'deadline', 'owner_id', 'baseline_value', 'baseline_snapshot_id', 'baseline_cohort_id', 'evidence_ids'], 'objective'));
+      onlyKeys(raw.policy, ['id', 'version', 'minimum_quantile_sample', 'maximum_executive_cases', 'excerpt_max_runes', 'content_mode', 'external_processing_allowed'], 'policy');
+      onlyKeys(raw.budget, ['max_requests', 'max_input_tokens', 'max_output_tokens', 'max_elapsed_ms', 'max_cost', 'currency'], 'budget');
+      onlyKeys(raw.provider, ['kind', 'model', 'endpoint_profile', 'adapter_version'], 'provider');
+      if (raw.version !== 'investigate.insights.v1') throw new Error('A configuração precisa usar investigate.insights.v1.');
+      return JSON.parse(JSON.stringify(raw));
+    };
     configFile.onchange = async () => {
       try {
         const file = configFile.files && configFile.files[0]; if (!file) return;
-        const config = JSON.parse(await file.text());
-        configView.textContent = JSON.stringify({version: config.version, id: config.id, requested_scope: config.requested_scope, objectives: config.objectives, policy: config.policy, budget: config.budget, provider: config.provider}, null, 2);
+        const config = analysisConfigFromFile(JSON.parse(await file.text()));
+        configView.textContent = JSON.stringify(config, null, 2);
       } catch (error) { configView.textContent = 'JSON inválido: ' + error.message; }
     };
     const start = button('Iniciar análise', async () => {
       start.disabled = true;
       try {
         if (!configFile.files || !configFile.files[0]) throw new Error('Selecione um arquivo de configuração.');
-        const config = JSON.parse(await configFile.files[0].text());
-        if (config.version !== 'investigate.insights.v1' || !config.requested_scope || !Array.isArray(config.objectives) || !config.policy || !config.budget || !config.provider) throw new Error('O JSON não tem o formato AnalysisConfig v1.');
+        const config = analysisConfigFromFile(JSON.parse(await configFile.files[0].text()));
+        if (!config.requested_scope || !Array.isArray(config.objectives) || !config.policy || !config.budget || !config.provider) throw new Error('O JSON não tem o formato AnalysisConfig v1.');
         const review = JSON.stringify(config, null, 2);
         if (!window.confirm('Revise a configuração exibida antes de enviar:\n\n' + review)) return;
         const run = await write('/insights/runs', {snapshot_id: snapshot.id, config, idempotency_key: crypto.randomUUID()});

@@ -333,11 +333,20 @@ func sequenceKey(snapshot, analysis, mode string) string {
 }
 
 func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport, details []insightcontract.CaseDetail, mode string, created time.Time) ([]byte, int, error) {
+	l, err := layoutExecutive(ctx, report, details, mode, created)
+	if err != nil {
+		return nil, 0, err
+	}
+	data, err := l.encode("Visão executiva "+report.SnapshotID, "PocketCli · análise "+report.AnalysisID, created)
+	return data, len(l.pages), err
+}
+
+func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport, details []insightcontract.CaseDetail, mode string, created time.Time) (*pdfLayout, error) {
 	l := newPDFLayout()
 	l.heading("Visão executiva", 22, 0, false)
 	l.paragraph(9.5, colorMuted, plain("PocketCli · investigação executiva"))
 	modeLabel := map[string]string{"executive": "Executivo", "analysis_detail": "Detalhado"}[mode]
-	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"Análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
+	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"ID da análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Estado da análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
 		l.paragraph(9, colorText, bold(row[0]), plain(row[1]))
 	}
 	l.heading(report.Headline, 15, 8, true)
@@ -372,7 +381,7 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		l.heading("Métricas", 14, 8, true)
 		for _, m := range report.Metrics {
 			if err := ctx.Err(); err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 			value := "não determinado"
 			if m.State == "observed" && m.Value != nil {
@@ -410,10 +419,13 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		selectedLabel = "incluídos no detalhe"
 	}
 	l.paragraph(9, colorMuted, plain(fmt.Sprintf("%d de %d casos %s.", len(cases), report.TotalCases, selectedLabel)))
+	if mode == "executive" && int64(len(cases)) < report.TotalCases {
+		l.banner(8.8, plain("Esta seleção é parcial. Consulte a lista completa de casos na interface local e gere a exportação detalhada para percorrer toda a análise."))
+	}
 	for _, c := range cases {
 		renderDecisionCase(l, c)
 		if err := ctx.Err(); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 	}
 	if mode == "analysis_detail" {
@@ -421,7 +433,7 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		for _, d := range details {
 			renderCaseDetail(l, d)
 			if err := ctx.Err(); err != nil {
-				return nil, 0, err
+				return nil, err
 			}
 		}
 	}
@@ -431,8 +443,7 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 			l.paragraph(9, colorText, plain("• "+v))
 		}
 	}
-	data, err := l.encode("Visão executiva "+report.SnapshotID, "PocketCli · análise "+report.AnalysisID, created)
-	return data, len(l.pages), err
+	return l, nil
 }
 
 func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
@@ -450,11 +461,7 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 		value insightcontract.Assessment
 	}{{"Impacto", c.Impact}, {"Complexidade", c.Complexity}, {"Urgência", c.Urgency}, {"Confiança", c.Confidence}} {
 		a := row.value
-		level := label(a.Level)
-		if a.State != "assessed" {
-			level = "indeterminado"
-		}
-		l.paragraph(9, colorText, bold(row.name+":"), plain(level+" · "+a.Rationale))
+		l.paragraph(9, colorText, bold(row.name+":"), plain(label(a.State)+" · "+label(a.Level)+" · "+a.Rationale))
 		if len(a.EvidenceIDs) > 0 {
 			l.paragraph(8.2, colorMuted, plain("Evidências: "+strings.Join(a.EvidenceIDs, ", ")))
 		}
