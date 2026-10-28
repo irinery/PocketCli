@@ -11,11 +11,13 @@ import (
 type PositionalArgs func(cmd *Command, args []string) error
 
 type Command struct {
-	Use    string
-	Short  string
-	Hidden bool
-	Args   PositionalArgs
-	RunE   func(cmd *Command, args []string) error
+	Use     string
+	Short   string
+	Long    string
+	Example string
+	Hidden  bool
+	Args    PositionalArgs
+	RunE    func(cmd *Command, args []string) error
 
 	parent   *Command
 	children []*Command
@@ -80,7 +82,11 @@ func (c *Command) OutOrStdout() io.Writer {
 func (c *Command) Help() error {
 	w := c.OutOrStdout()
 	fmt.Fprintf(w, "%s\n", c.Short)
-	fmt.Fprintf(w, "Usage: %s\n", c.Use)
+	if c.Long != "" {
+		fmt.Fprintf(w, "\n%s\n", c.Long)
+	}
+	fmt.Fprintf(w, "\nUsage: %s\n", c.Use)
+
 	if len(c.children) > 0 {
 		fmt.Fprintln(w, "\nCommands:")
 		for _, child := range c.children {
@@ -89,6 +95,9 @@ func (c *Command) Help() error {
 			}
 			fmt.Fprintf(w, "  %s\t%s\n", child.commandName(), child.Short)
 		}
+	}
+	if c.Example != "" {
+		fmt.Fprintf(w, "\nExamples:\n%s\n", c.Example)
 	}
 	return nil
 }

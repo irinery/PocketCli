@@ -35,7 +35,7 @@ func promptLineFrom(in io.Reader, out io.Writer, label string) (string, error) {
 }
 
 func shouldPromptInvestigationWizard(f investigationFlags, interactive bool) bool {
-	return interactive && f.scope == "" && f.period == "" && f.from == "" && f.to == "" && f.timezone == "" && f.confirm == "" && f.investigation == "" && len(f.repos) == 0 && len(f.teams) == 0 && !f.noGitHub && !f.noLinear
+	return interactive && f.scope == "" && f.period == "" && f.from == "" && f.to == "" && f.timezone == "" && f.confirm == "" && f.investigation == "" && len(f.repos) == 0 && len(f.teams) == 0 && !f.noGitHub && !f.noLinear && !f.github && !f.linear
 }
 
 // promptInvestigationWizard asks only what changes the plan: sources, their
@@ -43,6 +43,9 @@ func shouldPromptInvestigationWizard(f investigationFlags, interactive bool) boo
 // timezone and YAML scope remain available as flags (--timezone, --scope).
 func promptInvestigationWizard(in io.Reader, out io.Writer, input contract.PlanInput) (contract.PlanInput, error) {
 	p := newPalette(out)
+	if _, err := io.WriteString(out, p.dim("Coleta pelas APIs do GitHub e do Linear, somente leitura. Enter aceita o padrão de cada pergunta.")+"\n"); err != nil {
+		return input, err
+	}
 	ask := func(question, hint string) (string, error) {
 		return promptLineFrom(in, out, p.bold(question)+" "+p.dim(hint)+": ")
 	}

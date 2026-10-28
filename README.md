@@ -185,7 +185,7 @@ Alguns usos que ficam possíveis com o runtime novo:
 
 ## Investigation
 
-O preview web local e o fluxo real `pocket investigate` têm objetivos diferentes. Veja o [guia de uso do Investigation](docs/investigation/usage.md) para iniciar a demonstração ao vivo, operar dentro de um checkout Git e conferir os limites de cobertura.
+O preview web local e o fluxo real `pocket investigate` têm objetivos diferentes. Para coletar dados reais pelas APIs do GitHub e do Linear (somente leitura), use por exemplo `pocket investigate -t ENG --since 12h`; veja o [guia de uso do Investigation](docs/investigation/usage.md) para o início rápido, as receitas de flags, a demonstração ao vivo e os limites de cobertura.
 
 ---
 
