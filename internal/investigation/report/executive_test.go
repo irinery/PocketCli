@@ -327,6 +327,8 @@ func TestExecutivePDFLayoutKeepsStatusesSelectionAndInsufficiencyWarning(t *test
 		"Publicação: pronta",
 		"Suficiência: insuficiente",
 		"Apresentação: " + executiveRendererVersion,
+		"Escopo solicitado", "Histórico:", "2022-10-28T00:00:00Z", "Janela do relatório:",
+		"2026-10-21T00:00:00Z", "TEAM-DEMO", "Equipe sintética",
 		"Aviso: a análise não tem suficiência plena.",
 		"Esta seleção é parcial.",
 		"de 3 casos selecionados.",

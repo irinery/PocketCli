@@ -23,6 +23,7 @@ const executivePageSize = 100
 
 type executiveTimelineEntry struct {
 	at, id, kind, text, scope string
+	metadata                  []string
 	citations                 []insightcontract.Citation
 	orderedAt                 time.Time
 	ordered                   bool
@@ -358,15 +359,36 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	} else if report.SufficiencyStatus == "not_applicable" {
 		l.banner(9.5, plain("Não há dimensão aplicável para classificar como suficiente. A exportação concluída comprova a geração do arquivo, não suficiência."))
 	}
+	l.heading("Escopo solicitado", 13, 8, true)
+	l.paragraph(8.8, colorText, bold("Histórico:"), plain(windowLabel(report.RequestedScope.History)))
+	l.paragraph(8.8, colorText, bold("Janela do relatório:"), plain(windowLabel(report.RequestedScope.ReportWindow)))
+	if len(report.RequestedScope.Resources) == 0 {
+		l.paragraph(8.5, colorMuted, plain("Recursos solicitados: não informados"))
+	} else {
+		for _, resource := range report.RequestedScope.Resources {
+			name := resource.Name
+			if name == "" {
+				name = "recurso não informado"
+			}
+			id := resource.ID
+			if id != "" {
+				name += " (" + id + ")"
+			}
+			l.paragraph(8.5, colorMuted, plain("Recurso: "+label(resource.Source)+" · "+name))
+		}
+	}
 	l.heading("Objetivos e dimensões", 14, 10, true)
 	for _, q := range report.Questions {
 		l.paragraph(9.5, colorText, bold(label(q.QuestionID)), plain("· "+label(q.Status)+" · "+q.Reason))
+		for _, collection := range q.RequiredCollections {
+			l.paragraph(8.2, colorMuted, plain("Coleção exigida: "+collection.Source+" · "+collection.ResourceID+" · "+collection.Collection))
+		}
 		for _, missing := range q.Missing {
 			l.paragraph(8.5, colorMuted, plain("Falta: "+missing))
 		}
 	}
 	for _, d := range report.Dimensions {
-		l.paragraph(9.5, colorText, bold(label(d.Dimension)+" · "+label(d.Status)), plain("· "+d.Reason))
+		l.paragraph(9.5, colorText, bold(label(d.ObjectiveID)+" · "+label(d.Dimension)+" · "+label(d.Status)), plain("· "+d.Reason))
 		if len(d.MetricIDs) > 0 {
 			l.paragraph(8.2, colorMuted, plain("Métricas: "+strings.Join(d.MetricIDs, ", ")))
 		}
@@ -400,10 +422,16 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 			if m.Denominator != nil {
 				denom += fmt.Sprintf(" · denominador %d", *m.Denominator)
 			}
-			l.paragraph(9, colorText, bold(m.Name+":"), plain(value+" · "+m.Definition+denom+" · coorte "+m.CohortID+" · método "+m.Method))
+			l.paragraph(9, colorText, bold(m.ID+" · "+m.Name+":"), plain(value+" · "+m.Definition+denom+" · coorte "+m.CohortID+" · método "+m.Method))
 			for _, limitation := range m.Limitations {
 				l.paragraph(8.2, colorMuted, plain("Limitação: "+limitation))
 			}
+		}
+	}
+	if len(report.NextActions) > 0 {
+		l.heading("Próximas ações", 13, 8, true)
+		for _, action := range report.NextActions {
+			l.paragraph(9, colorText, plain(action))
 		}
 	}
 	l.heading("Casos para leitura", 14, 8, true)
@@ -457,6 +485,17 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 		l.paragraph(8.2, colorMuted, plain("Entidades: "+strings.Join(c.EntityIDs, ", ")))
 	}
 	for _, row := range []struct {
+		label string
+		ids   []string
+	}{{"Fatos", c.FactCaseIDs}, {"Afirmações", c.ClaimIDs}, {"Decisões", c.DecisionIDs}, {"Relações", c.RelationIDs}} {
+		if len(row.ids) > 0 {
+			l.paragraph(8.2, colorMuted, plain(row.label+": "+strings.Join(row.ids, ", ")))
+		}
+	}
+	if c.OwnerID != nil {
+		l.paragraph(8.2, colorMuted, plain("Responsável: "+*c.OwnerID))
+	}
+	for _, row := range []struct {
 		name  string
 		value insightcontract.Assessment
 	}{{"Impacto", c.Impact}, {"Complexidade", c.Complexity}, {"Urgência", c.Urgency}, {"Confiança", c.Confidence}} {
@@ -480,7 +519,7 @@ func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {
 		l.paragraph(9, colorText, bold("Recomendação:"), plain(recommendation+" · "+label(c.RecommendationBasis)))
 	}
 	for _, alternative := range c.Alternatives {
-		l.paragraph(8.8, colorText, bold("Alternativa:"), plain(alternative.Action+" · base "+label(alternative.Basis)))
+		l.paragraph(8.8, colorText, bold("Alternativa "+alternative.ID+":"), plain(alternative.Action+" · base "+label(alternative.Basis)))
 		if len(alternative.EvidenceIDs) > 0 {
 			l.paragraph(8.2, colorMuted, plain("Evidências: "+strings.Join(alternative.EvidenceIDs, ", ")))
 		}
@@ -516,6 +555,14 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 	}
 	for _, f := range d.Facts {
 		l.paragraph(8.8, colorText, bold("Fato "+f.ID+" · "+label(f.Kind)+" / "+label(f.Classification)+":"), plain(f.Title))
+		for _, row := range []struct {
+			label string
+			ids   []string
+		}{{"Sujeitos", f.SubjectIDs}, {"Relacionados", f.RelatedIDs}, {"Vínculos", f.LinkIDs}, {"Objetivos", f.ObjectiveIDs}, {"Métricas", f.MetricIDs}, {"Evidências", f.EvidenceIDs}} {
+			if len(row.ids) > 0 {
+				l.paragraph(8.2, colorMuted, plain(row.label+": "+strings.Join(row.ids, ", ")))
+			}
+		}
 		for _, fact := range f.ObservedFacts {
 			l.paragraph(8.2, colorMuted, plain("Observado: "+fact))
 		}
@@ -529,14 +576,16 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		if c.EventAt != nil {
 			at = *c.EventAt
 		}
-		timeline = append(timeline, newTimelineEntry(at, c.ID, "Afirmação · "+label(c.Kind)+" · "+label(c.Status), c.Text, c.Scope.Description, c.Citations))
+		timeline = append(timeline, newTimelineEntry(at, c.ID, "Afirmação · "+label(c.Kind)+" · "+label(c.Status), c.Text, c.Scope.Description, c.Citations,
+			"Método: "+label(c.Method), "Validade: "+validityLabel(c.ValidityStatus, c.ValidFrom, c.ValidTo), "Entidades: "+joinedOrUnknown(c.EntityIDs)))
 	}
 	for _, decision := range d.Decisions {
 		at := ""
 		if decision.DecidedAt != nil {
 			at = *decision.DecidedAt
 		}
-		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations))
+		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations,
+			"Método: "+label(decision.Method), "Validade: "+validityLabel(decision.ValidityStatus, decision.ValidFrom, decision.ValidTo), "Entidades: "+joinedOrUnknown(decision.EntityIDs), "Afirmações: "+joinedOrUnknown(decision.ClaimIDs), "Objetivos: "+joinedOrUnknown(decision.ObjectiveIDs), "Responsável: "+optional(decision.DecisionMakerID), "Registrado por: "+optional(decision.RecordedByID)))
 	}
 	sort.SliceStable(timeline, func(i, j int) bool {
 		if !timeline[i].ordered {
@@ -562,15 +611,30 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		if item.scope != "" {
 			l.paragraph(8.2, colorMuted, plain("Escopo: "+item.scope))
 		}
+		for _, metadata := range item.metadata {
+			l.paragraph(8.2, colorMuted, plain(metadata))
+		}
 		for _, cite := range item.citations {
 			l.paragraph(8.5, colorMuted, plain("Evidência "+cite.EvidenceID+": "+cite.Quote))
 		}
 	}
 	for _, relation := range d.ClaimRelations {
-		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação entre afirmações %s: %s → %s · %s · %s", label(relation.Kind), relation.FromClaimID, relation.ToClaimID, label(relation.Status), relation.Reason)))
+		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação %s entre afirmações %s: %s → %s · %s · validade %s", relation.ID, label(relation.Kind), relation.FromClaimID, relation.ToClaimID, label(relation.Status), validityLabel(relation.ValidityStatus, relation.ValidFrom, relation.ValidTo))))
+		if relation.Reason != "" {
+			l.paragraph(8.2, colorMuted, plain("Justificativa: "+relation.Reason))
+		}
+		for _, cite := range relation.Citations {
+			l.paragraph(8.2, colorMuted, plain("Evidência "+cite.EvidenceID+": "+cite.Quote))
+		}
 	}
 	for _, relation := range d.Relations {
-		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação %s: %s → %s · %s", label(relation.Kind), relation.FromDecisionID, relation.ToDecisionID, label(relation.Status))))
+		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação %s (%s): %s → %s · %s · validade %s", relation.ID, label(relation.Kind), relation.FromDecisionID, relation.ToDecisionID, label(relation.Status), validityLabel(relation.ValidityStatus, relation.ValidFrom, relation.ValidTo))))
+		if relation.Reason != "" {
+			l.paragraph(8.2, colorMuted, plain("Justificativa: "+relation.Reason))
+		}
+		for _, cite := range relation.Citations {
+			l.paragraph(8.2, colorMuted, plain("Evidência "+cite.EvidenceID+": "+cite.Quote))
+		}
 	}
 	for _, e := range d.Evidence {
 		l.paragraph(8.5, colorText, bold("Evidência "+e.ID+" · "+e.Source+" · "+e.Locator), plain("· observada "+label(e.ObservedAt)+" · evento "+optional(e.EventAt)+" · fonte atualizada "+optional(e.SourceUpdatedAt)+" · "+label(e.ContentStatus)+" / "+label(e.IntegrityStatus)))
@@ -590,11 +654,17 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 	}
 	for _, entity := range d.Entities {
 		l.paragraph(8.2, colorMuted, plain(fmt.Sprintf("Entidade %s · %s · %s · %s · estado temporal %s", entity.ID, label(entity.Kind), entity.Identifier, entity.Title, label(entity.StateTemporalStatus))))
+		l.paragraph(8.2, colorMuted, plain("Fonte: "+entity.Source+" · recurso: "+entity.ResourceID+" · estado: "+label(entity.State)+" · resultado: "+label(entity.Outcome)+" · fluxo: "+label(entity.WorkflowState)))
+		l.paragraph(8.2, colorMuted, plain("Equipe: "+optional(entity.TeamName)+" ("+optional(entity.TeamID)+") · responsável: "+optional(entity.OwnerID)+" · projeto: "+optional(entity.ProjectID)+" · componentes: "+joinedOrUnknown(entity.ComponentIDs)))
+		l.paragraph(8.2, colorMuted, plain("Criada: "+optional(entity.CreatedAt)+" · atualizada: "+optional(entity.UpdatedAt)+" · iniciada: "+optional(entity.StartedAt)+" · concluída: "+optional(entity.CompletedAt)+" · prazo: "+optional(entity.DueAt)))
+		if entity.URL != nil && verifiedExternalURL(*entity.URL) {
+			l.paragraph(8.2, colorMuted, plain("Fonte externa: "+*entity.URL))
+		}
 	}
 }
 
-func newTimelineEntry(at, id, kind, text, scope string, citations []insightcontract.Citation) executiveTimelineEntry {
-	entry := executiveTimelineEntry{at: at, id: id, kind: kind, text: text, scope: scope, citations: citations}
+func newTimelineEntry(at, id, kind, text, scope string, citations []insightcontract.Citation, metadata ...string) executiveTimelineEntry {
+	entry := executiveTimelineEntry{at: at, id: id, kind: kind, text: text, scope: scope, citations: citations, metadata: metadata}
 	if at != "" {
 		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
 			if parsed, err := time.Parse(layout, at); err == nil {
@@ -611,6 +681,38 @@ func optional(value *string) string {
 		return "não determinado"
 	}
 	return *value
+}
+
+func windowLabel(window insightcontract.Window) string {
+	start, end := strings.TrimSpace(window.Start), strings.TrimSpace(window.End)
+	if start == "" && end == "" {
+		return "não informado"
+	}
+	if start == "" {
+		start = "início não informado"
+	}
+	if end == "" {
+		end = "fim não informado"
+	}
+	return start + " — " + end
+}
+
+func joinedOrUnknown(values []string) string {
+	if len(values) == 0 {
+		return "não informado"
+	}
+	return strings.Join(values, ", ")
+}
+
+func validityLabel(status string, from, to *string) string {
+	value := label(status)
+	if from != nil && strings.TrimSpace(*from) != "" {
+		value += " · de " + *from
+	}
+	if to != nil && strings.TrimSpace(*to) != "" {
+		value += " até " + *to
+	}
+	return value
 }
 
 func label(s string) string {

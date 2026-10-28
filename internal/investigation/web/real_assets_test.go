@@ -102,6 +102,9 @@ func TestExecutiveUIShowsMetricContextAndEvidenceIntegrityFields(t *testing.T) {
 			t.Fatalf("executive UI omits %s", required)
 		}
 	}
+	if !strings.Contains(js, "Recursos solicitados:") || !strings.Contains(js, "requestedScope.report_window") || !strings.Contains(js, "requestedScope.history") {
+		t.Fatal("executive UI omits requested scope windows or resources")
+	}
 }
 
 func TestAnalysisUIHasExplicitEmptyStartAndBoundedTerminalPolling(t *testing.T) {
