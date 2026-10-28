@@ -79,3 +79,5 @@ O smoke local não substitui uma validação com uma instalação configurada ou
 Para chegar a **integrado e validado**, ainda é necessário ratificar as RFCs L4-001/002 (eventualmente com nova entrega L4), exercitar o ciclo da UI em browser, configurar um adapter autorizado e medir a semântica em dataset rotulado com split documentado. Até então, usar esta branch somente como integração local revisável e manter a conclusão **integrado com validações pendentes**.
 
 Comparação posterior de fonte real: [VALIDACAO_SMF_GITHUB.md](VALIDACAO_SMF_GITHUB.md) registra uma consulta somente leitura ao repositório privado `irinery/socialMediaFactory` em 28/10/2026. A comparação não executa coleta do PocketCli e não altera os gates pendentes acima.
+
+No PR #71, o Lint remoto do primeiro head encontrou SC2010 em um teste shell herdado de `main`. A correção delimitada está em [RFC-INV-COR-INT-002-shellcheck-smoke.md](RFC-INV-COR-INT-002-shellcheck-smoke.md); ShellCheck local, smoke focado e suíte local completa passaram. O resultado do Lint do head corrigido deve ser conferido no GitHub antes do merge.
