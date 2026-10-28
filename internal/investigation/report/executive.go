@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,13 @@ import (
 
 const executiveRendererVersion = "pdf-nativo-executivo/1"
 const executivePageSize = 100
+
+type executiveTimelineEntry struct {
+	at, kind, text, scope string
+	citations             []insightcontract.Citation
+	orderedAt             time.Time
+	ordered               bool
+}
 
 type executiveManifest struct {
 	Artifact       insightcontract.ExecutiveArtifact `json:"artifact"`
@@ -271,10 +279,12 @@ func validateExecutiveReport(report insightcontract.ExecutiveReport) error {
 	if len(report.Cases) != len(report.CaseIDs) {
 		return errors.New("executive cases and IDs differ in length")
 	}
+	seen := make(map[string]bool, len(report.Cases))
 	for i, c := range report.Cases {
-		if c.ID == "" || report.CaseIDs[i] != c.ID {
+		if c.ID == "" || report.CaseIDs[i] != c.ID || seen[c.ID] {
 			return errors.New("executive case IDs do not match selected cases")
 		}
+		seen[c.ID] = true
 	}
 	return nil
 }
@@ -324,13 +334,15 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	l.heading("Visão executiva", 22, 0, false)
 	l.paragraph(9.5, colorMuted, plain("PocketCli · investigação executiva"))
 	modeLabel := map[string]string{"executive": "Executivo", "analysis_detail": "Detalhado"}[mode]
-	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"Análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
+	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"Análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
 		l.paragraph(9, colorText, bold(row[0]), plain(row[1]))
 	}
 	l.heading(report.Headline, 15, 8, true)
 	l.paragraph(10, colorText, plain(report.Summary))
 	if report.SufficiencyStatus == "partial" || report.SufficiencyStatus == "insufficient" {
 		l.banner(9.5, plain("Aviso: a análise não tem suficiência plena. A exportação concluída comprova a geração do arquivo, não a sustentação de todas as conclusões."))
+	} else if report.AnalysisStatus == "partial" {
+		l.banner(9.5, plain("Aviso: a análise foi concluída parcialmente. A suficiência é um estado separado e não elimina este limite."))
 	} else if report.SufficiencyStatus == "not_applicable" {
 		l.banner(9.5, plain("Não há dimensão aplicável para classificar como suficiente. A exportação concluída comprova a geração do arquivo, não suficiência."))
 	}
@@ -473,27 +485,58 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 			l.paragraph(8.2, colorMuted, plain("Em aberto: "+question))
 		}
 	}
+	var timeline []executiveTimelineEntry
 	for _, c := range d.Claims {
-		l.paragraph(9, colorText, bold("Afirmação · "+label(c.Status)+":"), plain(c.Text))
-		for _, cite := range c.Citations {
+		at := ""
+		if c.EventAt != nil {
+			at = *c.EventAt
+		}
+		timeline = append(timeline, newTimelineEntry(at, "Afirmação · "+label(c.Kind)+" · "+label(c.Status), c.Text, c.Scope.Description, c.Citations))
+	}
+	for _, decision := range d.Decisions {
+		at := ""
+		if decision.DecidedAt != nil {
+			at = *decision.DecidedAt
+		}
+		timeline = append(timeline, newTimelineEntry(at, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations))
+	}
+	sort.SliceStable(timeline, func(i, j int) bool {
+		if !timeline[i].ordered {
+			return false
+		}
+		if !timeline[j].ordered {
+			return true
+		}
+		return timeline[i].orderedAt.Before(timeline[j].orderedAt)
+	})
+	if len(timeline) > 0 {
+		l.heading("Timeline disponível no contrato", 11, 5, true)
+	}
+	for _, item := range timeline {
+		at := item.at
+		if !item.ordered {
+			at = "data/ordem desconhecida"
+			if item.at != "" {
+				at += " (" + item.at + ")"
+			}
+		}
+		l.paragraph(9, colorText, bold(at+" · "+item.kind+":"), plain(item.text))
+		if item.scope != "" {
+			l.paragraph(8.2, colorMuted, plain("Escopo: "+item.scope))
+		}
+		for _, cite := range item.citations {
 			l.paragraph(8.5, colorMuted, plain("Evidência "+cite.EvidenceID+": "+cite.Quote))
 		}
 	}
 	for _, relation := range d.ClaimRelations {
 		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação entre afirmações %s: %s → %s · %s · %s", label(relation.Kind), relation.FromClaimID, relation.ToClaimID, label(relation.Status), relation.Reason)))
 	}
-	for _, decision := range d.Decisions {
-		at := "data desconhecida"
-		if decision.DecidedAt != nil {
-			at = *decision.DecidedAt
-		}
-		l.paragraph(9, colorText, bold("Decisão · "+label(decision.Status)+" · "+at+":"), plain(decision.Question+" → "+decision.Choice+" · "+decision.Rationale))
-	}
 	for _, relation := range d.Relations {
 		l.paragraph(8.5, colorMuted, plain(fmt.Sprintf("Relação %s: %s → %s · %s", label(relation.Kind), relation.FromDecisionID, relation.ToDecisionID, label(relation.Status))))
 	}
 	for _, e := range d.Evidence {
-		l.paragraph(8.5, colorText, bold("Evidência "+e.ID+" · "+e.Source+" · "+e.Locator), plain("· "+label(e.ContentStatus)+" / "+label(e.IntegrityStatus)))
+		l.paragraph(8.5, colorText, bold("Evidência "+e.ID+" · "+e.Source+" · "+e.Locator), plain("· observada "+label(e.ObservedAt)+" · evento "+optional(e.EventAt)+" · fonte atualizada "+optional(e.SourceUpdatedAt)+" · "+label(e.ContentStatus)+" / "+label(e.IntegrityStatus)))
+		l.paragraph(7.8, colorMuted, plain("Hash de conteúdo: "+label(e.ContentHash)+" · hash do trecho: "+label(e.ExcerptHash)+" · sanitização: "+label(e.SanitizationVersion)))
 		if e.Excerpt != "" {
 			l.paragraph(8.5, colorText, plain(e.Excerpt))
 		}
@@ -510,6 +553,26 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 	for _, entity := range d.Entities {
 		l.paragraph(8.2, colorMuted, plain(fmt.Sprintf("Entidade %s · %s · %s · %s · estado temporal %s", entity.ID, label(entity.Kind), entity.Identifier, entity.Title, label(entity.StateTemporalStatus))))
 	}
+}
+
+func newTimelineEntry(at, kind, text, scope string, citations []insightcontract.Citation) executiveTimelineEntry {
+	entry := executiveTimelineEntry{at: at, kind: kind, text: text, scope: scope, citations: citations}
+	if at != "" {
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			if parsed, err := time.Parse(layout, at); err == nil {
+				entry.orderedAt, entry.ordered = parsed, true
+				break
+			}
+		}
+	}
+	return entry
+}
+
+func optional(value *string) string {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return "não determinado"
+	}
+	return *value
 }
 
 func label(s string) string {

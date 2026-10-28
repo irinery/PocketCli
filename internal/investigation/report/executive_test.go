@@ -18,6 +18,8 @@ type executiveFixtureReader struct {
 	report insightcontract.ExecutiveReport
 	cases  []insightcontract.DecisionCase
 	bad    bool
+	page   func(snapshot, analysis, cursor string, limit int) insightcontract.CasePage
+	detail func(snapshot, analysis, id string) insightcontract.CaseDetail
 }
 
 func (r *executiveFixtureReader) GetExecutiveReport(_ context.Context, snapshot, analysis string) (insightcontract.ExecutiveReport, error) {
@@ -27,6 +29,9 @@ func (r *executiveFixtureReader) GetExecutiveReport(_ context.Context, snapshot,
 	return out, nil
 }
 func (r *executiveFixtureReader) GetInsightCase(_ context.Context, snapshot, analysis, id string) (insightcontract.CaseDetail, error) {
+	if r.detail != nil {
+		return r.detail(snapshot, analysis, id), nil
+	}
 	for _, c := range r.cases {
 		if c.ID == id {
 			return insightcontract.CaseDetail{SnapshotID: snapshot, AnalysisID: analysis, Case: c, Evidence: []insightcontract.EvidenceView{}}, nil
@@ -35,6 +40,9 @@ func (r *executiveFixtureReader) GetInsightCase(_ context.Context, snapshot, ana
 	return insightcontract.CaseDetail{}, os.ErrNotExist
 }
 func (r *executiveFixtureReader) ListInsightCases(_ context.Context, snapshot, analysis, cursor string, limit int) (insightcontract.CasePage, error) {
+	if r.page != nil {
+		return r.page(snapshot, analysis, cursor, limit), nil
+	}
 	if r.bad {
 		return insightcontract.CasePage{SnapshotID: "other", AnalysisID: analysis, Total: int64(len(r.cases))}, nil
 	}
@@ -141,5 +149,129 @@ func TestExecutiveDetailFailsClosedOnCrossSnapshotPage(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Fatalf("failed export wrote artifacts: %v", entries)
+	}
+}
+
+func TestExecutiveDetailFailsClosedOnRepeatedCursorAndChangingTotal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		page func(snapshot, analysis, cursor string, limit int) insightcontract.CasePage
+	}{
+		{
+			name: "repeated cursor",
+			page: func(snapshot, analysis, cursor string, _ int) insightcontract.CasePage {
+				return insightcontract.CasePage{SnapshotID: snapshot, AnalysisID: analysis, Total: 2, Cases: []insightcontract.DecisionCase{{ID: "case-1"}}, NextCursor: "same"}
+			},
+		},
+		{
+			name: "total changes",
+			page: func(snapshot, analysis, cursor string, _ int) insightcontract.CasePage {
+				total := int64(2)
+				if cursor != "" {
+					total = 3
+				}
+				cases := []insightcontract.DecisionCase{{ID: "case-1"}}
+				next := "next"
+				if cursor != "" {
+					cases = []insightcontract.DecisionCase{{ID: "case-2"}}
+					next = ""
+				}
+				return insightcontract.CasePage{SnapshotID: snapshot, AnalysisID: analysis, Total: total, Cases: cases, NextCursor: next}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report, cases := executiveFixture(t)
+			reader := &executiveFixtureReader{report: report, cases: cases, page: tc.page}
+			exporter, err := NewExecutiveFinalizer(reader, filepath.Join(t.TempDir(), "reports"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = exporter.ExportExecutive(context.Background(), insightcontract.ExecutiveExportRequest{SnapshotID: report.SnapshotID, AnalysisID: report.AnalysisID, Mode: "analysis_detail", IdempotencyKey: "bad-page"})
+			if err == nil {
+				t.Fatal("expected fail-closed export")
+			}
+		})
+	}
+}
+
+func TestExecutiveDetailFailsClosedWhenCaseDetailIdentityDiffers(t *testing.T) {
+	report, cases := executiveFixture(t)
+	reader := &executiveFixtureReader{report: report, cases: cases, detail: func(snapshot, analysis, id string) insightcontract.CaseDetail {
+		return insightcontract.CaseDetail{SnapshotID: snapshot, AnalysisID: "other-analysis", Case: insightcontract.DecisionCase{ID: id}}
+	}}
+	exporter, err := NewExecutiveFinalizer(reader, filepath.Join(t.TempDir(), "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exporter.ExportExecutive(context.Background(), insightcontract.ExecutiveExportRequest{SnapshotID: report.SnapshotID, AnalysisID: report.AnalysisID, Mode: "analysis_detail", IdempotencyKey: "bad-detail"})
+	if err == nil {
+		t.Fatal("expected case detail identity rejection")
+	}
+}
+
+func TestSyntheticCaseC15KeepsExecutiveSelectionSeparateFromFullExport(t *testing.T) {
+	fixtureBytes, err := os.ReadFile("../insightcontract/testdata/cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []struct {
+			ID       string   `json:"id"`
+			Expected []string `json:"expected"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(fixtureBytes, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range fixture.Cases {
+		if c.ID == "C15" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("synthetic export case C15 is missing")
+	}
+
+	cases := make([]insightcontract.DecisionCase, 12)
+	for i := range cases {
+		cases[i].ID = fmt.Sprintf("case-%02d", i+1)
+		cases[i].Title = cases[i].ID
+	}
+	report := insightcontract.ExecutiveReport{
+		Version: insightcontract.Version, SnapshotID: "snap-synthetic", AnalysisID: "analysis-synthetic",
+		PublicationStatus: "ready", AnalysisStatus: "complete", SufficiencyStatus: "partial",
+		Headline: "12 casos", Summary: "fixture sintética C15", TotalCases: 12,
+		Cases: append([]insightcontract.DecisionCase(nil), cases[:5]...), CaseIDs: []string{"case-01", "case-02", "case-03", "case-04", "case-05"},
+	}
+	reader := &executiveFixtureReader{report: report, cases: cases}
+	exporter, err := NewExecutiveFinalizer(reader, filepath.Join(t.TempDir(), "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, err := exporter.ExportExecutive(context.Background(), insightcontract.ExecutiveExportRequest{SnapshotID: report.SnapshotID, AnalysisID: report.AnalysisID, Mode: "executive", IdempotencyKey: "c15-short"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if short.SelectedCaseCount != 5 || short.TotalCaseCount != 12 {
+		t.Fatalf("C15 executive selection counts: %+v", short)
+	}
+	full, err := exporter.ExportExecutive(context.Background(), insightcontract.ExecutiveExportRequest{SnapshotID: report.SnapshotID, AnalysisID: report.AnalysisID, Mode: "analysis_detail", IdempotencyKey: "c15-full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.SelectedCaseCount != 12 || full.TotalCaseCount != 12 {
+		t.Fatalf("C15 detail counts: %+v", full)
+	}
+}
+
+func TestTimelineLeavesAmbiguousDatesUnordered(t *testing.T) {
+	known := newTimelineEntry("2026-10-28T12:00:00Z", "Decisão", "texto", "escopo", nil)
+	ambiguous := newTimelineEntry("28/10/2026", "Observação", "texto", "escopo", nil)
+	unknown := newTimelineEntry("", "Afirmação", "texto", "escopo", nil)
+	if !known.ordered || ambiguous.ordered || unknown.ordered {
+		t.Fatalf("unexpected timeline ordering: known=%t ambiguous=%t unknown=%t", known.ordered, ambiguous.ordered, unknown.ordered)
 	}
 }

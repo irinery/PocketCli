@@ -433,13 +433,18 @@ const realAppJSTemplate = `(() => {
       const title = (item.objective_id || 'Sem objetivo identificado') + ' · ' + labelPt(item.dimension) + ' · ' + labelPt(item.status);
       dimensions.append(node('h3', '', title), node('p', '', item.reason || 'Sem justificativa informada.'));
       (item.missing || []).forEach(missing => dimensions.append(node('p', 'callout', 'Falta: ' + missing)));
+      if (item.metric_ids && item.metric_ids.length) dimensions.append(node('p', 'muted', 'Métricas: ' + item.metric_ids.join(', ')));
+      (item.case_ids || []).forEach(id => dimensions.append(button('Abrir caso ' + id, async () => {
+        const detail = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(id)); renderCaseDetail(detail);
+      })));
     });
     (report.metrics || []).forEach(item => {
       const observed = item.state === 'observed' && item.value !== null && item.value !== undefined;
       const denominators = item.denominator === null || item.denominator === undefined ? '' : ' · denominador ' + item.denominator;
       const numerator = item.numerator === null || item.numerator === undefined ? '' : ' · numerador ' + item.numerator;
       const sample = ' · amostra ' + item.sample_size + (item.eligible_size === null || item.eligible_size === undefined ? '' : ' de ' + item.eligible_size);
-      dimensions.append(node('p', 'muted', item.name + ': ' + (observed ? item.value + ' ' + item.unit : 'não determinado') + numerator + denominators + sample + ' · ' + item.definition));
+      dimensions.append(node('p', 'muted', item.name + ': ' + (observed ? item.value + ' ' + item.unit : 'não determinado') + numerator + denominators + sample + ' · ' + item.definition + ' · coorte ' + (item.cohort_id || 'não informada') + ' · método ' + (item.method || 'não informado')));
+      (item.limitations || []).forEach(limitation => dimensions.append(node('p', 'callout', 'Limitação da métrica: ' + limitation)));
     });
     parent.append(dimensions);
     const cases = card('Casos executivos');
@@ -497,12 +502,16 @@ const realAppJSTemplate = `(() => {
     });
     (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
     const timeline = [];
-    (detailRecord.claims || []).forEach(item => timeline.push({kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, text: item.text, evidence: item.citations || []}));
-    (detailRecord.decisions || []).forEach(item => timeline.push({kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
-    timeline.sort((a, b) => { if (!a.at) return b.at ? 1 : 0; if (!b.at) return -1; return String(a.at).localeCompare(String(b.at)); });
+    (detailRecord.claims || []).forEach(item => timeline.push({kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, text: item.text, evidence: item.citations || []}));
+    (detailRecord.decisions || []).forEach(item => timeline.push({kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
+    const timelineTime = item => { const value = item.at ? Date.parse(item.at) : NaN; return Number.isFinite(value) ? value : null; };
+    timeline.sort((a, b) => { const at = timelineTime(a), bt = timelineTime(b); if (at === null) return bt === null ? 0 : 1; if (bt === null) return -1; return at - bt; });
     const timelineBox = card('Timeline');
     timeline.forEach(item => {
-      timelineBox.append(node('h3', '', (item.at || 'Data/ordem desconhecida') + ' · ' + item.kind), node('p', '', item.text));
+      const time = timelineTime(item);
+      const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
+      timelineBox.append(node('h3', '', dateLabel + ' · ' + item.kind), node('p', '', item.text));
+      if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
       (item.evidence || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
     });
     (detailRecord.relations || []).forEach(item => timelineBox.append(node('p', 'callout', item.kind + ' · ' + item.from_decision_id + ' → ' + item.to_decision_id + ' · ' + item.status + ' · ' + item.reason)));
@@ -511,6 +520,8 @@ const realAppJSTemplate = `(() => {
     (detailRecord.evidence || []).forEach(item => {
       const evidence = card(item.id + ' · ' + item.source + ' · ' + item.locator);
       evidence.append(node('p', 'muted', item.observed_at + ' · conteúdo ' + labelPt(item.content_status) + ' · integridade ' + labelPt(item.integrity_status)));
+      evidence.append(node('p', 'muted', 'Evento: ' + (item.event_at || 'data desconhecida') + ' · fonte atualizada: ' + (item.source_updated_at || 'data desconhecida')));
+      evidence.append(node('p', 'muted', 'Hash do conteúdo: ' + (item.content_hash || 'não informado') + ' · hash do trecho: ' + (item.excerpt_hash || 'não informado') + ' · sanitização: ' + (item.sanitization_version || 'não informada')));
       evidence.append(node('p', '', item.excerpt || 'Sem trecho legível.'));
       if (item.redacted) evidence.append(node('p', 'callout', 'Conteúdo parcialmente redigido.'));
       if (item.truncated) evidence.append(node('p', 'callout', 'Trecho truncado.'));
