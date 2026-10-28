@@ -76,6 +76,25 @@ func TestRealAssetQuotesIDsWithoutRecursiveReplacement(t *testing.T) {
 	}
 }
 
+func TestExecutiveOverviewDoesNotPreloadLegacyCollectionsOrAllReportPages(t *testing.T) {
+	js := realAppJS("investigation-demo", "snap-demo-001")
+	start := strings.Index(js, "async function chooseSnapshot(id)")
+	end := strings.Index(js[start:], "  async function init()")
+	if start < 0 || end < 0 {
+		t.Fatal("snapshot selection function was not found")
+	}
+	choose := js[start : start+end]
+	if strings.Contains(choose, "/findings") || strings.Contains(choose, "/queries") || strings.Contains(choose, "/report") {
+		t.Fatal("opening a snapshot preloads a legacy collection")
+	}
+	if strings.Contains(js, "loadReportRecords") || !strings.Contains(js, "async function loadReportPage(cursor)") {
+		t.Fatal("legacy map is not paginated")
+	}
+	if !strings.Contains(js, "write('/insights/runs'") || !strings.Contains(js, "attempts < 60") || !strings.Contains(js, "Cancelar análise") {
+		t.Fatal("explicit bounded analysis workflow is incomplete")
+	}
+}
+
 func TestRealSQLConsoleUsesSupportedQueryDefaults(t *testing.T) {
 	js := realAppJS("investigation-demo", "snap-demo-001")
 	if !strings.Contains(js, "const manualSQL = 'SELECT id, window_start, window_end FROM v_snapshot'") ||
