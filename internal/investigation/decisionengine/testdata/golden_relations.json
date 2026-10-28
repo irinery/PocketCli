@@ -1,0 +1,12 @@
+{
+  "version": "decisionengine-golden-relations-v1",
+  "synthetic": true,
+  "cases": [
+    {"id":"C03-valid-supersession","class":"supersedes","proposed":"supersedes","from_id":"B","to_id":"A","from_event_at":"2026-01-01T00:00:00Z","to_event_at":"2024-01-01T00:00:00Z","from_scope":"production","to_scope":"production","from_valid_from":"2026-01-01T00:00:00Z","to_valid_from":"2024-01-01T00:00:00Z","from_validity":"open_ended","to_validity":"open_ended","accept":true},
+    {"id":"C03-wrong-supersession-direction","class":"supersedes","proposed":"supersedes","from_id":"A","to_id":"B","from_event_at":"2024-01-01T00:00:00Z","to_event_at":"2026-01-01T00:00:00Z","from_scope":"production","to_scope":"production","from_valid_from":"2024-01-01T00:00:00Z","to_valid_from":"2026-01-01T00:00:00Z","from_validity":"open_ended","to_validity":"open_ended","accept":false},
+    {"id":"C04-overlapping-contradiction","class":"contradicts","proposed":"contradicts","from_id":"A","to_id":"B","from_event_at":"2026-01-01T00:00:00Z","to_event_at":"2026-01-01T00:00:00Z","from_scope":"production","to_scope":"production","from_valid_from":"2026-01-01T00:00:00Z","to_valid_from":"2026-01-01T00:00:00Z","from_valid_to":null,"to_valid_to":null,"from_validity":"open_ended","to_validity":"open_ended","accept":true},
+    {"id":"C04-disjoint-validity","class":"contradicts","proposed":"contradicts","from_id":"A","to_id":"B","from_event_at":"2026-01-01T00:00:00Z","to_event_at":"2026-01-01T00:00:00Z","from_scope":"production","to_scope":"production","from_valid_from":"2024-01-01T00:00:00Z","from_valid_to":"2025-01-01T00:00:00Z","to_valid_from":"2026-01-01T00:00:00Z","to_valid_to":"2027-01-01T00:00:00Z","from_validity":"known_interval","to_validity":"known_interval","accept":false},
+    {"id":"C05-explicit-different-scope","class":"different_scope","proposed":"different_scope","from_id":"A","to_id":"B","from_event_at":"2026-01-01T00:00:00Z","to_event_at":"2026-01-01T00:00:00Z","from_scope":"test","to_scope":"production","from_valid_from":"2026-01-01T00:00:00Z","to_valid_from":"2026-01-01T00:00:00Z","from_validity":"open_ended","to_validity":"open_ended","accept":true},
+    {"id":"C05-same-scope-not-different","class":"different_scope","proposed":"different_scope","from_id":"A","to_id":"B","from_event_at":"2026-01-01T00:00:00Z","to_event_at":"2026-01-01T00:00:00Z","from_scope":"production","to_scope":"production","from_valid_from":"2026-01-01T00:00:00Z","to_valid_from":"2026-01-01T00:00:00Z","from_validity":"open_ended","to_validity":"open_ended","accept":false}
+  ]
+}
