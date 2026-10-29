@@ -360,6 +360,20 @@ type ReportArtifact struct {
 	Warnings     []string `json:"warnings"`
 	Consolidated bool     `json:"consolidated,omitempty"`
 }
+
+// PurgeResult tells what removing an investigation's collected data took
+// from the machine. Leftover is empty when nothing of it remains.
+type PurgeResult struct {
+	InvestigationID string   `json:"investigation_id"`
+	Plans           int      `json:"plans"`
+	Runs            int      `json:"runs"`
+	Snapshots       int      `json:"snapshots"`
+	Files           int      `json:"files"`
+	Bytes           int64    `json:"bytes"`
+	CachesCleared   bool     `json:"caches_cleared"`
+	Shared          []string `json:"shared,omitempty"`
+	Leftover        []string `json:"leftover,omitempty"`
+}
 type ReportReader interface {
 	GetSnapshot(context.Context, string) (Snapshot, error)
 	ReadReportPage(context.Context, string, string, int) (ReportPage, error)

@@ -190,6 +190,7 @@ func TestRealServerRejectsOtherInvestigationBeforeReadingOrWriting(t *testing.T)
 		{"POST", "/reports", `{"snapshot_id":"snap-other"}`},
 		{"GET", "/reports/report-other", ""},
 		{"GET", "/reports/report-other/download", ""},
+		{"POST", "/reports/report-other/approve", `{"remove_data":true,"confirm_snapshot_id":"snap-other"}`},
 		{"GET", "/editorial/drafts?snapshot_id=snap-other", ""},
 		{"POST", "/editorial/preview", `{"snapshot_id":"snap-other"}`},
 		{"POST", "/editorial/generate", `{"preview_id":"preview-other"}`},

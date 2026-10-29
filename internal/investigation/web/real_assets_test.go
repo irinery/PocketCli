@@ -194,3 +194,18 @@ func TestPreviewKeepsDemoAsset(t *testing.T) {
 		t.Fatal("demo asset changed")
 	}
 }
+
+// The page offers the consolidated PDF and, only after it exists, the
+// approval that removes the collected data; the "all" window never prints a
+// blank start.
+func TestRealAppOffersConsolidatedPDFAndGuardedRemoval(t *testing.T) {
+	js := realAppJS("investigation", "snapshot")
+	for _, want := range []string{"Gerar PDF consolidado", "consolidated: true", "/approve", "confirm_snapshot_id", "Aprovar PDF e remover dados", "tempo de vida", "Repositórios vazios"} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("a página não contém %q", want)
+		}
+	}
+	if strings.Contains(js, "Início não informado") {
+		t.Fatal("a janela all não pode mostrar início em branco")
+	}
+}
