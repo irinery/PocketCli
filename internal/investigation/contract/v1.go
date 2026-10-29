@@ -343,6 +343,10 @@ type FinalizeRequest struct {
 	SnapshotID               string `json:"snapshot_id"`
 	AnnotationRevision       int64  `json:"annotation_revision"`
 	IncludeApprovedEditorial bool   `json:"include_approved_editorial"`
+	// Consolidated asks for the complete record in one PDF: the whole
+	// history plus the decisions of the latest executive analysis, with the
+	// accepted editorial text and every comment and query.
+	Consolidated bool `json:"consolidated,omitempty"`
 }
 type ReportArtifact struct {
 	ID           string   `json:"id"`
@@ -354,6 +358,7 @@ type ReportArtifact struct {
 	FindingCount int64    `json:"finding_count"`
 	PageCount    int      `json:"page_count"`
 	Warnings     []string `json:"warnings"`
+	Consolidated bool     `json:"consolidated,omitempty"`
 }
 type ReportReader interface {
 	GetSnapshot(context.Context, string) (Snapshot, error)
