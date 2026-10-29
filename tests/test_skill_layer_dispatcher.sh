@@ -3,7 +3,19 @@ set -eu
 
 REPO_ROOT=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 WORKDIR=$(mktemp -d)
-trap 'rm -rf "${WORKDIR}"' EXIT INT TERM
+STARTED_FILE="${WORKDIR}/slow-execution.started"
+RELEASE_FILE="${WORKDIR}/slow-execution.release"
+first_pid=
+
+cleanup() {
+    : > "${RELEASE_FILE}"
+    if [ -n "${first_pid}" ]; then
+        wait "${first_pid}" 2>/dev/null || true
+    fi
+    rm -rf "${WORKDIR}"
+}
+
+trap cleanup EXIT INT TERM
 
 HOME_DIR="${WORKDIR}/home"
 ANSIBLE_DIR="${WORKDIR}/ansible"
@@ -49,7 +61,13 @@ case "${POCKETCLI_TEST_ANSIBLE_MODE:-success}" in
         printf 'PLAY RECAP without result\n'
         ;;
     sleep_changed)
-        sleep 2
+        : > "${POCKETCLI_TEST_STARTED_FILE}"
+        i=0
+        while [ ! -e "${POCKETCLI_TEST_RELEASE_FILE}" ] && [ "${i}" -lt 100 ]; do
+            sleep 0.05
+            i=$((i + 1))
+        done
+        [ -e "${POCKETCLI_TEST_RELEASE_FILE}" ] || exit 1
         printf 'TASK [pocket_result]\n'
         printf 'ok: [srv-prod-02] => {"msg": "{\\"restarted\\":true,\\"state\\":\\"active\\",\\"changed\\":true}"}\n'
         ;;
@@ -134,6 +152,8 @@ run_endpoint() {
         POCKETCLI_ANSIBLE_DIR="${ANSIBLE_DIR}" \
         POCKETCLI_SKILL_LOCK_DIR="${LOCK_DIR}" \
         POCKETCLI_SKILL_LOG_FILE="${LOG_FILE}" \
+        POCKETCLI_TEST_STARTED_FILE="${STARTED_FILE}" \
+        POCKETCLI_TEST_RELEASE_FILE="${RELEASE_FILE}" \
         POCKETCLI_TEST_ANSIBLE_MODE="${mode}" \
         POCKETCLI_TEST_TIMEOUT="${timeout_mode}" \
         bash "${REPO_ROOT}/scripts/skills/skill_endpoint.sh" "${request}" > "${out}" 2> "${out}.err"
@@ -187,13 +207,22 @@ write_request "${WORKDIR}/request-b.json" "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f741"
 run_endpoint "${WORKDIR}/request-a.json" "${WORKDIR}/endpoint-a.out" sleep_changed &
 first_pid=$!
 i=0
+while [ "$i" -lt 20 ] && [ ! -e "${STARTED_FILE}" ]; do
+    i=$((i + 1))
+    sleep 0.1
+done
+[ -e "${STARTED_FILE}" ] || fail T-40-first-not-started
+i=0
 while [ "$i" -lt 20 ] && [ "$(find "${LOCK_DIR}" -maxdepth 1 -type d -name 'srv-prod-02.*' | wc -l | tr -d ' ')" -eq 0 ]; do
     i=$((i + 1))
     sleep 0.1
 done
+[ "$(find "${LOCK_DIR}" -maxdepth 1 -type d -name 'srv-prod-02.*' | wc -l | tr -d ' ')" -gt 0 ] || fail T-40-lock-not-held
 run_endpoint "${WORKDIR}/request-b.json" "${out}" changed && fail T-40
 assert_field "${out}" status blocked
 assert_field "${out}" error concurrent_execute_limit:host
+: > "${RELEASE_FILE}"
 wait "${first_pid}"
+first_pid=
 
 printf 'PASS skill dispatcher tests T-33..T-40\n'
