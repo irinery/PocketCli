@@ -95,10 +95,7 @@ func (c *Core) collectGitCommitFiles(ctx context.Context, plan contract.Plan, r 
 			return true, nil
 		})
 		if walkErr != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
+			return gitWalkFault(ctx, walkErr)
 		}
 		if !walkComplete {
 			graphComplete = false
