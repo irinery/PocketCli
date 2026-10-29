@@ -476,6 +476,8 @@ type ExecutiveReport struct {
 	Headline          string             `json:"headline"`
 	Summary           string             `json:"summary"`
 	RequestedScope    Scope              `json:"requested_scope"`
+	Objectives        []Objective        `json:"objectives,omitempty"`
+	PolicyHash        string             `json:"policy_hash,omitempty"`
 	Questions         []QuestionCoverage `json:"questions"`
 	Dimensions        []DimensionStatus  `json:"dimensions"`
 	Metrics           []Metric           `json:"metrics"`
@@ -484,6 +486,21 @@ type ExecutiveReport struct {
 	CaseIDs           []string           `json:"case_ids"`
 	NextActions       []string           `json:"next_actions"`
 	Limitations       []string           `json:"limitations"`
+}
+type TimelineItem struct {
+	ID          string   `json:"id"`
+	Kind        string   `json:"kind"`
+	EntityID    string   `json:"entity_id,omitempty"`
+	At          *string  `json:"at"`
+	End         *string  `json:"end,omitempty"`
+	ObservedAt  *string  `json:"observed_at,omitempty"`
+	ActorID     *string  `json:"actor_id,omitempty"`
+	OldValue    *string  `json:"old_value,omitempty"`
+	NewValue    *string  `json:"new_value,omitempty"`
+	Scope       string   `json:"scope,omitempty"`
+	Source      string   `json:"source"`
+	Summary     string   `json:"summary"`
+	EvidenceIDs []string `json:"evidence_ids"`
 }
 type CaseDetail struct {
 	SnapshotID     string             `json:"snapshot_id"`
@@ -496,6 +513,7 @@ type CaseDetail struct {
 	Relations      []DecisionRelation `json:"relations"`
 	Entities       []Entity           `json:"entities"`
 	Evidence       []EvidenceView     `json:"evidence"`
+	Timeline       []TimelineItem     `json:"timeline,omitempty"`
 }
 type CasePage struct {
 	SnapshotID string         `json:"snapshot_id"`
@@ -563,6 +581,7 @@ type ExecutiveArtifact struct {
 	TotalCaseCount    int64  `json:"total_case_count"`
 	ContentHash       string `json:"content_hash"`
 	AnalysisHash      string `json:"analysis_hash"`
+	PolicyHash        string `json:"policy_hash,omitempty"`
 	RendererVersion   string `json:"renderer_version"`
 	CreatedAt         string `json:"created_at"`
 	DownloadPath      string `json:"download_path"`

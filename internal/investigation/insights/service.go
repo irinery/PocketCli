@@ -652,6 +652,12 @@ func (s *Service) GetInsightCase(ctx context.Context, snapshotID, analysisID, ca
 			}
 		}
 	}
+	detail.Timeline = caseTimeline(a.Source, detail.Decisions, entityIDs)
+	for _, item := range detail.Timeline {
+		for _, id := range item.EvidenceIDs {
+			evidenceIDs[id] = true
+		}
+	}
 	for _, evidence := range a.Source.Evidence {
 		if evidenceIDs[evidence.ID] {
 			detail.Evidence = append(detail.Evidence, evidence)

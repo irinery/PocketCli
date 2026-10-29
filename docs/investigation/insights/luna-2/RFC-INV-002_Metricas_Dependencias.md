@@ -1,8 +1,8 @@
 # RFC-INV-002 — Métricas, coortes e dependências com denominadores
 
-**Estado:** proposta pronta para implementação isolada por Luna 2  
-**Data:** 28/10/2026  
-**Pista:** L2 — regras determinísticas e `analysisfacts`  
+**Estado:** proposta pronta para implementação isolada por Luna 2
+**Data:** 28/10/2026
+**Pista:** L2 — regras determinísticas e `analysisfacts`
 **Contrato de saída:** `investigate.insights.v1`, definido exclusivamente em RFC-INV-000
 
 ## Problema e evidência

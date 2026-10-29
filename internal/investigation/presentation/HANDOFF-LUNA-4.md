@@ -1,7 +1,7 @@
 # Handoff — LUNA-4
 
-**Estado:** parcial encerrado; a visão executiva e exportação estão implementadas nesta frente, com bloqueios de contrato registrados.  
-**RFC:** RFC-INV-004. **Base:** `cdadfef769d5f5b5a163a0cc583dded512dbffd1` (bootstrap comum; diff comparado também com `b068cfdd40ea72f6c88df1c4ab69d30ab2905b67`).  
+**Estado:** parcial encerrado; a visão executiva e exportação estão implementadas nesta frente, com bloqueios de contrato registrados.
+**RFC:** RFC-INV-004. **Base:** `cdadfef769d5f5b5a163a0cc583dded512dbffd1` (bootstrap comum; diff comparado também com `b068cfdd40ea72f6c88df1c4ab69d30ab2905b67`).
 **Head de implementação:** `c93dcdd` (`fix(investigate): complete executive report context`) em `codex/luna-4-executive`. **Worktree:** `/Users/irinery/.codex/worktrees/luna-4-executive/PocketCli`.
 **Modelo/esforço:** GPT-6; o esforço efetivo não é exposto nesta execução.
 **Contrato:** `investigate.insights.v1`; SHA-256 de `internal/investigation/insightcontract/v1.go`: `c1abd2c95a2f0da87a24fe902285eef0ad067d83ceca4be15ba13d9fd4b9eeab`. L4 não alterou contrato, schema ou composition root.

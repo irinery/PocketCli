@@ -456,6 +456,13 @@ const realAppJSTemplate = `(() => {
     (report.limitations || []).forEach(item => summary.append(node('p', 'callout', item)));
     (report.next_actions || []).forEach(item => summary.append(node('p', 'muted', 'Próxima ação: ' + item)));
     parent.append(summary);
+    const objectives = card('Objetivos');
+    (report.objectives || []).forEach(item => {
+      objectives.append(node('h3', '', item.id + ' · ' + (item.title || 'Título não informado') + ' · ' + labelPt(item.dimension)));
+      const target = item.target === null || item.target === undefined ? 'meta não informada' : (labelPt(item.comparator) + ' ' + item.target + ' ' + labelPt(item.unit));
+      objectives.append(node('p', 'muted', 'Critério: ' + target + ' · baseline ' + (item.baseline_value ?? 'não informado') + ' · prazo ' + (item.deadline || 'não informado')));
+    });
+    parent.append(objectives);
     const questions = card('Cobertura por pergunta');
     (report.questions || []).forEach(item => {
       questions.append(node('h3', '', labelPt(item.question_id) + ' · ' + labelPt(item.status)), node('p', '', item.reason || 'Sem justificativa informada.'));
@@ -581,6 +588,7 @@ const realAppJSTemplate = `(() => {
     const timeline = [];
     (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, text: item.text, evidence: item.citations || []}));
     (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, claims: item.claim_ids, objectives: item.objective_ids, decisionMaker: item.decision_maker_id, recordedBy: item.recorded_by_id, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
+    (detailRecord.timeline || []).filter(item => item.kind !== 'decision').forEach(item => timeline.push({id: item.id, kind: labelPt(item.kind) + ' · ' + labelPt(item.source), at: item.at, end: item.end, observedAt: item.observed_at, actor: item.actor_id, oldValue: item.old_value, newValue: item.new_value, scope: item.scope, entities: item.entity_id ? [item.entity_id] : [], text: item.summary, evidence: (item.evidence_ids || []).map(id => ({evidence_id: id, quote: ''}))}));
     const timelineTime = item => {
       if (!item.at || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item.at)) return null;
       const value = Date.parse(item.at); return Number.isFinite(value) ? value : null;
@@ -592,6 +600,7 @@ const realAppJSTemplate = `(() => {
       const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
       timelineBox.append(node('h3', '', dateLabel + ' · ' + item.id + ' · ' + item.kind), node('p', '', item.text));
       if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
+      if (item.observedAt || item.end || item.actor || item.oldValue || item.newValue) timelineBox.append(node('p', 'muted', 'Observado: ' + (item.observedAt || 'não informado') + ' · até: ' + (item.end || 'não informado') + ' · ator: ' + (item.actor || 'não informado') + ' · de: ' + (item.oldValue || 'não informado') + ' · para: ' + (item.newValue || 'não informado')));
       if (item.method || item.validity || item.validFrom || item.validTo) timelineBox.append(node('p', 'muted', 'Método: ' + labelPt(item.method) + ' · validade: ' + labelPt(item.validity) + ' · de ' + (item.validFrom || 'data desconhecida') + ' até ' + (item.validTo || 'fim não determinado')));
       if (item.entities && item.entities.length) timelineBox.append(node('p', 'muted', 'Entidades: ' + item.entities.join(', ')));
       if (item.claims && item.claims.length) timelineBox.append(node('p', 'muted', 'Afirmações relacionadas: ' + item.claims.join(', ')));

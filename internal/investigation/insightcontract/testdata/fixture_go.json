@@ -1306,7 +1306,28 @@
     ],
     "limitations": [
       "Fixture inteiramente sintética."
-    ]
+    ],
+    "objectives": [
+      {
+        "id": "OBJ-DIRECTION",
+        "title": "Reconstruir a direção do componente demonstrativo",
+        "dimension": "direction",
+        "entity_ids": [
+          "CMP-DEMO"
+        ],
+        "metric_id": "",
+        "target": null,
+        "comparator": "none",
+        "unit": "",
+        "deadline": null,
+        "owner_id": null,
+        "baseline_value": null,
+        "baseline_snapshot_id": null,
+        "baseline_cohort_id": null,
+        "evidence_ids": []
+      }
+    ],
+    "policy_hash": "36b7153ae3682af6af133ecc6870681e30f5c28291e3f44e05ba0abce77fea98"
   },
   "objects": {
     "EV-OLD": {

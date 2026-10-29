@@ -4,11 +4,27 @@
 **Conclusão:** integrado com validações pendentes
 **Branch:** `codex/investigation-insights-integration`
 **Base comum:** `cdadfef769d5f5b5a163a0cc583dded512dbffd1`
-**Contrato:** `investigate.insights.v1`, SHA-256 `c1abd2c95a2f0da87a24fe902285eef0ad067d83ceca4be15ba13d9fd4b9eeab`
+**Contrato:** `investigate.insights.v1`, SHA-256 do Go `978de131c3e0e08ec3c41e2884212d56190ad0251ca8804b42737051dd832949`; schema `1c35713fabf790d0b35ae17b022273c61cc3a935bb81f7ad40f456e88321616c`
+
+## Atualização dos gates no PR #71
+
+Esta seção prevalece sobre a matriz histórica abaixo, escrita antes do retrabalho dos gates.
+
+| Gate | Resultado em 28/10/2026 |
+|---|---|
+| RFC-INV-COR-L4-001/002 | Ratificadas e implementadas: objetivos completos, timeline tipada, regra de suficiência documentada e `PolicyHash` no relatório/artefato. Schema, fixture e PDFs regenerados. |
+| UI em browser | Desbloqueio, seleção do snapshot real SMF, análise `provider.kind=none`, navegação pelas seções, exportações executiva/detalhada e SQL de leitura executados. Consulta `v_snapshot` retornou 1 linha com ID/janela corretos. Sem caso semântico nesta execução degradada; detalhe de caso depende do gate do provider. |
+| Compatibilidade do snapshot | Um snapshot SMF de 27/10 falhava ao reserializar um dataset antigo com campos Go novos. O hash agora é verificado contra os bytes publicados; teste de adulteração e leitura do snapshot real passaram. |
+| Provider real/benchmark | Perfil local `middlewareauth-llm` criado para `pocketcli/openai/default`, modelo publicado `gpt-5.6-sol`, token interno só por ambiente. O MiddlewareAuth responde, mas ainda retorna `authenticated=false`; a sessão de dispositivo está pendente. Sem medição semântica real. |
+| Coleta SMF nova | Coleta GitHub 30d somente leitura iniciada com escopo `irinery/socialMediaFactory`; tentativa limitada a 120s pausou em 547 itens, tentativa 600s pausou em 703 itens por rate limit do orçamento. Nova tentativa com limite compatível com quota GitHub segue em execução. Nenhuma das tentativas pausadas foi chamada de snapshot publicado. |
+| Gates locais | `go vet`, `go test ./...`, `go test -tags investigate_sqlite ./...`, build SQLite, smoke 7/7 e shell macOS 33/33 em 76s passaram. `pdfinfo` confirma 3/4 páginas A4; renderização/inspeção visual sem corte. |
+| Checks remotos | Head anterior `57fcd1d`: Lint/Security/Layout/Linux/Alpine passaram; macOS falhou somente pelo teto shell de 50s com 28 testes passando em 79s. O teto macOS foi ajustado para 100s, com justificativa e reprodução documentadas. Conferir checks do próximo head após push. |
+
+O PR permanece draft até provider/benchmark, coleta atualizada e checks remotos do novo head serem verificados. A comparação GitHub live e o snapshot de 27/10 usam janelas/universos diferentes; números ausentes no snapshot parcial não são falsos negativos do produto por si só.
 
 ## Escopo e entradas
 
-Integração feita em worktree separada, sem alterar o checkout de origem e sem publicar, fazer push ou abrir PR. Os quatro commits foram preservados por merges `--no-ff`, em ordem L1 → L2 → L3 → L4. As branches L2–L4 usam `cdadfef`; L1 usa `8cbd526`. A diferença entre essas bases é uma reorganização documental: contrato e fixtures compartilhados têm árvores idênticas. O handoff L3, inicialmente apenas local/não commitado, foi registrado em `d2599b0` antes da integração.
+Integração feita em worktree separada, sem alterar o checkout de origem. Na primeira etapa ainda não havia push nem PR; agora a branch está no PR #71. Os quatro commits foram preservados por merges `--no-ff`, em ordem L1 → L2 → L3 → L4. As branches L2–L4 usam `cdadfef`; L1 usa `8cbd526`. A diferença entre essas bases é uma reorganização documental: contrato e fixtures compartilhados têm árvores idênticas. O handoff L3, inicialmente apenas local/não commitado, foi registrado em `d2599b0` antes da integração.
 
 | Frente | Branch / commit integrado | Resultado declarado no handoff |
 |---|---|---|
@@ -24,7 +40,7 @@ As instruções do pacote foram tratadas como requisitos de execução; comandos
 1. **RFC-INV-COR-INT-001 — validada nesta branch.** L1 e L2 calculavam `ConfigHash` diferentemente, L1 confundia o hash da fonte com a proveniência bundle+facts de L3 e abortava antes do callback quando o provider era nulo. Um helper comum agora fixa esses hashes; o serviço permite callback com provider ausente e resultado degradado; o composition root resolve a profile somente na ação explícita. Sem mudança de wire.
 2. **RFC-INV-COR-L4-003 — validada nesta branch.** O PDF detalhado reutilizava o headline “para leitura executiva”. Agora o cabeçalho identifica “Análise detalhada” e a contagem total; a headline persistida/executiva não muda.
 
-As RFCs L4-001 e L4-002 continuam propostas pelo handoff: o contrato não representa metadados completos de objetivos/timeline/suficiência normativa nem fingerprint da política editorial. Mudanças de domínio/contrato não foram improvisadas no fechamento.
+As RFCs L4-001 e L4-002 estavam propostas no handoff. A decisão e a implementação desta etapa estão registradas na atualização acima e nos próprios RFCs.
 
 ## Matriz de requisitos RFC-INV-000–005
 
@@ -76,8 +92,8 @@ O smoke local não substitui uma validação com uma instalação configurada ou
 - `output/pdf/README.md` — proveniência e comando de regeneração.
 - `docs/investigation/insights/README.md` — CLI, profile, política externa, pré-requisitos e comandos locais.
 
-Para chegar a **integrado e validado**, ainda é necessário ratificar as RFCs L4-001/002 (eventualmente com nova entrega L4), exercitar o ciclo da UI em browser, configurar um adapter autorizado e medir a semântica em dataset rotulado com split documentado. Até então, usar esta branch somente como integração local revisável e manter a conclusão **integrado com validações pendentes**.
+Para chegar a **integrado e validado**, ainda faltam autenticação do provider no MiddlewareAuth, execução e avaliação semântica em dataset rotulado com split documentado, conclusão da coleta SMF 30d e checks remotos do head final. O detalhe de caso na UI deve ser refeito com uma análise que produza caso semântico. Até então, manter o PR draft e a conclusão **integrado com validações pendentes**.
 
-Comparação posterior de fonte real: [VALIDACAO_SMF_GITHUB.md](VALIDACAO_SMF_GITHUB.md) registra uma consulta somente leitura ao repositório privado `irinery/socialMediaFactory` em 28/10/2026. A comparação não executa coleta do PocketCli e não altera os gates pendentes acima.
+Comparação posterior de fonte real: [VALIDACAO_SMF_GITHUB.md](VALIDACAO_SMF_GITHUB.md) registra a consulta somente leitura ao repositório privado `irinery/socialMediaFactory` em 28/10/2026. A atualização acima registra a análise de um snapshot real local já publicado e a nova coleta em andamento.
 
 No PR #71, o Lint remoto do primeiro head encontrou SC2010 em um teste shell herdado de `main`. A correção delimitada está em [RFC-INV-COR-INT-002-shellcheck-smoke.md](RFC-INV-COR-INT-002-shellcheck-smoke.md); ShellCheck local, smoke focado e suíte local completa passaram. O resultado do Lint do head corrigido deve ser conferido no GitHub antes do merge.

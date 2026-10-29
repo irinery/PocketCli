@@ -1,6 +1,10 @@
 package insightcontract
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
 
 func TestConfigHashCanonicalizesSetsAndIncludesSnapshotVersions(t *testing.T) {
 	left := AnalysisConfig{
@@ -40,5 +44,43 @@ func TestConfigHashCanonicalizesSetsAndIncludesSnapshotVersions(t *testing.T) {
 		if changed == first {
 			t.Fatalf("mudar versões do snapshot não alterou hash: %v", versions)
 		}
+	}
+}
+
+func TestPolicyHashChangesWithoutVisibleContentChange(t *testing.T) {
+	base := Policy{ID: "policy", Version: "1", ExcerptMaxRunes: 100, ContentMode: "local_excerpts"}
+	first, err := PolicyHash(base)
+	if err != nil || len(first) != 64 {
+		t.Fatalf("hash: %q %v", first, err)
+	}
+	again, _ := PolicyHash(base)
+	if again != first {
+		t.Fatal("hash da mesma política não é estável")
+	}
+	base.Version = "2"
+	changed, _ := PolicyHash(base)
+	if changed == first {
+		t.Fatal("versão diferente de política reutilizou identidade")
+	}
+}
+
+func TestPolicyHashMatchesSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/fixture_go.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Config AnalysisConfig  `json:"config"`
+		Report ExecutiveReport `json:"report"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	got, err := PolicyHash(fixture.Config.Policy)
+	if err != nil || got != fixture.Report.PolicyHash {
+		t.Fatalf("fixture policy hash divergente: got=%s expected=%s err=%v", got, fixture.Report.PolicyHash, err)
+	}
+	if len(fixture.Report.Objectives) != len(fixture.Config.Objectives) {
+		t.Fatal("fixture perdeu metadados de objetivos")
 	}
 }

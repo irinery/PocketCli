@@ -50,6 +50,17 @@ func ConfigHash(cfg AnalysisConfig, schemaVersion, queryCatalogVersion string) (
 	return hex.EncodeToString(digest[:]), nil
 }
 
+// PolicyHash identifies the full effective content policy without exposing a
+// provider credential or relying on the rendered report text.
+func PolicyHash(policy Policy) (string, error) {
+	body, err := json.Marshal(policy)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:]), nil
+}
+
 func sortedUnique(values []string) []string {
 	if len(values) == 0 {
 		return []string{}

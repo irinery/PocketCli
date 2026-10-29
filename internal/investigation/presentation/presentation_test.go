@@ -35,6 +35,13 @@ func TestBuildUsesFixtureWithoutInventingMetrics(t *testing.T) {
 	if report.PublicationStatus != "ready" || report.AnalysisStatus != fixture.Analysis.Status {
 		t.Fatalf("statuses were conflated: %+v", report)
 	}
+	policyHash, err := insightcontract.PolicyHash(fixture.Config.Policy)
+	if err != nil || report.PolicyHash != policyHash || len(report.Objectives) != len(fixture.Config.Objectives) {
+		t.Fatalf("objective/policy context missing: hash=%q objectives=%d err=%v", report.PolicyHash, len(report.Objectives), err)
+	}
+	if len(report.Objectives) > 0 && report.Objectives[0].Title != fixture.Config.Objectives[0].Title {
+		t.Fatal("objective title was not preserved")
+	}
 	for i, c := range report.Cases {
 		if report.CaseIDs[i] != c.ID {
 			t.Fatalf("case id at %d does not match", i)

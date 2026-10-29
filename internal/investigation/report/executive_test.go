@@ -84,6 +84,7 @@ func executiveFixture(t *testing.T) (insightcontract.ExecutiveReport, []insightc
 
 func TestExecutiveExportUsesSelectionAndCompleteDetailWithIdempotency(t *testing.T) {
 	report, cases := executiveFixture(t)
+	report.PolicyHash = strings.Repeat("a", 64)
 	reader := &executiveFixtureReader{report: report, cases: cases}
 	dir := t.TempDir()
 	exporter, err := NewExecutiveFinalizer(reader, dir)
@@ -120,6 +121,11 @@ func TestExecutiveExportUsesSelectionAndCompleteDetailWithIdempotency(t *testing
 	if err != nil || again.ID != short.ID {
 		t.Fatalf("semantic export identity changed with request key: %+v %v", again, err)
 	}
+	reader.report.PolicyHash = strings.Repeat("b", 64)
+	changedPolicy, err := exporter.ExportExecutive(context.Background(), request)
+	if err != nil || changedPolicy.ID == short.ID || changedPolicy.PolicyHash != reader.report.PolicyHash {
+		t.Fatalf("policy change reused artifact: %+v %v", changedPolicy, err)
+	}
 
 	request.Mode = "analysis_detail"
 	request.IdempotencyKey = "export-2"
@@ -135,7 +141,7 @@ func TestExecutiveExportUsesSelectionAndCompleteDetailWithIdempotency(t *testing
 		t.Fatal(err)
 	}
 	persisted, err := restarted.GetExecutiveArtifact(context.Background(), detail.ID)
-	if err != nil || persisted.ContentHash != detail.ContentHash {
+	if err != nil || persisted.ContentHash != detail.ContentHash || persisted.PolicyHash != reader.report.PolicyHash {
 		t.Fatalf("persisted manifest: %+v %v", persisted, err)
 	}
 }

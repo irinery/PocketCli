@@ -129,7 +129,7 @@ func (f *ExecutiveFinalizer) ExportExecutive(ctx context.Context, req insightcon
 	// A nova chave de request não cria outra revisão quando os bytes semânticos,
 	// o modo e o renderer são iguais. O conteúdo completo (inclusive os trechos
 	// permitidos que chegaram pelo leitor) entra em analysisHash.
-	idemBytes, _ := json.Marshal([]string{analysisHash, req.Mode, executiveRendererVersion})
+	idemBytes, _ := json.Marshal([]string{analysisHash, report.PolicyHash, req.Mode, executiveRendererVersion})
 	idemSum := sha256.Sum256(idemBytes)
 	idem := hex.EncodeToString(idemSum[:])
 	f.mu.Lock()
@@ -166,7 +166,7 @@ func (f *ExecutiveFinalizer) ExportExecutive(ctx context.Context, req insightcon
 	artifact := insightcontract.ExecutiveArtifact{
 		ID: id, SnapshotID: req.SnapshotID, AnalysisID: req.AnalysisID, Mode: req.Mode, Revision: revision,
 		PageCount: pageCount, SelectedCaseCount: report.TotalCases, TotalCaseCount: report.TotalCases,
-		ContentHash: contentHash, AnalysisHash: analysisHash, RendererVersion: executiveRendererVersion,
+		ContentHash: contentHash, AnalysisHash: analysisHash, PolicyHash: report.PolicyHash, RendererVersion: executiveRendererVersion,
 		CreatedAt: created.Format(time.RFC3339), DownloadPath: "/api/v1/insights/exports/" + id + "/download",
 	}
 	if req.Mode == "executive" {
@@ -347,7 +347,7 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	l.heading("Visão executiva", 22, 0, false)
 	l.paragraph(9.5, colorMuted, plain("PocketCli · investigação executiva"))
 	modeLabel := map[string]string{"executive": "Executivo", "analysis_detail": "Detalhado"}[mode]
-	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"ID da análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Estado da análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
+	for _, row := range [][2]string{{"Snapshot:", report.SnapshotID}, {"ID da análise:", report.AnalysisID}, {"Gerado:", created.Format(time.RFC3339)}, {"Apresentação:", executiveRendererVersion}, {"Política:", label(report.PolicyHash)}, {"Modo:", modeLabel}, {"Publicação:", label(report.PublicationStatus)}, {"Estado da análise:", label(report.AnalysisStatus)}, {"Suficiência:", label(report.SufficiencyStatus)}} {
 		l.paragraph(9, colorText, bold(row[0]), plain(row[1]))
 	}
 	headline := report.Headline
@@ -386,6 +386,18 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		}
 	}
 	l.heading("Objetivos e dimensões", 14, 10, true)
+	for _, objective := range report.Objectives {
+		title := objective.Title
+		if title == "" {
+			title = "título não informado"
+		}
+		l.paragraph(9.5, colorText, bold(objective.ID+" · "+title), plain("· dimensão "+label(objective.Dimension)))
+		criterion := "meta não informada"
+		if objective.Target != nil {
+			criterion = fmt.Sprintf("meta %s %g %s", label(objective.Comparator), *objective.Target, label(objective.Unit))
+		}
+		l.paragraph(8.2, colorMuted, plain("Critério: "+criterion+" · baseline "+optionalFloat(objective.BaselineValue)+" · prazo "+optional(objective.Deadline)))
+	}
 	for _, q := range report.Questions {
 		l.paragraph(9.5, colorText, bold(label(q.QuestionID)), plain("· "+label(q.Status)+" · "+q.Reason))
 		for _, collection := range q.RequiredCollections {
@@ -595,6 +607,25 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations,
 			"Método: "+label(decision.Method), "Validade: "+validityLabel(decision.ValidityStatus, decision.ValidFrom, decision.ValidTo), "Entidades: "+joinedOrUnknown(decision.EntityIDs), "Afirmações: "+joinedOrUnknown(decision.ClaimIDs), "Objetivos: "+joinedOrUnknown(decision.ObjectiveIDs), "Responsável: "+optional(decision.DecisionMakerID), "Registrado por: "+optional(decision.RecordedByID)))
 	}
+	for _, item := range d.Timeline {
+		if item.Kind == "decision" {
+			continue
+		}
+		at := ""
+		if item.At != nil {
+			at = *item.At
+		}
+		metadata := []string{"Entidade: " + label(item.EntityID), "Evidências: " + joinedOrUnknown(item.EvidenceIDs)}
+		for _, field := range []struct {
+			name  string
+			value *string
+		}{{"Observado", item.ObservedAt}, {"Até", item.End}, {"Ator", item.ActorID}, {"De", item.OldValue}, {"Para", item.NewValue}} {
+			if field.value != nil {
+				metadata = append(metadata, field.name+": "+*field.value)
+			}
+		}
+		timeline = append(timeline, newTimelineEntry(at, item.ID, label(item.Kind)+" · "+label(item.Source), item.Summary, item.Scope, nil, metadata...))
+	}
 	sort.SliceStable(timeline, func(i, j int) bool {
 		if !timeline[i].ordered {
 			return false
@@ -605,7 +636,7 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		return timeline[i].orderedAt.Before(timeline[j].orderedAt)
 	})
 	if len(timeline) > 0 {
-		l.heading("Timeline disponível no contrato", 11, 5, true)
+		l.heading("Timeline do caso", 11, 5, true)
 	}
 	for _, item := range timeline {
 		at := item.at
@@ -689,6 +720,13 @@ func optional(value *string) string {
 		return "não determinado"
 	}
 	return *value
+}
+
+func optionalFloat(value *float64) string {
+	if value == nil {
+		return "não informado"
+	}
+	return fmt.Sprintf("%g", *value)
 }
 
 func windowLabel(window insightcontract.Window) string {

@@ -33,6 +33,10 @@ type insightProviderProfile struct {
 	Adapter       string `json:"adapter"`
 	Model         string `json:"model"`
 	CredentialEnv string `json:"credential_env"`
+	BaseURL       string `json:"base_url,omitempty"`
+	ProjectID     string `json:"project_id,omitempty"`
+	ProviderID    string `json:"provider_id,omitempty"`
+	ProfileID     string `json:"profile_id,omitempty"`
 }
 
 func configuredInsightProvider(cfg insightcontract.AnalysisConfig) (insightcontract.ReasoningProvider, error) {
@@ -80,18 +84,18 @@ func configuredInsightProvider(cfg insightcontract.AnalysisConfig) (insightcontr
 	if selected == nil {
 		return nil, nil
 	}
-	if selected.ID == "" || selected.Adapter != "openai-responses" || selected.Model == "" || !environmentVariableName.MatchString(selected.CredentialEnv) {
-		return nil, fmt.Errorf("ERR_CONFIG: perfil %q exige adapter openai-responses, model e credential_env válidos", selected.ID)
+	if selected.ID == "" || selected.Adapter != "middlewareauth-llm" || selected.Model == "" || !environmentVariableName.MatchString(selected.CredentialEnv) {
+		return nil, fmt.Errorf("ERR_CONFIG: perfil %q exige adapter middlewareauth-llm, model e credential_env válidos", selected.ID)
 	}
 	if cfg.Provider.Model != selected.Model {
 		return nil, fmt.Errorf("ERR_CONFIG: o model da análise não corresponde ao perfil %q", selected.ID)
 	}
-	if cfg.Provider.AdapterVersion != "" && cfg.Provider.AdapterVersion != "openai-responses-v1" {
+	if cfg.Provider.AdapterVersion != "" && cfg.Provider.AdapterVersion != "middlewareauth-llm-v1" {
 		return nil, fmt.Errorf("ERR_CONFIG: adapter_version incompatível com o perfil %q", selected.ID)
 	}
-	apiKey := strings.TrimSpace(os.Getenv(selected.CredentialEnv))
-	if apiKey == "" {
+	clientToken := strings.TrimSpace(os.Getenv(selected.CredentialEnv))
+	if clientToken == "" {
 		return nil, nil
 	}
-	return decisionengine.NewOpenAIResponsesProvider(apiKey, selected.Model, nil)
+	return decisionengine.NewMiddlewareAuthProvider(selected.BaseURL, clientToken, selected.ProjectID, selected.ProviderID, selected.ProfileID, selected.Model, nil)
 }

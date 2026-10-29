@@ -3,16 +3,18 @@
 Motor L3 em desenvolvimento contra `insightcontract` do bootstrap comum. O
 modo degradado valida entradas e referências, calcula proveniência/chave de
 invalidação, aplica a política de conteúdo e mantém cases/objetivos
-indeterminados. O adapter OpenAI Responses é explícito, não tem modelo default
-e só é usado se a integração injetar provider e credencial já resolvidos.
+indeterminados. A integração atual resolve o provider pelo MiddlewareAuth local,
+sem transportar credencial upstream para o PocketCli. O adapter OpenAI Responses
+direto permanece como implementação isolada/testada, mas não é selecionado pelo
+perfil de produção.
 Provider externo exige `ExternalProcessingAllowed=true` em qualquer `ContentMode`;
 `local_excerpts` só passa com provider que declare localidade. Nenhuma chamada
-externa foi feita nesta implementação.
+externa faz parte da suíte offline.
 
 ## Verificações locais
 
 Pré-requisito: Go 1.22 ou mais recente. Os testes usam fixtures e um
-round-tripper local; não precisam de chave, variável de ambiente ou rede.
+round-tripper/servidor local; não precisam de chave, variável de ambiente ou rede externa.
 
 ```sh
 gofmt -w internal/investigation/decisionengine/*.go
