@@ -50,6 +50,7 @@ is_sensitive_name() {
     lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
 
     case "$lower" in
+        *_test.go) return 1 ;; # Fonte de teste é pública; o scanner 01 ainda inspeciona seu conteúdo.
         *.env|*.key|*secret*|*credential*|*token*) return 0 ;;
         *) return 1 ;;
     esac
