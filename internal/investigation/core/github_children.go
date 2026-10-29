@@ -89,6 +89,9 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 	}
 	total := len(plans[0].targets) + len(plans[1].targets)
 	done := 0
+	var dependencyEvents []githubDependencyEvent
+	var dependencyObserved int64
+	dependencyStatus, dependencyReason := "complete", ""
 	for _, collection := range plans {
 		targets := collection.targets
 		status, reason := collection.status, collection.reason
@@ -119,6 +122,18 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 				lastComplete = target.EntityID
 			}
 			observed += int64(len(items))
+			if collection.name == "timeline" && !target.IsPR {
+				if !complete {
+					dependencyStatus, dependencyReason = "partial", "timeline de dependências incompleta"
+				} else {
+					events, count, invalid := parseGitHubDependencyEvents(plan, r, target, items, d)
+					dependencyEvents = append(dependencyEvents, events...)
+					dependencyObserved += count
+					if invalid {
+						dependencyStatus, dependencyReason = "partial", "evento de dependência inválido ou fora do escopo"
+					}
+				}
+			}
 			for _, raw := range items {
 				if collection.name == "reviews" {
 					if err := c.projectReview(plan, r, target, raw, d, run); err != nil {
@@ -143,6 +158,15 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			}
 		}
 		d.Coverage = append(d.Coverage, c.coverage(r, collection.name, status, observed, reason))
+		if collection.name == "timeline" {
+			if status != "complete" || collection.status != "complete" {
+				dependencyStatus, dependencyReason = "partial", "timeline de dependências incompleta"
+			}
+			if err := c.projectGitHubDependencyEvents(r, dependencyEvents, d, run); err != nil {
+				return err
+			}
+			d.Coverage = append(d.Coverage, c.coverage(r, "issue_dependencies", dependencyStatus, dependencyObserved, dependencyReason))
+		}
 	}
 	for i := range d.PullRequests {
 		p := &d.PullRequests[i]

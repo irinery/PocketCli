@@ -39,6 +39,9 @@ const realAppJSTemplate = `(() => {
   const detail = $('#detail');
   const contractVersion = 'investigate.v1';
   let csrf = '', capabilities = null, snapshot = null, snapshots = [], findings = [], queries = [], activeView = 'overview';
+  let analyses = [], analysesCursor = '', activeAnalysisID = '', executiveReport = null;
+  let analysisPages = {requested: new Set(), ids: new Set(), total: null};
+  let findingsLoaded = false, queriesLoaded = false;
 
   const node = (tag, className, value) => {
     const item = document.createElement(tag);
@@ -49,7 +52,10 @@ const realAppJSTemplate = `(() => {
   const button = (label, action, className = '') => {
     const item = node('button', className, label);
     item.type = 'button';
-    item.addEventListener('click', action);
+    item.addEventListener('click', async event => {
+      try { await action(event); }
+      catch (error) { fail(item.parentElement || main, error); }
+    });
     return item;
   };
   const card = title => {
@@ -93,6 +99,25 @@ const realAppJSTemplate = `(() => {
   };
   const fail = (where, error) => where.append(node('p', 'callout', error.message));
   const segment = value => encodeURIComponent(value);
+  const labelPt = value => ({
+    ready: 'pronta', exporting: 'em exportação', exported: 'exportada', export_failed: 'falha na exportação',
+    complete: 'concluída', partial: 'parcial', not_run: 'não executada', failed: 'falhou',
+    queued: 'na fila', running: 'em execução', completed: 'concluída', completed_partial: 'concluída parcialmente', cancelled: 'cancelada',
+    sufficient: 'suficiente', insufficient: 'insuficiente', not_applicable: 'não aplicável',
+    on_track: 'no esperado', at_risk: 'em risco', off_track: 'fora do esperado', indeterminate: 'indeterminada',
+    assessed: 'avaliado', critical: 'crítico', high: 'alto', medium: 'médio', low: 'baixo', unknown: 'desconhecido',
+    actionable: 'acionável', monitor: 'monitorar', needs_evidence: 'precisa de evidência', resolved: 'resolvido',
+    history_scope: 'Alcance histórico', decision_lineage: 'Linha de decisões', delivery_trace: 'Trilha de entrega',
+    flow_timing: 'Tempo de fluxo', quality_outcome: 'Resultado de qualidade', cost_actual: 'Custo real', objective_status: 'Estado do objetivo',
+    direction: 'Direção', delivery: 'Entrega', flow: 'Fluxo', quality: 'Qualidade', cost: 'Custo', capacity: 'Capacidade', solution: 'Solução',
+    available: 'disponível', metadata_only: 'somente metadados', unavailable: 'indisponível', redacted_all: 'conteúdo todo redigido', integrity_error: 'erro de integridade',
+    verified: 'verificada', unverified: 'não verificada', mismatch: 'divergente', missing: 'ausente',
+    supported: 'sustentada', inferred: 'inferida', disputed: 'contestada', proposed: 'proposta', accepted: 'aceita',
+    known: 'conhecido', established: 'estabelecida', candidate: 'candidata', known_interval: 'intervalo conhecido', open_ended: 'fim em aberto', ambiguous: 'ambígua',
+    human: 'humano', rule: 'regra', model: 'modelo',
+    implemented: 'implementada', superseded: 'superada', revoked: 'revogada', conflicting: 'conflitante'
+    ,source: 'fonte', facts: 'fatos', reasoning: 'interpretação', presentation: 'apresentação', persisting: 'salvando', idle: 'ocioso'
+  }[value] || String(value || 'não determinado').replaceAll('_', ' '));
   async function api(path, options = {}) {
     const headers = new Headers(options.headers || {});
     headers.set('X-Investigate-Contract', contractVersion);
@@ -117,15 +142,30 @@ const realAppJSTemplate = `(() => {
     if (!snapshots.some(item => item.id === id)) throw new Error('Snapshot não pertence à investigação selecionada.');
     snapshot = await api('/snapshots/' + segment(id));
     if (snapshot.investigation_id !== investigationId) throw new Error('Snapshot de outra investigação.');
-    const [loadedFindings, loadedQueries] = await Promise.all([
-      api('/snapshots/' + segment(id) + '/findings'),
-      api('/snapshots/' + segment(id) + '/queries')
-    ]);
-    findings = loadedFindings || [];
-    queries = loadedQueries || [];
+    findings = []; queries = []; findingsLoaded = false; queriesLoaded = false; analyses = []; analysesCursor = ''; activeAnalysisID = ''; executiveReport = null;
+    analysisPages = {requested: new Set(['']), ids: new Set(), total: null};
+    if (capabilities && capabilities.analysis_available && capabilities.insights_available) {
+      const page = await api('/snapshots/' + segment(id) + '/insights?limit=50');
+      acceptAnalysisPage(page, '');
+    }
     $('#snapshot-label').textContent = 'Snapshot ' + id + ' · ' + (snapshot.published_at || snapshot.status);
   }
+  function acceptAnalysisPage(page, requestedCursor) {
+    if (!snapshot || page.snapshot_id !== snapshot.id || !Array.isArray(page.items) || !Number.isSafeInteger(page.total) || page.total < 0 || page.items.length > 50 || page.items.length > page.total) throw new Error('A lista de análises retornou uma página inválida ou de outro snapshot.');
+    if (analysisPages.total !== null && analysisPages.total !== page.total) throw new Error('O total de análises mudou durante a paginação.');
+    analysisPages.total = page.total;
+    if (page.next_cursor && (page.next_cursor === requestedCursor || analysisPages.requested.has(page.next_cursor))) throw new Error('A paginação de análises repetiu um cursor.');
+    for (const item of page.items) {
+      if (!item.id || item.snapshot_id !== snapshot.id || analysisPages.ids.has(item.id)) throw new Error('A página contém análise vazia, duplicada ou de outro snapshot.');
+      analysisPages.ids.add(item.id);
+    }
+    if (page.next_cursor && analysisPages.ids.size >= page.total) throw new Error('A lista de análises avançou além do total informado.');
+    if (!page.next_cursor && analysisPages.ids.size !== page.total) throw new Error('A paginação terminou antes de carregar todas as análises.');
+    analyses.push(...page.items);
+    analysesCursor = page.next_cursor || '';
+  }
   async function init() {
+    main.replaceChildren(node('p', 'loading', 'Carregando snapshot e análises disponíveis…'));
     try {
       csrf = (await api('/session')).csrf_token;
       capabilities = await api('/capabilities');
@@ -331,12 +371,14 @@ const realAppJSTemplate = `(() => {
       field('YAML opcional', yaml), importButton, prepare, feedback);
     main.append(form);
   }
-  function overview() {
+  async function overview() {
     if (!snapshot) return setup();
     main.replaceChildren(heading('Visão geral', 'Dados publicados em ' + snapshot.published_at));
+    if (capabilities && capabilities.insights_available && capabilities.analysis_available) renderInsightOverview(main);
+    else main.append(node('p', 'callout', 'Análise executiva indisponível nesta sessão. A navegação legacy continua disponível.'));
     const grid = node('div', 'grid');
     const values = [
-      ['Achados', findings.length, 'Regras determinísticas'],
+      ['Achados', 'sob demanda', 'Relatório legacy'],
       ['Fontes', new Set((snapshot.coverage || []).map(c => c.source)).size, 'Fontes no snapshot'],
       ['Cobertura', snapshot.status, 'Estado da coleta'],
       ['Janela', (snapshot.window_start || 'Início não informado') + ' — ' + snapshot.window_end, 'Período analisado']
@@ -351,54 +393,338 @@ const realAppJSTemplate = `(() => {
     coverage.append(table(['Fonte', 'Recurso', 'Coleção', 'Estado', 'Observado', 'Motivo'],
       (snapshot.coverage || []).map(c => [c.source, c.resource_id, c.collection, c.status, c.observed, c.reason || '—'])));
     main.append(coverage);
-    const recent = card('Achados');
-    recent.append(table(['Severidade', 'Achado', 'Evidências'], findings.slice(0, 10).map(f => [
-      f.severity, button(f.title, () => findingDetail(f), 'text-button'), (f.evidence_ids || []).length
-    ])));
-    main.append(recent);
   }
-  async function loadReportRecords() {
-    let cursor = '', records = [];
-    const seen = new Set();
-    do {
-      const params = new URLSearchParams({limit: '200'});
-      if (cursor) params.set('cursor', cursor);
-      const page = await api('/snapshots/' + segment(snapshot.id) + '/report?' + params);
-      records.push(...(page.records || []));
-      if (page.next_cursor && seen.has(page.next_cursor)) throw new Error('Paginação do relatório repetiu cursor.');
-      cursor = page.next_cursor || '';
-      if (cursor) seen.add(cursor);
-    } while (cursor);
-    return records;
+  async function renderInsightOverview(parent) {
+    const box = card('Análise executiva');
+    if (!analyses.length) {
+      box.append(node('p', 'empty', 'Este snapshot ainda não tem análise executiva. Inicie uma somente após revisar um arquivo JSON de configuração.'));
+    } else {
+      const select = node('select');
+      select.append(node('option', '', 'Selecione uma análise'));
+      analyses.forEach(item => {
+        const scope = item.requested_scope || {};
+        const resources = (scope.resources || []).map(resource => resource.name || resource.id).join(', ') || 'recursos não informados';
+        const window = scope.report_window || {};
+        const range = [window.start, window.end].filter(Boolean).join(' — ') || 'período não informado';
+        const option = node('option', '', item.created_at + ' · ' + labelPt(item.status) + ' · ' + range + ' · ' + resources + ' · ' + item.id);
+        option.value = item.id; select.append(option);
+      });
+      select.value = activeAnalysisID;
+      select.onchange = async () => {
+        if (!select.value) { activeAnalysisID = ''; executiveReport = null; return overview(); }
+        const loading = card('Resumo da análise'); loading.append(node('p', 'loading', 'Carregando relatório executivo…')); parent.replaceChildren(loading);
+        try { await loadExecutiveReport(select.value); await overview(); }
+        catch (error) { await overview(); fail(parent, error); }
+      };
+      box.append(field('Versão da análise', select));
+      if (analysesCursor) box.append(button('Carregar mais análises', async () => {
+        const cursor = analysesCursor;
+        if (analysisPages.requested.has(cursor)) throw new Error('A paginação de análises repetiu um cursor.');
+        analysisPages.requested.add(cursor);
+        const page = await api('/snapshots/' + segment(snapshot.id) + '/insights?limit=50&cursor=' + segment(cursor));
+        acceptAnalysisPage(page, cursor); overview();
+      }));
+    }
+    parent.append(box);
+    if (executiveReport) renderExecutiveReport(parent, executiveReport);
+    if (capabilities && capabilities.analysis_available) renderAnalysisStart(parent);
+  }
+  async function loadExecutiveReport(id, fromRun = false) {
+    if (!analyses.some(item => item.id === id) && !fromRun) throw new Error('A análise não foi listada para este snapshot.');
+    const report = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(id));
+    if (report.snapshot_id !== snapshot.id || report.analysis_id !== id) throw new Error('O relatório pertence a outro snapshot ou análise.');
+    if (fromRun && !analyses.some(item => item.id === id)) analyses.unshift({id, snapshot_id: snapshot.id, status: report.analysis_status, created_at: 'Recém concluída'});
+    activeAnalysisID = id; executiveReport = report;
+  }
+  function valueAssessment(title, value) {
+    const box = card(title + ' · ' + labelPt(value.state) + ' · ' + labelPt(value.level || 'unknown'));
+    box.append(node('p', '', value.rationale || 'Sem racional informado.'));
+    (value.missing || []).forEach(item => box.append(node('p', 'callout', 'Falta: ' + item)));
+    if (value.evidence_ids && value.evidence_ids.length) box.append(node('p', 'muted', 'Evidências: ' + value.evidence_ids.join(', ')));
+    return box;
+  }
+  function renderExecutiveReport(parent, report) {
+    const summary = card('Resumo da análise');
+    summary.append(node('h3', '', report.headline), node('p', '', report.summary));
+    summary.append(node('p', 'muted', 'Publicação: ' + labelPt(report.publication_status) + ' · Análise: ' + labelPt(report.analysis_status) + ' · Suficiência: ' + labelPt(report.sufficiency_status)));
+    const requestedScope = report.requested_scope || {};
+    const rangeLabel = value => value ? (value.start || 'início não informado') + ' — ' + (value.end || 'fim não informado') : 'não informado';
+    const resourceLabels = (requestedScope.resources || []).map(resource => (resource.source || 'fonte não informada') + ' · ' + (resource.name || resource.id || 'recurso não informado') + (resource.name && resource.id ? ' (' + resource.id + ')' : ''));
+    summary.append(node('p', 'muted', 'Histórico solicitado: ' + rangeLabel(requestedScope.history) + ' · Janela do relatório: ' + rangeLabel(requestedScope.report_window)));
+    summary.append(node('p', 'muted', 'Recursos solicitados: ' + (resourceLabels.length ? resourceLabels.join('; ') : 'não informados')));
+    summary.append(node('p', 'muted', 'Casos selecionados: ' + (report.cases || []).length + ' de ' + report.total_cases + (report.total_cases > (report.cases || []).length ? ' · seleção parcial' : '')));
+    (report.limitations || []).forEach(item => summary.append(node('p', 'callout', item)));
+    (report.next_actions || []).forEach(item => summary.append(node('p', 'muted', 'Próxima ação: ' + item)));
+    parent.append(summary);
+    const objectives = card('Objetivos');
+    (report.objectives || []).forEach(item => {
+      objectives.append(node('h3', '', item.id + ' · ' + (item.title || 'Título não informado') + ' · ' + labelPt(item.dimension)));
+      const target = item.target === null || item.target === undefined ? 'meta não informada' : (labelPt(item.comparator) + ' ' + item.target + ' ' + labelPt(item.unit));
+      objectives.append(node('p', 'muted', 'Critério: ' + target + ' · baseline ' + (item.baseline_value ?? 'não informado') + ' · prazo ' + (item.deadline || 'não informado')));
+    });
+    parent.append(objectives);
+    const questions = card('Cobertura por pergunta');
+    (report.questions || []).forEach(item => {
+      questions.append(node('h3', '', labelPt(item.question_id) + ' · ' + labelPt(item.status)), node('p', '', item.reason || 'Sem justificativa informada.'));
+      (item.required_collections || []).forEach(collection => questions.append(node('p', 'muted', 'Coleção exigida: ' + collection.source + ' · ' + collection.resource_id + ' · ' + collection.collection)));
+      (item.missing || []).forEach(missing => questions.append(node('p', 'callout', 'Falta: ' + missing)));
+    });
+    parent.append(questions);
+    const dimensions = card('Dimensões e métricas');
+    (report.dimensions || []).forEach(item => {
+      const title = (item.objective_id || 'Sem objetivo identificado') + ' · ' + labelPt(item.dimension) + ' · ' + labelPt(item.status);
+      dimensions.append(node('h3', '', title), node('p', '', item.reason || 'Sem justificativa informada.'));
+      (item.missing || []).forEach(missing => dimensions.append(node('p', 'callout', 'Falta: ' + missing)));
+      if (item.metric_ids && item.metric_ids.length) dimensions.append(node('p', 'muted', 'Métricas: ' + item.metric_ids.join(', ')));
+      (item.case_ids || []).forEach(id => dimensions.append(button('Abrir caso ' + id, async () => {
+        const detail = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(id)); renderCaseDetail(detail);
+      })));
+    });
+    (report.metrics || []).forEach(item => {
+      const observed = item.state === 'observed' && item.value !== null && item.value !== undefined;
+      const denominators = item.denominator === null || item.denominator === undefined ? '' : ' · denominador ' + item.denominator;
+      const numerator = item.numerator === null || item.numerator === undefined ? '' : ' · numerador ' + item.numerator;
+      const sample = ' · amostra ' + item.sample_size + (item.eligible_size === null || item.eligible_size === undefined ? '' : ' de ' + item.eligible_size);
+      dimensions.append(node('p', 'muted', item.id + ' · ' + item.name + ': ' + (observed ? item.value + ' ' + item.unit : 'não determinado') + numerator + denominators + sample + ' · ' + item.definition + ' · coorte ' + (item.cohort_id || 'não informada') + ' · método ' + (item.method || 'não informado')));
+      (item.limitations || []).forEach(limitation => dimensions.append(node('p', 'callout', 'Limitação da métrica: ' + limitation)));
+    });
+    parent.append(dimensions);
+    const cases = card('Casos executivos');
+    (report.cases || []).forEach(item => {
+      const row = card(item.title + ' · ' + labelPt(item.state));
+      row.append(node('p', '', item.summary));
+      const references = [
+        ['Fatos', item.fact_case_ids], ['Afirmações', item.claim_ids], ['Decisões', item.decision_ids], ['Relações', item.relation_ids]
+      ].filter(([, ids]) => ids && ids.length).map(([name, ids]) => name + ': ' + ids.join(', '));
+      if (references.length) row.append(node('p', 'muted', references.join(' · ')));
+      if (item.objective_ids && item.objective_ids.length) row.append(node('p', 'muted', 'Objetivos relacionados: ' + item.objective_ids.join(', ')));
+      if (item.entity_ids && item.entity_ids.length) row.append(node('p', 'muted', 'Entidades: ' + item.entity_ids.join(', ')));
+      if (item.owner_id) row.append(node('p', 'muted', 'Responsável: ' + item.owner_id));
+      row.append(valueAssessment('Impacto', item.impact), valueAssessment('Complexidade', item.complexity), valueAssessment('Urgência', item.urgency), valueAssessment('Confiança', item.confidence));
+      if (item.recommended_alternative_id) {
+        const recommended = (item.alternatives || []).find(alternative => alternative.id === item.recommended_alternative_id);
+        row.append(node('p', 'callout', 'Alternativa recomendada: ' + (recommended ? recommended.action : item.recommended_alternative_id) + ' · ID ' + item.recommended_alternative_id + ' · base ' + labelPt(item.recommendation_basis)));
+      }
+      (item.alternatives || []).forEach(alternative => {
+        const option = card('Alternativa ' + alternative.id + ' · ' + alternative.action + ' · base ' + labelPt(alternative.basis));
+        option.append(node('p', '', alternative.expected_effect));
+        if (alternative.evidence_ids && alternative.evidence_ids.length) option.append(node('p', 'muted', 'Evidências: ' + alternative.evidence_ids.join(', ')));
+        (alternative.tradeoffs || []).forEach(value => option.append(node('p', 'muted', 'Trade-off: ' + value)));
+        (alternative.preconditions || []).forEach(value => option.append(node('p', 'muted', 'Pré-condição: ' + value)));
+        row.append(option);
+      });
+      (item.next_evidence || []).forEach(value => row.append(node('p', 'callout', 'Próxima evidência: ' + value)));
+      (item.citations || []).forEach(value => row.append(node('p', 'muted', value.evidence_id + ': ' + value.quote)));
+      const open = button('Abrir evidências e timeline', () => openInsightCase(item.id));
+      row.append(open); cases.append(row);
+    });
+    if (report.total_cases > (report.cases || []).length) cases.append(button('Abrir lista completa de casos', async () => { await renderInsightCases(cases, ''); }));
+    parent.append(cases);
+    const actions = card('Exportações');
+    ['executive', 'analysis_detail'].forEach(mode => actions.append(button(mode === 'executive' ? 'Exportar resumo executivo' : 'Exportar análise detalhada', async () => {
+      const loading = node('p', 'loading', 'Gerando PDF e validando os dados da análise…'); actions.append(loading);
+      try {
+        const artifact = await write('/insights/exports', {snapshot_id: snapshot.id, analysis_id: activeAnalysisID, mode, idempotency_key: crypto.randomUUID()});
+        const link = node('a', 'primary', mode + ' · ' + artifact.page_count + ' páginas · baixar PDF'); link.href = artifact.download_path;
+        actions.append(link, node('p', 'muted', 'Exportado · ' + artifact.selected_case_count + ' de ' + artifact.total_case_count + ' casos · suficiência ' + report.sufficiency_status));
+      } catch (error) { fail(actions, error); }
+      finally { loading.remove(); }
+    })));
+    parent.append(actions);
+  }
+  async function renderInsightCases(parent, cursor, pageState = {requested: new Set(['']), ids: new Set(), total: null, lastID: ''}) {
+    if (cursor && pageState.requested.has(cursor)) throw new Error('A paginação de casos repetiu um cursor.');
+    if (cursor) pageState.requested.add(cursor);
+    parent.replaceChildren(node('p', 'loading', 'Carregando casos…'));
+    const params = new URLSearchParams({limit: '50'}); if (cursor) params.set('cursor', cursor);
+    const page = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases?' + params);
+    if (page.snapshot_id !== snapshot.id || page.analysis_id !== activeAnalysisID) throw new Error('A página de casos pertence a outra análise.');
+    if (executiveReport && page.total !== executiveReport.total_cases) throw new Error('O total de casos diverge do relatório executivo.');
+    if (!Array.isArray(page.cases) || !Number.isSafeInteger(page.total) || page.total < 0 || page.cases.length > 50 || page.cases.length > page.total || (pageState.total !== null && page.total !== pageState.total)) throw new Error('A página de casos excedeu os limites ou mudou o total.');
+    pageState.total = page.total;
+    if (page.next_cursor && (page.next_cursor === cursor || pageState.requested.has(page.next_cursor))) throw new Error('A paginação de casos repetiu um cursor.');
+    const listing = card('Casos · ' + page.cases.length + ' nesta página de ' + page.total);
+    if (page.cases.length === 0) listing.append(node('p', 'empty', 'Não há casos nesta página.'));
+    (page.cases || []).forEach(item => {
+      if (!item.id || pageState.ids.has(item.id) || (pageState.lastID && item.id < pageState.lastID)) throw new Error('A lista de casos tem ID vazio, repetido ou fora da ordem estável.');
+      pageState.ids.add(item.id); pageState.lastID = item.id;
+      const row = card(item.title + ' · ' + labelPt(item.state)); row.append(node('p', '', item.summary));
+      row.append(button('Abrir evidências e timeline', () => openInsightCase(item.id)));
+      listing.append(row);
+    });
+    if (page.next_cursor && pageState.ids.size >= page.total) throw new Error('A lista de casos avançou além do total informado.');
+    if (!page.next_cursor && pageState.ids.size !== page.total) throw new Error('A paginação terminou antes de carregar todos os casos.');
+    if (page.next_cursor) listing.append(button('Próxima página', () => renderInsightCases(parent, page.next_cursor, pageState)));
+    parent.replaceChildren(listing);
+  }
+  async function openInsightCase(caseID) {
+    detail.hidden = false;
+    detail.replaceChildren(node('p', 'loading', 'Carregando evidências e timeline do caso…'));
+    try {
+      const record = await api('/snapshots/' + segment(snapshot.id) + '/insights/' + segment(activeAnalysisID) + '/cases/' + segment(caseID));
+      if (record.snapshot_id !== snapshot.id || record.analysis_id !== activeAnalysisID || record.case.id !== caseID) throw new Error('O detalhe pertence a outro snapshot, análise ou caso.');
+      renderCaseDetail(record);
+    } catch (error) {
+      detail.replaceChildren(); fail(detail, error);
+    }
+  }
+  function renderCaseDetail(detailRecord) {
+    detail.hidden = false;
+    detail.replaceChildren();
+    const box = card(detailRecord.case.title + ' · ' + detailRecord.case.id);
+    box.append(button('Fechar', () => { detail.hidden = true; }, 'close'), node('p', '', detailRecord.case.summary));
+    const links = detailRecord.case;
+    box.append(node('p', 'muted', 'Fatos: ' + (links.fact_case_ids || []).join(', ') + ' · Afirmações: ' + (links.claim_ids || []).join(', ') + ' · Decisões: ' + (links.decision_ids || []).join(', ') + ' · Relações: ' + (links.relation_ids || []).join(', ') + ' · Objetivos: ' + (links.objective_ids || []).join(', ')));
+    (detailRecord.facts || []).forEach(item => {
+      const fact = card('Fato ' + item.id + ' · ' + labelPt(item.kind) + ' / ' + labelPt(item.classification) + ' · ' + item.title);
+      for (const [name, ids] of [['Sujeitos', item.subject_ids], ['Relacionados', item.related_ids], ['Objetivos', item.objective_ids], ['Links', item.link_ids], ['Métricas', item.metric_ids], ['Evidências', item.evidence_ids]]) {
+        if (ids && ids.length) fact.append(node('p', 'muted', name + ': ' + ids.join(', ')));
+      }
+      (item.observed_facts || []).forEach(text => fact.append(node('p', '', 'Observado: ' + text)));
+      (item.open_questions || []).forEach(text => fact.append(node('p', 'callout', 'Em aberto: ' + text)));
+      box.append(fact);
+    });
+    (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.source + ' · recurso ' + item.resource_id + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
+    const timeline = [];
+    (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, text: item.text, evidence: item.citations || []}));
+    (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, claims: item.claim_ids, objectives: item.objective_ids, decisionMaker: item.decision_maker_id, recordedBy: item.recorded_by_id, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
+    (detailRecord.timeline || []).filter(item => item.kind !== 'decision').forEach(item => timeline.push({id: item.id, kind: labelPt(item.kind) + ' · ' + labelPt(item.source), at: item.at, end: item.end, observedAt: item.observed_at, actor: item.actor_id, oldValue: item.old_value, newValue: item.new_value, scope: item.scope, entities: item.entity_id ? [item.entity_id] : [], text: item.summary, evidence: (item.evidence_ids || []).map(id => ({evidence_id: id, quote: ''}))}));
+    const timelineTime = item => {
+      if (!item.at || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item.at)) return null;
+      const value = Date.parse(item.at); return Number.isFinite(value) ? value : null;
+    };
+    timeline.sort((a, b) => { const at = timelineTime(a), bt = timelineTime(b); if (at === null) return bt === null ? 0 : 1; if (bt === null) return -1; return at - bt; });
+    const timelineBox = card('Timeline');
+    timeline.forEach(item => {
+      const time = timelineTime(item);
+      const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
+      timelineBox.append(node('h3', '', dateLabel + ' · ' + item.id + ' · ' + item.kind), node('p', '', item.text));
+      if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
+      if (item.observedAt || item.end || item.actor || item.oldValue || item.newValue) timelineBox.append(node('p', 'muted', 'Observado: ' + (item.observedAt || 'não informado') + ' · até: ' + (item.end || 'não informado') + ' · ator: ' + (item.actor || 'não informado') + ' · de: ' + (item.oldValue || 'não informado') + ' · para: ' + (item.newValue || 'não informado')));
+      if (item.method || item.validity || item.validFrom || item.validTo) timelineBox.append(node('p', 'muted', 'Método: ' + labelPt(item.method) + ' · validade: ' + labelPt(item.validity) + ' · de ' + (item.validFrom || 'data desconhecida') + ' até ' + (item.validTo || 'fim não determinado')));
+      if (item.entities && item.entities.length) timelineBox.append(node('p', 'muted', 'Entidades: ' + item.entities.join(', ')));
+      if (item.claims && item.claims.length) timelineBox.append(node('p', 'muted', 'Afirmações relacionadas: ' + item.claims.join(', ')));
+      if (item.objectives && item.objectives.length) timelineBox.append(node('p', 'muted', 'Objetivos: ' + item.objectives.join(', ')));
+      if (item.decisionMaker || item.recordedBy) timelineBox.append(node('p', 'muted', 'Responsável pela decisão: ' + (item.decisionMaker || 'não informado') + ' · registrado por: ' + (item.recordedBy || 'não informado')));
+      (item.evidence || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
+    });
+    (detailRecord.relations || []).forEach(item => {
+      timelineBox.append(node('p', 'callout', item.id + ' · ' + item.kind + ' · ' + item.from_decision_id + ' → ' + item.to_decision_id + ' · ' + labelPt(item.status) + ' · validade ' + labelPt(item.validity_status) + ' · ' + (item.reason || 'Sem justificativa informada.')));
+      (item.citations || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
+    });
+    (detailRecord.claim_relations || []).forEach(item => {
+      timelineBox.append(node('p', 'callout', item.id + ' · ' + item.kind + ' · ' + item.from_claim_id + ' → ' + item.to_claim_id + ' · ' + labelPt(item.status) + ' · validade ' + labelPt(item.validity_status) + ' · ' + (item.reason || 'Sem justificativa informada.')));
+      (item.citations || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
+    });
+    box.append(timelineBox);
+    (detailRecord.evidence || []).forEach(item => {
+      const evidence = card(item.id + ' · ' + item.source + ' · ' + item.locator);
+      evidence.append(node('p', 'muted', item.observed_at + ' · conteúdo ' + labelPt(item.content_status) + ' · integridade ' + labelPt(item.integrity_status)));
+      evidence.append(node('p', 'muted', 'Evento: ' + (item.event_at || 'data desconhecida') + ' · fonte atualizada: ' + (item.source_updated_at || 'data desconhecida')));
+      evidence.append(node('p', 'muted', 'Hash do conteúdo: ' + (item.content_hash || 'não informado') + ' · hash do trecho: ' + (item.excerpt_hash || 'não informado') + ' · sanitização: ' + (item.sanitization_version || 'não informada')));
+      evidence.append(node('p', '', item.excerpt || 'Sem trecho legível.'));
+      if (item.redacted) evidence.append(node('p', 'callout', 'Conteúdo parcialmente redigido.'));
+      if (item.truncated) evidence.append(node('p', 'callout', 'Trecho truncado.'));
+      if (item.url) { try { const url = new URL(item.url); if (url.protocol === 'https:' && url.hostname && !url.username && !url.password) { const link = node('a', '', 'Abrir fonte externa'); link.href = url.href; link.rel = 'noreferrer noopener'; evidence.append(link); } } catch (_) {} }
+      box.append(evidence);
+    });
+    detail.append(box);
+  }
+  function renderAnalysisStart(parent) {
+    const box = card('Iniciar análise');
+    box.append(node('p', 'muted', 'Abrir snapshot e selecionar análise não chama o provedor. A execução começa somente pelo botão abaixo.'));
+    const configFile = node('input'); configFile.type = 'file'; configFile.accept = 'application/json,.json';
+    const configView = node('pre', 'code', 'Selecione um arquivo JSON AnalysisConfig. O arquivo e seu caminho ficam no navegador; somente o conteúdo tipado será enviado.');
+    const onlyKeys = (value, allowed, label) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(label + ' deve ser um objeto JSON.');
+      const extra = Object.keys(value).find(key => !allowed.includes(key));
+      if (extra) throw new Error(label + ' contém o campo não permitido "' + extra + '"; credenciais e campos extras não são enviados.');
+    };
+    const analysisConfigFromFile = raw => {
+      onlyKeys(raw, ['version', 'id', 'requested_scope', 'objectives', 'policy', 'budget', 'provider'], 'AnalysisConfig');
+      onlyKeys(raw.requested_scope, ['history', 'report_window', 'resources'], 'requested_scope');
+      onlyKeys(raw.requested_scope.history, ['start', 'end'], 'requested_scope.history');
+      onlyKeys(raw.requested_scope.report_window, ['start', 'end'], 'requested_scope.report_window');
+      if (!Array.isArray(raw.requested_scope.resources) || !Array.isArray(raw.objectives)) throw new Error('Escopo e objetivos devem ser listas no formato AnalysisConfig v1.');
+      raw.requested_scope.resources.forEach(item => onlyKeys(item, ['source', 'id', 'name'], 'resource'));
+      raw.objectives.forEach(item => onlyKeys(item, ['id', 'title', 'dimension', 'entity_ids', 'metric_id', 'target', 'comparator', 'unit', 'deadline', 'owner_id', 'baseline_value', 'baseline_snapshot_id', 'baseline_cohort_id', 'evidence_ids'], 'objective'));
+      onlyKeys(raw.policy, ['id', 'version', 'minimum_quantile_sample', 'maximum_executive_cases', 'excerpt_max_runes', 'content_mode', 'external_processing_allowed'], 'policy');
+      onlyKeys(raw.budget, ['max_requests', 'max_input_tokens', 'max_output_tokens', 'max_elapsed_ms', 'max_cost', 'currency'], 'budget');
+      onlyKeys(raw.provider, ['kind', 'model', 'endpoint_profile', 'adapter_version'], 'provider');
+      if (raw.version !== 'investigate.insights.v1') throw new Error('A configuração precisa usar investigate.insights.v1.');
+      return JSON.parse(JSON.stringify(raw));
+    };
+    configFile.onchange = async () => {
+      try {
+        const file = configFile.files && configFile.files[0]; if (!file) return;
+        const config = analysisConfigFromFile(JSON.parse(await file.text()));
+        configView.textContent = JSON.stringify(config, null, 2);
+      } catch (error) { configView.textContent = 'JSON inválido: ' + error.message; }
+    };
+    const start = button('Iniciar análise', async () => {
+      start.disabled = true;
+      try {
+        if (!configFile.files || !configFile.files[0]) throw new Error('Selecione um arquivo de configuração.');
+        const config = analysisConfigFromFile(JSON.parse(await configFile.files[0].text()));
+        if (!config.requested_scope || !Array.isArray(config.objectives) || !config.policy || !config.budget || !config.provider) throw new Error('O JSON não tem o formato AnalysisConfig v1.');
+        const review = JSON.stringify(config, null, 2);
+        if (!window.confirm('Revise a configuração exibida antes de enviar:\n\n' + review)) return;
+        const run = await write('/insights/runs', {snapshot_id: snapshot.id, config, idempotency_key: crypto.randomUUID()});
+        const status = node('p', 'callout', 'Run ' + run.id + ' · ' + labelPt(run.state) + ' · fase ' + labelPt(run.phase));
+        const cancel = button('Cancelar análise', async () => { const result = await write('/insights/runs/' + segment(run.id) + '/cancel', {}); status.textContent = 'Run ' + result.id + ' · ' + labelPt(result.state) + ' · ' + labelPt(result.phase); });
+        box.append(status, cancel);
+        let attempts = 0; let delay = 500; const deadline = Date.now() + 120000;
+        while (attempts < 60 && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, delay)); attempts++; delay = Math.min(2500, delay + 250);
+          const current = await api('/insights/runs/' + segment(run.id));
+          status.textContent = 'Run ' + run.id + ' · ' + labelPt(current.state) + ' · fase ' + labelPt(current.phase) + (current.error_code ? ' · erro ' + current.error_code : '');
+          if (['completed', 'completed_partial', 'failed', 'cancelled'].includes(current.state)) {
+            cancel.disabled = true;
+            if (current.analysis_id) { await loadExecutiveReport(current.analysis_id, true); await overview(); }
+            else status.textContent += ' · AnalysisID indisponível; selecione uma versão listada para abrir relatório.';
+            break;
+          }
+        }
+        if (attempts >= 60 || Date.now() >= deadline) status.textContent += ' · acompanhamento encerrado pelo limite local; o run pode continuar no servidor.';
+      } catch (error) { fail(box, error); }
+      finally { start.disabled = false; }
+    }, 'primary');
+    box.append(field('Arquivo JSON local', configFile), configView, start); parent.append(box);
+  }
+  async function loadReportPage(cursor) {
+    const params = new URLSearchParams({limit: '200'});
+    if (cursor) params.set('cursor', cursor);
+    const page = await api('/snapshots/' + segment(snapshot.id) + '/report?' + params);
+    if (page.snapshot_id !== snapshot.id) throw new Error('A página pertence a outro snapshot.');
+    return page;
   }
   async function map() {
     main.replaceChildren(heading('Mapa do produto', 'Componentes e vínculos observados no snapshot.'));
-    main.append(node('p', 'loading', 'Carregando registros paginados…'));
-    const records = await loadReportRecords();
-    main.querySelector('.loading').remove();
-    const components = records.filter(r => r.component).map(r => r.component);
-    const links = records.filter(r => r.link).map(r => r.link);
-    const metrics = records.filter(r => r.metric).map(r => r.metric);
-    const componentCard = card('Componentes · ' + components.length);
-    const componentFilter = node('input'); componentFilter.placeholder = 'Filtrar componentes';
-    const componentResults = node('div');
-    const renderComponents = () => {
-      const term = componentFilter.value.toLocaleLowerCase();
-      componentResults.replaceChildren(table(['Nome', 'Repositório', 'Caminho', 'Implementação', 'Deploy', 'Cobertura'],
-        components.filter(c => [c.name, c.repository, c.path, c.coverage].some(value => String(value || '').toLocaleLowerCase().includes(term)))
-          .map(c => [c.name, c.repository, c.path, c.implementation_status, c.deployment_status, c.coverage])));
+    const controls = node('div', 'controls'), content = node('section');
+    main.append(node('p', 'muted', 'O mapa carrega uma página por vez; o overview não percorre o relatório completo.'), controls, content);
+    const cursors = ['']; let pageIndex = 0;
+    const load = async cursor => {
+      content.replaceChildren(node('p', 'loading', 'Carregando página…'));
+      const page = await loadReportPage(cursor); const records = page.records || [];
+      content.replaceChildren();
+      const components = records.filter(r => r.component).map(r => r.component);
+      const links = records.filter(r => r.link).map(r => r.link);
+      const metrics = records.filter(r => r.metric).map(r => r.metric);
+      const componentCard = card('Componentes nesta página · ' + components.length);
+      componentCard.append(table(['Nome', 'Repositório', 'Caminho', 'Implementação', 'Deploy', 'Cobertura'], components.map(c => [c.name, c.repository, c.path, c.implementation_status, c.deployment_status, c.coverage])));
+      const linkCard = card('Vínculos nesta página · ' + links.length);
+      linkCard.append(table(['Origem', 'Relação', 'Destino', 'Estado', 'Evidência'], links.map(l => [l.source_id, l.relation, l.target_id, l.status, l.evidence_id])));
+      const metricCard = card('Métricas nesta página · ' + metrics.length);
+      metricCard.append(table(['Nome', 'Valor', 'Unidade', 'Amostra', 'Definição'], metrics.map(m => [m.name, m.value && m.value.value, m.unit, m.sample_size, m.definition])));
+      content.append(componentCard, linkCard, metricCard);
+      controls.replaceChildren(node('span', 'muted', 'Página ' + (pageIndex + 1) + ' · ' + (records.length) + ' registros'));
+      if (pageIndex > 0) controls.append(button('Página anterior', async () => { pageIndex--; await load(cursors[pageIndex]); }));
+      if (page.next_cursor) controls.append(button('Próxima página', async () => { if (cursors[pageIndex + 1] === page.next_cursor) { pageIndex++; await load(page.next_cursor); return; } if (cursors.includes(page.next_cursor)) throw new Error('Paginação do relatório repetiu cursor.'); cursors.push(page.next_cursor); pageIndex++; await load(page.next_cursor); }));
     };
-    componentFilter.oninput = renderComponents; renderComponents();
-    componentCard.append(field('Filtro', componentFilter), componentResults);
-    const linkCard = card('Vínculos · ' + links.length);
-    linkCard.append(table(['Origem', 'Relação', 'Destino', 'Estado', 'Evidência'],
-      links.map(l => [l.source_id, l.relation, l.target_id, l.status, l.evidence_id])));
-    const metricCard = card('Métricas · ' + metrics.length);
-    metricCard.append(table(['Nome', 'Valor', 'Unidade', 'Amostra', 'Definição'],
-      metrics.map(m => [m.name, m.value && m.value.value, m.unit, m.sample_size, m.definition])));
-    main.append(componentCard, linkCard, metricCard);
+    await load('');
   }
-  function showFindings() {
+  async function showFindings() {
+    if (!findingsLoaded) { findings = await api('/snapshots/' + segment(snapshot.id) + '/findings') || []; findingsLoaded = true; }
     main.replaceChildren(heading('Achados', findings.length + ' achados no snapshot.'));
     const filter = node('input'); filter.placeholder = 'Filtrar achados';
     const severity = node('select');
@@ -438,7 +764,8 @@ const realAppJSTemplate = `(() => {
       } catch (error) { fail(detail, error); }
     }
   }
-  function sql() {
+  async function sql() {
+    if (!queriesLoaded) { queries = await api('/snapshots/' + segment(snapshot.id) + '/queries') || []; queriesLoaded = true; }
     main.replaceChildren(heading('SQL', 'Consulta somente leitura no snapshot selecionado.'));
     const box = card('Consulta');
     const select = node('select');
@@ -555,6 +882,7 @@ const realAppJSTemplate = `(() => {
     main.append(list);
   }
   async function claude() {
+    if (!findingsLoaded) { findings = await api('/snapshots/' + segment(snapshot.id) + '/findings') || []; findingsLoaded = true; }
     main.replaceChildren(heading('Claude', 'Redação opcional dos achados selecionados.'));
     if (capabilities && !capabilities.claude_available) {
       main.append(node('p', 'callout', 'ERR_LLM_DISABLED: Claude editorial desativado nesta sessão. Análise, SQL, comentários e PDF continuam disponíveis sem Claude.'));
