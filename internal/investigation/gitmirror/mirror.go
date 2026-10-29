@@ -23,6 +23,9 @@ import (
 var (
 	ErrBudget      = errors.New("git transfer budget exceeded")
 	ErrUnavailable = errors.New("git source unavailable")
+	// ErrEmptyRemote reports a repository that exists but has no branches yet.
+	// It is a valid state, not a failed fetch.
+	ErrEmptyRemote = errors.New("git repository is empty")
 	ErrMoved       = errors.New("git ref moved during fetch")
 	ErrCorrupt     = errors.New("git mirror unavailable")
 )
@@ -179,6 +182,14 @@ func (m *Mirror) Observe(ctx context.Context, remote string, secret []byte, prio
 	}
 	ref, oid, err := parseRemoteHead(commandOutput)
 	if err != nil {
+		// An unborn HEAD can also hide real branches, so emptiness needs
+		// the branch list to be empty as well, not only HEAD.
+		if len(bytes.TrimSpace(commandOutput)) == 0 {
+			heads, headsErr := m.command(ctx, remote, secret, "ls-remote", "--heads", remote)
+			if headsErr == nil && len(bytes.TrimSpace(heads)) == 0 {
+				return out, ErrEmptyRemote
+			}
+		}
 		return out, ErrUnavailable
 	}
 	if _, err := m.command(ctx, "", nil, "check-ref-format", ref); err != nil {

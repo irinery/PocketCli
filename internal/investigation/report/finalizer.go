@@ -36,6 +36,9 @@ type model struct {
 	Editorial          []editorial.Draft
 	Executions         []queries.Execution
 	SavedQueries       []queries.SavedQuery
+	// Executive carries the decisions of a consolidated report; nil when the
+	// snapshot has no finished executive analysis.
+	Executive *ExecutiveBundle
 }
 
 func coverageLabel(items []contract.Coverage) string {
@@ -69,6 +72,7 @@ type Finalizer struct {
 	demo            bool
 	rendererVersion string
 	timeout         time.Duration
+	executive       ExecutiveSource
 	mu              sync.Mutex
 	artifacts       map[string]contract.ReportArtifact
 	paths           map[string]string
@@ -95,6 +99,13 @@ func New(reader contract.ReportReader, dir string, demo bool, annotationReader A
 		return nil, err
 	}
 	return f, nil
+}
+
+// SetExecutiveSource lets consolidated reports include the decision analysis.
+func (f *Finalizer) SetExecutiveSource(source ExecutiveSource) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.executive = source
 }
 
 func (f *Finalizer) loadManifests() error {
@@ -128,6 +139,9 @@ func (f *Finalizer) loadManifests() error {
 	return nil
 }
 func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (contract.ReportArtifact, error) {
+	if in.Consolidated {
+		in.IncludeApprovedEditorial = true // the consolidated record carries the accepted text
+	}
 	snapshot, err := f.reader.GetSnapshot(ctx, in.SnapshotID)
 	if err != nil {
 		return contract.ReportArtifact{}, err
@@ -209,6 +223,25 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 	doc := model{Snapshot: snapshot, CoverageStatus: coverageLabel(snapshot.Coverage), Records: records, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FindingCount: findingCount, RecordCount: len(records), Revision: revision, RendererVersion: f.rendererVersion, Demo: f.demo, Annotations: annotationRows, AnnotationRevision: annotationRevision, Editorial: editorialRows, Executions: executions, SavedQueries: savedQueries}
 	jobCtx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
+	warnings := []string{}
+	if in.Consolidated {
+		f.mu.Lock()
+		source := f.executive
+		f.mu.Unlock()
+		if source == nil {
+			warnings = append(warnings, "Consolidado sem decisões: a análise executiva não está disponível nesta sessão.")
+		} else {
+			bundle, ok, bundleErr := source.Bundle(jobCtx, in.SnapshotID)
+			switch {
+			case bundleErr != nil:
+				return contract.ReportArtifact{}, fmt.Errorf("ERR_PDF_FAILED: decisões da análise executiva ilegíveis (%v)", bundleErr)
+			case !ok:
+				warnings = append(warnings, "Consolidado sem decisões: este snapshot ainda não tem análise executiva. Rode uma análise e gere o consolidado de novo.")
+			default:
+				doc.Executive = &bundle
+			}
+		}
+	}
 	data, pageCount, err := renderReport(jobCtx, doc, time.Now())
 	if err != nil {
 		if ctxErr := jobCtx.Err(); ctxErr != nil {
@@ -231,7 +264,7 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 	if err = os.Rename(tempPDF, final); err != nil {
 		return contract.ReportArtifact{}, err
 	}
-	artifact := contract.ReportArtifact{ID: id, SnapshotID: in.SnapshotID, Revision: revision, Status: "completed", SHA256: digest, DownloadPath: "/api/v1/reports/" + id + "/download", FindingCount: int64(findingCount), PageCount: pageCount, Warnings: []string{}}
+	artifact := contract.ReportArtifact{ID: id, SnapshotID: in.SnapshotID, Revision: revision, Status: "completed", SHA256: digest, DownloadPath: "/api/v1/reports/" + id + "/download", FindingCount: int64(findingCount), PageCount: pageCount, Warnings: warnings, Consolidated: in.Consolidated}
 	manifest, err := json.Marshal(artifact)
 	if err != nil {
 		_ = os.Remove(final)

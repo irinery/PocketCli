@@ -80,6 +80,13 @@ type Resource struct {
 	Source string `json:"source"`
 	Name   string `json:"name"`
 	Access string `json:"access"`
+	// CreatedAt and LastChangeAt bound the resource's own lifetime. They are
+	// filled only for the "all" period, where the window has no fixed start:
+	// a GitHub repository runs from its creation to its last push, a Linear
+	// team from the organization's creation (or its own, when targeted).
+	// An empty LastChangeAt means the lifetime runs up to the window end.
+	CreatedAt    string `json:"created_at,omitempty"`
+	LastChangeAt string `json:"last_change_at,omitempty"`
 }
 type Plan struct {
 	InvestigationID      string     `json:"investigation_id"`
@@ -336,6 +343,10 @@ type FinalizeRequest struct {
 	SnapshotID               string `json:"snapshot_id"`
 	AnnotationRevision       int64  `json:"annotation_revision"`
 	IncludeApprovedEditorial bool   `json:"include_approved_editorial"`
+	// Consolidated asks for the complete record in one PDF: the whole
+	// history plus the decisions of the latest executive analysis, with the
+	// accepted editorial text and every comment and query.
+	Consolidated bool `json:"consolidated,omitempty"`
 }
 type ReportArtifact struct {
 	ID           string   `json:"id"`
@@ -347,6 +358,21 @@ type ReportArtifact struct {
 	FindingCount int64    `json:"finding_count"`
 	PageCount    int      `json:"page_count"`
 	Warnings     []string `json:"warnings"`
+	Consolidated bool     `json:"consolidated,omitempty"`
+}
+
+// PurgeResult tells what removing an investigation's collected data took
+// from the machine. Leftover is empty when nothing of it remains.
+type PurgeResult struct {
+	InvestigationID string   `json:"investigation_id"`
+	Plans           int      `json:"plans"`
+	Runs            int      `json:"runs"`
+	Snapshots       int      `json:"snapshots"`
+	Files           int      `json:"files"`
+	Bytes           int64    `json:"bytes"`
+	CachesCleared   bool     `json:"caches_cleared"`
+	Shared          []string `json:"shared,omitempty"`
+	Leftover        []string `json:"leftover,omitempty"`
 }
 type ReportReader interface {
 	GetSnapshot(context.Context, string) (Snapshot, error)

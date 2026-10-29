@@ -114,6 +114,14 @@ func (c *Core) collectGitRef(ctx context.Context, plan contract.Plan, r contract
 		if errors.Is(err, gitmirror.ErrCorrupt) {
 			return fault("ERR_AUDIT_FAILED", "espelho Git corrompido")
 		}
+		if errors.Is(err, gitmirror.ErrEmptyRemote) {
+			// Nothing was missed: the repository has no branch to read.
+			// Reported as complete so only real failures read as partial.
+			reason := contract.EmptyRepositoryReason + "; sem branches nem commits para observar"
+			d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: r.ID}, "git_refs", "complete", 0, reason))
+			d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: r.ID}, "code_history", "complete", 0, reason))
+			return nil
+		}
 		if err != nil {
 			d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: r.ID}, "git_refs", "partial", 0, "fetch Git não concluído; nenhuma divergência inferida"))
 			d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: r.ID}, "code_history", "partial", 0, "grafo Git indisponível"))

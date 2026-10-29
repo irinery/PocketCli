@@ -18,6 +18,10 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 
 O budget total do perfil `macos` é 100s. Na CI de 28/10/2026, os 28 testes shell passaram em 79s no runner arm64 hospedado, acima do teto antigo de 50s; o novo teto mantém falha para regressões maiores. Para reproduzir localmente: `POCKETCLI_CI_PROFILE=macos sh tests/run_all.sh` (Go, Git e shell POSIX instalados; sem credenciais externas).
 
+Para validar a recompilação do Investigation Agent no `pocket update`, rode `sh tests/smoke/test_pocket_update_agent_rebuild.sh` (usa `git`, `go` e `cc` falsos no PATH; sem Go, rede ou variáveis de ambiente obrigatórias).
+
+Para validar o período `all` (tempo de vida), repositórios vazios, o PDF consolidado e a remoção de dados de uma investigação, rode `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestAllPeriodResolvesSourceLifetimes|TestEmptyRepositoryIsComplete|TestPurgeLeavesNothing' ./internal/investigation/core` e `go test -buildvcs=false -run 'EmptyRemote|EffectiveWindow|Consolidated|AllPeriod|Approve' ./internal/investigation/gitmirror ./internal/investigation/contract ./internal/investigation/report ./internal/investigation/web`. Pré-requisitos: Go, `git` e compilador C para SQLite; os testes usam transporte simulado e repositórios temporários, sem credenciais nem variáveis de ambiente.
+
 Para validar a projeção de dependências formais da timeline GitHub, rode `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestGitHubDependencyTimelineAddsRemovesAndMirrors|TestGitHubChildBatchReadsReviewsAndSkipsIrrelevantTimelines' ./internal/investigation/core`. Pré-requisitos: Go e compilador C para SQLite; os testes usam transporte simulado, sem credenciais nem variáveis de ambiente obrigatórias.
 
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.

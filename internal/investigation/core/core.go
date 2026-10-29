@@ -252,7 +252,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				if !validRepo(name) {
 					return out, fault("ERR_VALIDATION", "repositório deve ser owner/name")
 				}
-				r, err := c.discoverRepository(ctx, name)
+				r, err := c.discoverRepository(ctx, name, input.Period.Preset == "all")
 				if err != nil {
 					return out, err
 				}
@@ -265,26 +265,37 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			}
 			for _, item := range items {
 				var r struct {
-					ID       int64  `json:"id"`
-					FullName string `json:"full_name"`
+					ID        int64  `json:"id"`
+					FullName  string `json:"full_name"`
+					CreatedAt string `json:"created_at"`
+					PushedAt  string `json:"pushed_at"`
+					UpdatedAt string `json:"updated_at"`
 				}
 				if json.Unmarshal(item, &r) == nil && r.ID > 0 {
 					if !validRepo(r.FullName) {
 						return out, fault("ERR_UNAVAILABLE", "nome de repositório inválido na descoberta")
 					}
-					resources = append(resources, contract.Resource{ID: fmt.Sprintf("%d", r.ID), Source: "github", Name: r.FullName, Access: "read"})
+					resource := contract.Resource{ID: fmt.Sprintf("%d", r.ID), Source: "github", Name: r.FullName, Access: "read"}
+					if input.Period.Preset == "all" {
+						resource.CreatedAt, resource.LastChangeAt = repositoryLifetime(r.CreatedAt, r.PushedAt, r.UpdatedAt)
+					}
+					resources = append(resources, resource)
 				}
 			}
 		}
 	}
 	if input.LinearEnabled {
-		const q = `query Teams($after: String) { teams(first: 100, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }`
+		const q = `query Teams($after: String) { organization { createdAt } teams(first: 100, after: $after) { nodes { id key name createdAt } pageInfo { hasNextPage endCursor } } }`
 		var result struct {
+			Organization struct {
+				CreatedAt string `json:"createdAt"`
+			} `json:"organization"`
 			Teams struct {
 				Nodes []struct {
-					ID   string `json:"id"`
-					Key  string `json:"key"`
-					Name string `json:"name"`
+					ID        string `json:"id"`
+					Key       string `json:"key"`
+					Name      string `json:"name"`
+					CreatedAt string `json:"createdAt"`
 				} `json:"nodes"`
 				PageInfo struct {
 					HasNextPage bool   `json:"hasNextPage"`
@@ -341,7 +352,18 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				for selected := range matches {
 					selectedMatches[selected]++
 				}
-				resources = append(resources, contract.Resource{ID: team.ID, Source: "linear", Name: team.Key, Access: "read"})
+				resource := contract.Resource{ID: team.ID, Source: "linear", Name: team.Key, Access: "read"}
+				if input.Period.Preset == "all" {
+					// Without a team scope the history is the whole
+					// organization's; a targeted team has its own lifetime.
+					resource.CreatedAt = contract.NormalizeInstant(team.CreatedAt)
+					if len(input.Scope.Teams) == 0 {
+						if org := contract.NormalizeInstant(result.Organization.CreatedAt); org != "" {
+							resource.CreatedAt = org
+						}
+					}
+				}
+				resources = append(resources, resource)
 			}
 			if !result.Teams.PageInfo.HasNextPage {
 				complete = true
@@ -489,7 +511,7 @@ func dedupe(values []string) []string {
 	return out
 }
 
-func (c *Core) discoverRepository(ctx context.Context, name string) (contract.Resource, error) {
+func (c *Core) discoverRepository(ctx context.Context, name string, lifetime bool) (contract.Resource, error) {
 	var empty contract.Resource
 	base, err := url.Parse(c.collector.GitHubURL)
 	if err != nil {
@@ -501,11 +523,33 @@ func (c *Core) discoverRepository(ctx context.Context, name string) (contract.Re
 		return empty, err
 	}
 	var repo struct {
-		ID       int64  `json:"id"`
-		FullName string `json:"full_name"`
+		ID        int64  `json:"id"`
+		FullName  string `json:"full_name"`
+		CreatedAt string `json:"created_at"`
+		PushedAt  string `json:"pushed_at"`
+		UpdatedAt string `json:"updated_at"`
 	}
 	if json.Unmarshal(data, &repo) != nil || repo.ID == 0 || !validRepo(repo.FullName) {
 		return empty, fault("ERR_UNAVAILABLE", "repositório inválido")
 	}
-	return contract.Resource{ID: fmt.Sprintf("%d", repo.ID), Source: "github", Name: repo.FullName, Access: "read"}, nil
+	resource := contract.Resource{ID: fmt.Sprintf("%d", repo.ID), Source: "github", Name: repo.FullName, Access: "read"}
+	if lifetime {
+		resource.CreatedAt, resource.LastChangeAt = repositoryLifetime(repo.CreatedAt, repo.PushedAt, repo.UpdatedAt)
+	}
+	return resource, nil
+}
+
+// repositoryLifetime is a repository's span from creation to its last
+// change. pushed_at is the last push; updated_at also moves with metadata
+// edits, so it only stands in when the repository was never pushed to.
+func repositoryLifetime(createdAt, pushedAt, updatedAt string) (string, string) {
+	created := contract.NormalizeInstant(createdAt)
+	last := contract.NormalizeInstant(pushedAt)
+	if last == "" {
+		last = contract.NormalizeInstant(updatedAt)
+	}
+	if created != "" && last != "" && last < created {
+		last = created
+	}
+	return created, last
 }

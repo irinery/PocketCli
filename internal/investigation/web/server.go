@@ -43,6 +43,9 @@ type PreviewOptions struct {
 	InsightReader        insightcontract.InsightReader
 	AnalysisController   insightcontract.AnalysisController
 	ExecutiveExporter    insightcontract.ExecutiveExporter
+	// ApprovedReportsDir keeps approved consolidated PDFs outside the
+	// investigation store, so they outlive the removal of the collected data.
+	ApprovedReportsDir string
 }
 
 // ContractHeader carries the contract version the browser assets were built
@@ -1201,6 +1204,69 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Header().Set("Content-Disposition", `attachment; filename="investigation-report.pdf"`)
 		_, _ = io.Copy(w, file)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "reports" && parts[2] == "approve" && r.Method == http.MethodPost {
+		if h.reports == nil {
+			h.unavailable(w, "PDF")
+			return
+		}
+		var in struct {
+			ConfirmSnapshotID string `json:"confirm_snapshot_id"`
+			RemoveData        bool   `json:"remove_data"`
+		}
+		if !h.decode(w, r, &in, 4*1024) {
+			return
+		}
+		artifact, err := h.reports.Get(parts[1])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), artifact.SnapshotID) {
+			return
+		}
+		if h.options.Demo {
+			h.writeError(w, http.StatusConflict, "ERR_VALIDATION", "A demonstração não remove dados.")
+			return
+		}
+		if !artifact.Consolidated || artifact.Status != "completed" {
+			h.writeError(w, http.StatusConflict, "ERR_VALIDATION", "Somente o PDF consolidado concluído pode ser aprovado.")
+			return
+		}
+		if in.RemoveData && in.ConfirmSnapshotID != artifact.SnapshotID {
+			h.writeError(w, http.StatusBadRequest, "ERR_VALIDATION", "Confirme o identificador do snapshot para remover os dados.")
+			return
+		}
+		purger, canPurge := h.core.(interface {
+			PurgeInvestigation(context.Context, string) (contract.PurgeResult, error)
+		})
+		if in.RemoveData && !canPurge {
+			h.unavailable(w, "remoção de dados")
+			return
+		}
+		file, err := h.reports.Open(parts[1])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		path, err := archiveApprovedReport(h.options.ApprovedReportsDir, artifact, file)
+		file.Close()
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "ERR_PDF_FAILED", err.Error())
+			return
+		}
+		out := ApprovalResult{ApprovedPath: path}
+		if in.RemoveData {
+			result, err := purger.PurgeInvestigation(r.Context(), h.options.InvestigationID)
+			if err != nil {
+				h.fail(w, err)
+				return
+			}
+			out.Purge = &result
+			h.events.publish("report.state", "", artifact.SnapshotID, "purged", "Dados da investigação removidos desta máquina.")
+		}
+		h.writeJSON(w, http.StatusOK, out)
 		return
 	}
 	if len(parts) == 2 && parts[0] == "editorial" && parts[1] == "models" && r.Method == http.MethodGet {

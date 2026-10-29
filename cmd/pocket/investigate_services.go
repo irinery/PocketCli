@@ -101,7 +101,12 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 	finalizer, reportErr := report.New(c, filepath.Join(store.Root, "reports"), false, notes, edit, queryHistory)
 	var cached web.ReportService
 	if reportErr == nil {
-		cached = &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory}
+		cache := &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory}
+		if executiveErr == nil {
+			finalizer.SetExecutiveSource(executive)
+			cache.executive = executive
+		}
+		cached = cache
 		c.SetFinalizer(cached)
 	}
 	return &investigationServices{core: c, secrets: secretStore, annotations: notes, queries: queryHistory, editorial: edit, store: store, insights: insightService, executive: executive, executiveError: executiveErr, report: cached, reportError: reportErr}, nil
@@ -157,7 +162,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 		}
 	}
 	jobs := web.NewReportJobs()
-	options := web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError), InsightReader: services.insights, AnalysisController: services.insights, ExecutiveExporter: services.executive}
+	options := web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError), InsightReader: services.insights, AnalysisController: services.insights, ExecutiveExporter: services.executive, ApprovedReportsDir: filepath.Join(filepath.Dir(services.store.Root), "approved-reports")}
 	if services.executiveError != nil {
 		options.PDFUnavailableReason += errorText(services.executiveError)
 	}
