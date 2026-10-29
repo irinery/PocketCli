@@ -14,10 +14,15 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"pocketcli/internal/investigation/analysisfacts"
 	"pocketcli/internal/investigation/annotations"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/core"
+	"pocketcli/internal/investigation/decisionengine"
 	"pocketcli/internal/investigation/editorial"
+	"pocketcli/internal/investigation/insightcontract"
+	"pocketcli/internal/investigation/insights"
+	"pocketcli/internal/investigation/presentation"
 	"pocketcli/internal/investigation/queries"
 	"pocketcli/internal/investigation/report"
 	"pocketcli/internal/investigation/secrets"
@@ -26,13 +31,17 @@ import (
 )
 
 type investigationServices struct {
-	core        *core.Core
-	secrets     *secrets.SessionStore
-	annotations *annotations.Store
-	queries     *queries.Store
-	editorial   *editorial.Service
-	report      web.ReportService
-	reportError error
+	core           *core.Core
+	secrets        *secrets.SessionStore
+	annotations    *annotations.Store
+	queries        *queries.Store
+	editorial      *editorial.Service
+	store          *storage.Store
+	insights       *insights.Service
+	executive      *report.ExecutiveFinalizer
+	executiveError error
+	report         web.ReportService
+	reportError    error
 }
 
 func newInvestigationServices() (*investigationServices, error) {
@@ -72,13 +81,30 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 	if err != nil {
 		return nil, err
 	}
+	insightService, err := insights.NewService(insights.Dependencies{
+		Source: c,
+		Facts:  analysisfacts.Analyze,
+		Decisions: func(ctx context.Context, bundle insightcontract.SourceBundle, facts insightcontract.FactsResult, cfg insightcontract.AnalysisConfig, _ insightcontract.ReasoningProvider) (insightcontract.DecisionAnalysis, error) {
+			provider, err := configuredInsightProvider(cfg)
+			if err != nil {
+				return insightcontract.DecisionAnalysis{}, err
+			}
+			return decisionengine.Analyze(ctx, bundle, facts, cfg, provider)
+		},
+		Presentation: presentation.Build,
+		Store:        store,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inicializar análise de insights: %w", err)
+	}
+	executive, executiveErr := report.NewExecutiveFinalizer(insightService, filepath.Join(store.Root, "executive-reports"))
 	finalizer, reportErr := report.New(c, filepath.Join(store.Root, "reports"), false, notes, edit, queryHistory)
 	var cached web.ReportService
 	if reportErr == nil {
 		cached = &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory}
 		c.SetFinalizer(cached)
 	}
-	return &investigationServices{core: c, secrets: secretStore, annotations: notes, queries: queryHistory, editorial: edit, report: cached, reportError: reportErr}, nil
+	return &investigationServices{core: c, secrets: secretStore, annotations: notes, queries: queryHistory, editorial: edit, store: store, insights: insightService, executive: executive, executiveError: executiveErr, report: cached, reportError: reportErr}, nil
 }
 
 func investigationQuotaReservePercent() (*int, error) {
@@ -131,7 +157,11 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 		}
 	}
 	jobs := web.NewReportJobs()
-	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError)})
+	options := web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError), InsightReader: services.insights, AnalysisController: services.insights, ExecutiveExporter: services.executive}
+	if services.executiveError != nil {
+		options.PDFUnavailableReason += errorText(services.executiveError)
+	}
+	handler, code, err := web.NewHandler(services.core, services.core.Setup(), services.secrets, services.editorial, services.annotations, services.report, options)
 	if err != nil {
 		return err
 	}
@@ -150,12 +180,19 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 	defer closeCancel()
 	runsDone := make(chan error, 1)
 	go func() { runsDone <- services.core.StopActiveRuns(closeCtx) }()
+	insightsDone := make(chan error, 1)
+	go func() { insightsDone <- services.insights.Shutdown(closeCtx) }()
 	closeErr := jobs.Close(closeCtx)
-	var runsErr error
+	var runsErr, insightsErr error
 	select {
 	case runsErr = <-runsDone:
 	case <-closeCtx.Done():
 		runsErr = closeCtx.Err()
+	}
+	select {
+	case insightsErr = <-insightsDone:
+	case <-closeCtx.Done():
+		insightsErr = closeCtx.Err()
 	}
 	var failures []error
 	if serveErr != nil {
@@ -170,6 +207,9 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 			code = "ERR_TIMEOUT"
 		}
 		failures = append(failures, fmt.Errorf("%s: worker de investigação não encerrou após o servidor: %w", code, runsErr))
+	}
+	if insightsErr != nil {
+		failures = append(failures, fmt.Errorf("ERR_TIMEOUT: análise de insights não encerrou após o servidor: %w", insightsErr))
 	}
 	return errors.Join(failures...)
 }

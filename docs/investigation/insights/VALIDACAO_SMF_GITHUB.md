@@ -1,0 +1,36 @@
+# Comparação com dados reais do Social Media Factory no GitHub
+
+**Observação:** 28/10/2026, conta GitHub conectada, repositório privado `irinery/socialMediaFactory`. Consulta somente leitura; nenhuma coleta do PocketCli, inferência externa ou publicação foi disparada. Esta amostra representa **um repositório e uma fonte**. Os números são estados observados no GitHub nesta data, não uma reconstrução histórica completa nem um benchmark de qualidade semântica.
+
+## Evidência observada
+
+| Pergunta | Observação verificável | Fonte |
+|---|---|---|
+| Há atividade de PR? | 5 PRs abertas e 83 PRs já mescladas no repositório. As PRs abertas incluem #241 e #242, ambas draft. | [PRs abertas](https://github.com/irinery/socialMediaFactory/pulls?q=is%3Apr+is%3Aopen), [PRs mescladas](https://github.com/irinery/socialMediaFactory/pulls?q=is%3Apr+is%3Amerged), [#241](https://github.com/irinery/socialMediaFactory/pull/241), [#242](https://github.com/irinery/socialMediaFactory/pull/242) |
+| Qual é o estoque atual? | 41 issues abertas, excluindo as 5 PRs. A API `/issues?state=open` retorna 46 registros porque inclui PRs; misturar as duas populações criaria uma contagem errada. | [Issues abertas](https://github.com/irinery/socialMediaFactory/issues?q=is%3Aissue+is%3Aopen), [PRs abertas](https://github.com/irinery/socialMediaFactory/pulls?q=is%3Apr+is%3Aopen) |
+| Há dependências formais? | Eventos `blocked_by_added`/`blocking_added` no timeline registram `#217 → #218 → #219 → #220`; #218 também bloqueia #220 diretamente. São vínculos formais, além das descrições textuais. | [#217](https://github.com/irinery/socialMediaFactory/issues/217), [#218](https://github.com/irinery/socialMediaFactory/issues/218), [#219](https://github.com/irinery/socialMediaFactory/issues/219), [#220](https://github.com/irinery/socialMediaFactory/issues/220) |
+| O gate M18 terminou? | O milestone `M18 - RFC criativa 004` está aberto: 10 issues abertas e 15 fechadas; data configurada `2026-10-23T00:00:00Z`. #218, #219 e #220 continuam abertas. | [M18](https://github.com/irinery/socialMediaFactory/milestone/19), [#218](https://github.com/irinery/socialMediaFactory/issues/218), [#220](https://github.com/irinery/socialMediaFactory/issues/220) |
+| O trabalho da PR equivale a aceite? | #241 e #242 seguem draft. A descrição de #242 relata testes determinísticos no próprio head e ainda lista a matriz ampla #217 e aceite live/humano #218 como pendências. Isso é progresso de código declarado, não prova do aceite live. | [#241](https://github.com/irinery/socialMediaFactory/pull/241), [#242](https://github.com/irinery/socialMediaFactory/pull/242) |
+| Qual é a base publicada? | `main` apontava para `910f82c647b1b36d264ae30c72f1dbfd3509ea2c`, de 25/10/2026; as PRs M18 abertas estão em branches próprias. | [commit main](https://github.com/irinery/socialMediaFactory/commit/910f82c647b1b36d264ae30c72f1dbfd3509ea2c), [#242](https://github.com/irinery/socialMediaFactory/pull/242) |
+
+Contagens consultadas pela busca GitHub com os filtros `repo:irinery/socialMediaFactory is:issue is:open`, `is:pr is:open` e `is:pr is:merged`; os detalhes foram conferidos nas entidades e timelines. Contagem de relação é diferente de contagem de sujeitos: o trecho `#217 → #218 → #219 → #220` tem três arestas sequenciais e quatro issues, além da aresta direta `#218 → #220`.
+
+## Comparação com o relatório anterior e a integração Sol
+
+O [diagnóstico que motivou os RFCs](/Users/irinery/Downloads/PocketCli_Sol_Final_2026-10-28/ACHADOS_E_RASTREABILIDADE.md) registrou um snapshot de **21–28/10/2026** para um objetivo de cerca de quatro anos, com quatro repositórios no escopo e sem observações de PR/commit em suas coleções. A consulta atual ao GitHub prova que há PRs no `socialMediaFactory`; ela **não** prova que o snapshot antigo era falso. Ele pode ter seleção/cobertura incompleta ou outra condição de coleta. A leitura correta do produto é “PRs não observadas naquele snapshot”, com insuficiência explícita, nunca “o projeto não usa PRs”.
+
+A fixture integrada Sol demonstra um caso sintético, facts e PDFs executivo/detalhado em modo degradado. Ela não incorpora estas 41 issues, 5 PRs, timelines, milestone ou conteúdo real das PRs. Por isso o PDF sintético não é uma avaliação do Social Media Factory. Uma análise real teria de fixar janela, recursos, versões de main/branches e cobertura GitHub, preservar os eventos formais, separar issues de PRs e associar cada afirmação aos objetos consultados.
+
+O caso M18 é um bom teste de produto: uma análise correta deve apresentar o prazo configurado já vencido e o gate aberto, mostrar a cadeia formal de dependências, distinguir código em draft/testes declarados de aceite live/humano e evitar transformar automaticamente “bloqueia” em dano de negócio ou score de urgência. O que ainda falta para concluir impacto é objetivo/compromisso vigente, critério de aceite externo, horizonte de decisão e eventuais dados de Linear/Trello/Drive; GitHub sozinho não estabelece isso.
+
+## Resultado e próximo gate
+
+**Comparação real de fonte: concluída.** A atualização abaixo registra o confronto com um snapshot real local e uma nova coleta. O estado Sol continua **integrado com validações pendentes** até a publicação da coleta atual e a avaliação semântica autorizada.
+
+## Atualização: snapshot real do PocketCli
+
+O snapshot local `snap-179e7261a784aef5431aee78` da investigação `4a734466a19e0016c24e70f39e6eab3d` foi publicado em 27/10/2026 01:30:33Z para `irinery/socialMediaFactory`, janela **24/10 03:00Z–27/10 03:00Z**. A UI do produto foi aberta em browser, uma análise local sem provider foi iniciada e os PDFs executivo/detalhado exportados. O SQL da UI retornou o mesmo ID e janela. O leitor precisou de correção de compatibilidade: a versão Go atual adicionou campos ao tipo PR depois da publicação, e reserializar o dataset antigo alterava o hash; agora a integridade é validada contra os bytes publicados.
+
+No dataset imutável desse snapshot há **0 issues e 3 PRs** projetadas na janela (1 aberta, 2 fechadas). O manifesto de coleta registra **241 issues** e **88 PRs** observadas na varredura, mas marca ambas as coleções como **partial**; `timeline` está `complete` com 164 itens e `checks`/`actions` não foram selecionados. Esses números têm significados diferentes: 241/88 são contagens de coleta, 0/3 são linhas do dataset da janela, e 41 issues abertas/5 PRs abertas são o estado GitHub observado em 28/10. A comparação não sustenta precisão/recall nem ausência de atividade; a UI corretamente marcou suficiência insuficiente e métricas indeterminadas.
+
+Uma nova coleta autorizada GitHub 30d para esse único repositório foi iniciada em 28/10. A primeira sessão parou pelo teto de 120s após 547 itens; a segunda chegou a 703 itens e pausou pelo orçamento de 300 requests/h. Uma terceira sessão com teto de 3000 requests/h, abaixo da quota de 5000 requests/h reportada pela API GitHub na hora da consulta, segue em execução. Somente um snapshot com estado `published` será comparado quantitativamente com a evidência GitHub acima.

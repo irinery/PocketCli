@@ -24,7 +24,9 @@ ci_shell_suite_budget() {
 
     case "$(ci_profile)" in
         alpine) printf '45' ;;
-        macos) printf '50' ;;
+        # macOS arm64 hosted runners showed 79s with all 28 tests passing;
+        # keep a finite ceiling that reflects the runner's observed speed.
+        macos) printf '100' ;;
         *) printf '45' ;;
     esac
 }

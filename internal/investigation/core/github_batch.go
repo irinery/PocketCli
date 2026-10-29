@@ -198,7 +198,9 @@ func (c *Core) githubChildBatch(ctx context.Context, plan contract.Plan, r contr
 				}
 			}
 		}
-		if fetch.timeline && item.Timeline != nil && item.Timeline.Nodes != nil && !item.Timeline.PageInfo.HasNextPage {
+		// Issue dependency events are only exposed by the REST timeline. Its
+		// GraphQL state-event sample cannot prove that an issue has no links.
+		if fetch.timeline && fetch.target.IsPR && item.Timeline != nil && item.Timeline.Nodes != nil && !item.Timeline.PageInfo.HasNextPage {
 			relevant := false
 			for _, node := range item.Timeline.Nodes {
 				relevant = relevant || node.CreatedAt == "" || timestampInWindow(plan.WindowStart, plan.WindowEnd, node.CreatedAt)
