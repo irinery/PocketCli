@@ -11,6 +11,8 @@ bash scripts/security/aggregate_results.sh
 
 Os quatro scanners rodam em paralelo, gravam resultados separados em `.security-results/` e são sempre consolidados pelo agregador. O `|| true` permite que a consolidação rode mesmo quando um scanner encontra algo; o resultado final continua bloqueando achados `CRITICAL`/`HIGH` e erros de execução.
 
+O scanner de permissões não trata arquivos Go `*_test.go` como arquivos de credenciais: eles são código-fonte público, e o scanner de vazamentos continua inspecionando seu conteúdo.
+
 Para validar os contratos dos scanners e do agregador:
 
 ```sh

@@ -189,7 +189,7 @@ parse_inventory_records() {
             return value
         }
         function valid_host(value) {
-            return value ~ /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/
+            return length(value) <= 63 && value ~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
         }
         function add_group(host, group) {
             if (host == "" || group == "") {
