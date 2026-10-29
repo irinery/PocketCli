@@ -41,18 +41,20 @@ CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o /tmp/pocket .
 
 Nos exemplos abaixo, `pocket` é o comando instalado; troque por `/tmp/pocket` se usar o clone.
 
-O `doctor` confere o motor, **quais chaves de API já estão no ambiente** e o PDF:
+O `doctor` confere o motor, as credenciais disponíveis e o PDF. Para GitHub, ele também detecta uma sessão autenticada no `gh`:
 
 ```text
 investigate: motor SQLite disponível
-investigate: API GitHub: sem POCKETCLI_INVESTIGATE_GITHUB_TOKEN; a chave será pedida no prompt
+investigate: API GitHub: conta autenticada disponível via gh
 investigate: API Linear: chave em POCKETCLI_INVESTIGATE_LINEAR_KEY
 investigate: PDF disponível (renderizador interno)
 ```
 
 ### 1. Chaves de leitura
 
-Sem a variável, a CLI pede a chave sem eco; ela fica só na memória do processo e nunca é gravada. Evite colar a chave num comando: ela iria para o histórico do shell.
+Para GitHub, a CLI usa nesta ordem `POCKETCLI_INVESTIGATE_GITHUB_TOKEN`, a sessão autenticada do GitHub CLI (`gh auth token --hostname github.com`) e, por último, o prompt mascarado. O token obtido por `gh` fica só na memória do processo, sem ir para argumentos ou histórico do shell. Para Linear, use `POCKETCLI_INVESTIGATE_LINEAR_KEY` ou o prompt mascarado. As chaves nunca são gravadas. Antes de qualquer request, a CLI apara espaços nas pontas, recusa chaves com espaço ou caractere de controle no meio (cola quebrada) e chaves que pertencem à outra fonte (`lin_api_…` no GitHub, ou `ghp_…`/`github_pat_…` no Linear). Ela mostra apenas tipo e tamanho, nunca o segredo, e avisa se a chave veio do ambiente; uma variável antiga é causa comum de HTTP 401.
+
+O fallback `gh` tem teste local, sem rede ou credencial real: `go test -buildvcs=false -count=1 -run TestLoadCredentialsUsesGitHubCLISessionWhenEnvIsMissing ./cmd/pocket` (Go instalado; o teste cria um executável `gh` fictício em diretório temporário).
 
 | API | Variável | Permissões mínimas |
 | --- | --- | --- |

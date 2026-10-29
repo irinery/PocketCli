@@ -62,7 +62,9 @@ run_pocket POCKETCLI_INVESTIGATE_BUILD=yes >"${WORKDIR}/out" 2>"${WORKDIR}/err" 
 [ "$(wc -l <"${WORKDIR}/build.log")" -eq 1 ] || fail 'go build deveria rodar uma vez'
 grep -q '^1 ' "${WORKDIR}/build.log" || fail 'go build sem CGO_ENABLED=1'
 [ -x "${HOME_DIR}/.pocketcli/bin/pocket-go" ] || fail 'binário não foi instalado'
-ls "${HOME_DIR}/.pocketcli/bin" | grep -q '\.build\.' && fail 'arquivo temporário de build ficou para trás'
+for build_temp in "${HOME_DIR}/.pocketcli/bin/"*.build.*; do
+    [ ! -e "${build_temp}" ] || fail 'arquivo temporário de build ficou para trás'
+done
 
 # 4. With the binary in place nothing builds again.
 run_pocket >"${WORKDIR}/out" 2>"${WORKDIR}/err" || fail "segunda chamada falhou: $(cat "${WORKDIR}/err")"

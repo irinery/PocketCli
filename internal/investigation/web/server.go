@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/editorial"
+	"pocketcli/internal/investigation/insightcontract"
 	"pocketcli/internal/investigation/queries"
 )
 
@@ -38,6 +40,9 @@ type PreviewOptions struct {
 	// composition (for example an unwritable report directory). It is shown in
 	// /capabilities before collection; it never contains credentials.
 	PDFUnavailableReason string
+	InsightReader        insightcontract.InsightReader
+	AnalysisController   insightcontract.AnalysisController
+	ExecutiveExporter    insightcontract.ExecutiveExporter
 }
 
 // ContractHeader carries the contract version the browser assets were built
@@ -82,21 +87,25 @@ type session struct {
 	expires time.Time
 }
 type Handler struct {
-	core             contract.Core
-	setup            contract.SetupService
-	credentials      contract.CredentialStore
-	annotations      AnnotationStore
-	editorial        EditorialService
-	reports          ReportService
-	options          PreviewOptions
-	bootstrap        string
-	mu               sync.Mutex
-	sessions         map[string]session
-	unlockAttempts   int
-	bootstrapExpires time.Time
-	finalizedRuns    map[string]bool
-	queryStore       *queries.Store
-	events           *eventHub
+	core              contract.Core
+	setup             contract.SetupService
+	credentials       contract.CredentialStore
+	annotations       AnnotationStore
+	editorial         EditorialService
+	reports           ReportService
+	insightReader     insightcontract.InsightReader
+	analysis          insightcontract.AnalysisController
+	executiveExports  insightcontract.ExecutiveExporter
+	options           PreviewOptions
+	bootstrap         string
+	mu                sync.Mutex
+	sessions          map[string]session
+	unlockAttempts    int
+	bootstrapExpires  time.Time
+	finalizedRuns     map[string]bool
+	authorizedInsight map[string]bool
+	queryStore        *queries.Store
+	events            *eventHub
 }
 
 // NewHandler composes the local application. BindHost may be loopback only.
@@ -127,7 +136,7 @@ func NewHandler(core contract.Core, setup contract.SetupService, credentials con
 		return nil, "", err
 	}
 	code := base64.RawURLEncoding.EncodeToString(raw[:])
-	h := &Handler{core: core, setup: setup, credentials: credentials, annotations: annotationStore, editorial: editorialService, reports: reports, options: options, bootstrap: code, sessions: map[string]session{}, finalizedRuns: map[string]bool{}, events: newEventHub(), bootstrapExpires: time.Now().Add(5 * time.Minute)}
+	h := &Handler{core: core, setup: setup, credentials: credentials, annotations: annotationStore, editorial: editorialService, reports: reports, insightReader: options.InsightReader, analysis: options.AnalysisController, executiveExports: options.ExecutiveExporter, options: options, bootstrap: code, sessions: map[string]session{}, finalizedRuns: map[string]bool{}, authorizedInsight: map[string]bool{}, events: newEventHub(), bootstrapExpires: time.Now().Add(5 * time.Minute)}
 	if options.QueryHistory != nil {
 		h.queryStore = options.QueryHistory
 	} else if options.DataDir != "" {
@@ -319,6 +328,75 @@ func (h *Handler) sameOrigin(r *http.Request) bool {
 func isWrite(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
 }
+
+func insightLimit(w http.ResponseWriter, raw string, fallback int) (int, bool) {
+	limit := fallback
+	if raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"code":"ERR_VALIDATION","message":"Limite deve estar entre 1 e 200."}`)
+			return 0, false
+		}
+		limit = n
+	}
+	return limit, true
+}
+
+func validInsightAnalysisStatus(status string) bool {
+	return status == "complete" || status == "partial" || status == "not_run" || status == "failed"
+}
+func validRunState(state string) bool {
+	return state == "queued" || state == "running" || state == "completed" || state == "completed_partial" || state == "failed" || state == "cancelled"
+}
+func validRunPhase(phase string) bool {
+	return phase == "source" || phase == "facts" || phase == "reasoning" || phase == "presentation" || phase == "persisting" || phase == "idle"
+}
+func validExecutiveReport(report insightcontract.ExecutiveReport) bool {
+	if report.Version != insightcontract.Version || report.TotalCases < 0 || int64(len(report.Cases)) > report.TotalCases || len(report.Cases) != len(report.CaseIDs) {
+		return false
+	}
+	if !(report.PublicationStatus == "ready" || report.PublicationStatus == "exporting" || report.PublicationStatus == "exported" || report.PublicationStatus == "export_failed") || !validInsightAnalysisStatus(report.AnalysisStatus) {
+		return false
+	}
+	if !(report.SufficiencyStatus == "sufficient" || report.SufficiencyStatus == "partial" || report.SufficiencyStatus == "insufficient" || report.SufficiencyStatus == "not_applicable") {
+		return false
+	}
+	seen := map[string]bool{}
+	for i, c := range report.Cases {
+		if c.ID == "" || report.CaseIDs[i] != c.ID || seen[c.ID] {
+			return false
+		}
+		seen[c.ID] = true
+	}
+	return true
+}
+
+func validExecutiveArtifact(artifact insightcontract.ExecutiveArtifact) bool {
+	if artifact.ID == "" || artifact.SnapshotID == "" || artifact.AnalysisID == "" ||
+		(artifact.Mode != "executive" && artifact.Mode != "analysis_detail") ||
+		artifact.Revision < 1 || artifact.PageCount < 1 || artifact.SelectedCaseCount < 0 ||
+		artifact.TotalCaseCount < 0 || artifact.SelectedCaseCount > artifact.TotalCaseCount || artifact.RendererVersion == "" {
+		return false
+	}
+	for _, r := range artifact.ID {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	for _, hash := range []string{artifact.ContentHash, artifact.AnalysisHash} {
+		decoded, err := hex.DecodeString(hash)
+		if err != nil || len(decoded) != 32 {
+			return false
+		}
+	}
+	if _, err := time.Parse(time.RFC3339, artifact.CreatedAt); err != nil {
+		return false
+	}
+	return artifact.DownloadPath == "/api/v1/insights/exports/"+artifact.ID+"/download"
+}
+
 func (h *Handler) decode(w http.ResponseWriter, r *http.Request, dst any, max int64) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, max)
 	dec := json.NewDecoder(r.Body)
@@ -349,6 +427,28 @@ func (h *Handler) ownsSnapshot(w http.ResponseWriter, ctx context.Context, id st
 		return false
 	}
 	if snapshot.InvestigationID != h.options.InvestigationID {
+		h.notInScope(w)
+		return false
+	}
+	return true
+}
+
+func insightIdentity(snapshotID, analysisID string) string { return snapshotID + "\x00" + analysisID }
+
+func (h *Handler) authorizeInsight(snapshotID, analysisID string) {
+	if snapshotID == "" || analysisID == "" {
+		return
+	}
+	h.mu.Lock()
+	h.authorizedInsight[insightIdentity(snapshotID, analysisID)] = true
+	h.mu.Unlock()
+}
+
+func (h *Handler) requireAuthorizedInsight(w http.ResponseWriter, snapshotID, analysisID string) bool {
+	h.mu.Lock()
+	ok := h.authorizedInsight[insightIdentity(snapshotID, analysisID)]
+	h.mu.Unlock()
+	if !ok {
 		h.notInScope(w)
 		return false
 	}
@@ -391,7 +491,7 @@ func (h *Handler) ownsRun(w http.ResponseWriter, ctx context.Context, id string)
 func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, sid string) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if r.Method == http.MethodGet && path == "/capabilities" {
-		capabilities := map[string]any{"contract": contract.Version, "demo": h.options.Demo, "modules": []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"}, "pdf_available": h.reports != nil, "claude_available": h.editorial != nil}
+		capabilities := map[string]any{"contract": contract.Version, "insight_contract": insightcontract.Version, "insights_available": h.insightReader != nil, "analysis_available": h.analysis != nil, "executive_export_available": h.executiveExports != nil, "demo": h.options.Demo, "modules": []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"}, "pdf_available": h.reports != nil, "claude_available": h.editorial != nil}
 		if h.reports == nil {
 			reason := strings.TrimSpace(h.options.PDFUnavailableReason)
 			if reason == "" {
@@ -561,6 +661,309 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		out, err := h.core.GetSnapshot(r.Context(), parts[1])
 		h.respond(w, out, err)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "snapshots" && parts[2] == "insights" && r.Method == http.MethodGet {
+		if h.insightReader == nil {
+			h.unavailable(w, "análise executiva")
+			return
+		}
+		if h.analysis == nil {
+			h.unavailable(w, "controlador de análise")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
+		limit, ok := insightLimit(w, r.URL.Query().Get("limit"), 50)
+		if !ok {
+			return
+		}
+		page, err := h.analysis.ListAnalyses(r.Context(), parts[1], r.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if page.SnapshotID != parts[1] {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "A lista de análises retornou outro snapshot.")
+			return
+		}
+		if page.Total < 0 || int64(len(page.Items)) > page.Total || len(page.Items) > limit || (len(page.Items) == 0 && page.NextCursor != "") || (page.NextCursor != "" && page.NextCursor == r.URL.Query().Get("cursor")) {
+			h.writeError(w, 502, "ERR_INSIGHT_PAGE", "A lista de análises excedeu os limites ou não avançou.")
+			return
+		}
+		seenAnalyses := map[string]bool{}
+		for _, item := range page.Items {
+			if item.ID == "" || item.SnapshotID != parts[1] || seenAnalyses[item.ID] || !validInsightAnalysisStatus(item.Status) {
+				h.writeError(w, 502, "ERR_INSIGHT_PAGE", "A lista contém identificadores, status ou escopos inválidos.")
+				return
+			}
+			seenAnalyses[item.ID] = true
+			h.authorizeInsight(parts[1], item.ID)
+		}
+		h.writeJSON(w, http.StatusOK, page)
+		return
+	}
+	if len(parts) == 4 && parts[0] == "snapshots" && parts[2] == "insights" && r.Method == http.MethodGet {
+		if h.insightReader == nil {
+			h.unavailable(w, "análise executiva")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, parts[1], parts[3]) {
+			return
+		}
+		out, err := h.insightReader.GetExecutiveReport(r.Context(), parts[1], parts[3])
+		if err == nil && (out.SnapshotID != parts[1] || out.AnalysisID != parts[3] || !validExecutiveReport(out)) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O relatório retornou outro snapshot ou análise.")
+			return
+		}
+		h.respond(w, out, err)
+		return
+	}
+	if len(parts) == 5 && parts[0] == "snapshots" && parts[2] == "insights" && parts[4] == "cases" && r.Method == http.MethodGet {
+		if h.insightReader == nil {
+			h.unavailable(w, "análise executiva")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, parts[1], parts[3]) {
+			return
+		}
+		limit, ok := insightLimit(w, r.URL.Query().Get("limit"), 50)
+		if !ok {
+			return
+		}
+		page, err := h.insightReader.ListInsightCases(r.Context(), parts[1], parts[3], r.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if page.SnapshotID != parts[1] || page.AnalysisID != parts[3] {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "A página retornou outro snapshot ou análise.")
+			return
+		}
+		if page.Total < 0 || int64(len(page.Cases)) > page.Total || len(page.Cases) > limit || (len(page.Cases) == 0 && page.NextCursor != "") || (page.NextCursor != "" && page.NextCursor == r.URL.Query().Get("cursor")) {
+			h.writeError(w, 502, "ERR_INSIGHT_PAGE", "A página de casos excedeu os limites ou não avançou.")
+			return
+		}
+		seenCases := map[string]bool{}
+		lastCaseID := ""
+		for _, c := range page.Cases {
+			if c.ID == "" || seenCases[c.ID] || (lastCaseID != "" && c.ID < lastCaseID) {
+				h.writeError(w, 502, "ERR_INSIGHT_PAGE", "A página contém IDs vazios, repetidos ou fora de ordem.")
+				return
+			}
+			seenCases[c.ID] = true
+			lastCaseID = c.ID
+		}
+		h.writeJSON(w, http.StatusOK, page)
+		return
+	}
+	if len(parts) == 6 && parts[0] == "snapshots" && parts[2] == "insights" && parts[4] == "cases" && r.Method == http.MethodGet {
+		if h.insightReader == nil {
+			h.unavailable(w, "análise executiva")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, parts[1], parts[3]) {
+			return
+		}
+		out, err := h.insightReader.GetInsightCase(r.Context(), parts[1], parts[3], parts[5])
+		if err == nil && (out.SnapshotID != parts[1] || out.AnalysisID != parts[3] || out.Case.ID != parts[5]) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O detalhe retornou outro snapshot, análise ou caso.")
+			return
+		}
+		h.respond(w, out, err)
+		return
+	}
+	if path == "/insights/runs" && r.Method == http.MethodPost {
+		if h.analysis == nil {
+			h.unavailable(w, "controlador de análise")
+			return
+		}
+		var in insightcontract.AnalysisRequest
+		if !h.decode(w, r, &in, 512*1024) {
+			return
+		}
+		if in.SnapshotID == "" || in.Config.Version != insightcontract.Version || strings.TrimSpace(in.IdempotencyKey) == "" {
+			h.writeError(w, 400, "ERR_VALIDATION", "Snapshot, configuração v1 e chave de idempotência são obrigatórios.")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
+			return
+		}
+		out, err := h.analysis.StartAnalysis(r.Context(), in)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if out.ID == "" || out.SnapshotID != in.SnapshotID || !validRunState(out.State) || !validRunPhase(out.Phase) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O run retornou outro snapshot.")
+			return
+		}
+		if out.AnalysisID != nil {
+			h.authorizeInsight(in.SnapshotID, *out.AnalysisID)
+		}
+		h.writeJSON(w, http.StatusAccepted, out)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "insights" && parts[1] == "runs" && r.Method == http.MethodGet {
+		if h.analysis == nil {
+			h.unavailable(w, "controlador de análise")
+			return
+		}
+		out, err := h.analysis.GetAnalysisRun(r.Context(), parts[2])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if out.ID != parts[2] || out.SnapshotID == "" || !validRunState(out.State) || !validRunPhase(out.Phase) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O controlador retornou um run inválido.")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), out.SnapshotID) {
+			return
+		}
+		if out.AnalysisID != nil {
+			h.authorizeInsight(out.SnapshotID, *out.AnalysisID)
+		}
+		h.writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if len(parts) == 4 && parts[0] == "insights" && parts[1] == "runs" && parts[3] == "cancel" && r.Method == http.MethodPost {
+		if h.analysis == nil {
+			h.unavailable(w, "controlador de análise")
+			return
+		}
+		var empty map[string]any
+		if !h.decode(w, r, &empty, 1024) {
+			return
+		}
+		current, err := h.analysis.GetAnalysisRun(r.Context(), parts[2])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if current.ID != parts[2] || current.SnapshotID == "" || !validRunState(current.State) || !validRunPhase(current.Phase) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O controlador retornou um run inválido.")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), current.SnapshotID) {
+			return
+		}
+		out, err := h.analysis.CancelAnalysis(r.Context(), parts[2])
+		if err == nil && (out.ID != parts[2] || out.SnapshotID != current.SnapshotID || !validRunState(out.State) || !validRunPhase(out.Phase)) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O cancelamento retornou outro snapshot.")
+			return
+		}
+		if err == nil && out.AnalysisID != nil {
+			h.authorizeInsight(out.SnapshotID, *out.AnalysisID)
+		}
+		h.respond(w, out, err)
+		return
+	}
+	if path == "/insights/exports" && r.Method == http.MethodPost {
+		if h.executiveExports == nil {
+			h.unavailable(w, "exportação executiva")
+			return
+		}
+		var in insightcontract.ExecutiveExportRequest
+		if !h.decode(w, r, &in, 16*1024) {
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), in.SnapshotID) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, in.SnapshotID, in.AnalysisID) {
+			return
+		}
+		jobCtx, finish, err := h.beginReport()
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		defer finish()
+		out, err := h.executiveExports.ExportExecutive(jobCtx, in)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if out.SnapshotID != in.SnapshotID || out.AnalysisID != in.AnalysisID || out.Mode != in.Mode || !validExecutiveArtifact(out) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "O artefato retornou outro snapshot ou análise.")
+			return
+		}
+		if !h.requireAuthorizedInsight(w, out.SnapshotID, out.AnalysisID) {
+			return
+		}
+		h.writeJSON(w, http.StatusAccepted, out)
+		return
+	}
+	if len(parts) == 3 && parts[0] == "insights" && parts[1] == "exports" && r.Method == http.MethodGet {
+		if h.executiveExports == nil {
+			h.unavailable(w, "exportação executiva")
+			return
+		}
+		out, err := h.executiveExports.GetExecutiveArtifact(r.Context(), parts[2])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if out.ID != parts[2] || !validExecutiveArtifact(out) {
+			h.writeError(w, 502, "ERR_INSIGHT_ARTIFACT", "O artefato retornou uma identidade ou metadados inválidos.")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), out.SnapshotID) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, out.SnapshotID, out.AnalysisID) {
+			return
+		}
+		h.writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if len(parts) == 4 && parts[0] == "insights" && parts[1] == "exports" && parts[3] == "download" && r.Method == http.MethodGet {
+		if h.executiveExports == nil {
+			h.unavailable(w, "exportação executiva")
+			return
+		}
+		artifact, err := h.executiveExports.GetExecutiveArtifact(r.Context(), parts[2])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if artifact.ID != parts[2] || !validExecutiveArtifact(artifact) {
+			h.writeError(w, 502, "ERR_INSIGHT_ARTIFACT", "O artefato retornou uma identidade ou metadados inválidos.")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), artifact.SnapshotID) {
+			return
+		}
+		if !h.requireAuthorizedInsight(w, artifact.SnapshotID, artifact.AnalysisID) {
+			return
+		}
+		opener, ok := h.executiveExports.(interface {
+			OpenExecutiveArtifact(string) (*os.File, error)
+		})
+		if !ok {
+			h.unavailable(w, "download de exportação executiva")
+			return
+		}
+		file, err := opener.OpenExecutiveArtifact(parts[2])
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", `attachment; filename="executive-report.pdf"`)
+		_, _ = io.Copy(w, file)
 		return
 	}
 	if len(parts) == 3 && parts[0] == "snapshots" && parts[2] == "queries" && r.Method == http.MethodGet {
