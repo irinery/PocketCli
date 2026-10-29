@@ -344,6 +344,15 @@ func renderExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 
 func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport, details []insightcontract.CaseDetail, mode string, created time.Time) (*pdfLayout, error) {
 	l := newPDFLayout()
+	if err := writeExecutive(ctx, l, report, details, mode, created); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+// writeExecutive draws the executive view into an existing layout, so the
+// consolidated report can carry the decisions inside its own pages.
+func writeExecutive(ctx context.Context, l *pdfLayout, report insightcontract.ExecutiveReport, details []insightcontract.CaseDetail, mode string, created time.Time) error {
 	l.heading("Visão executiva", 22, 0, false)
 	l.paragraph(9.5, colorMuted, plain("PocketCli · investigação executiva"))
 	modeLabel := map[string]string{"executive": "Executivo", "analysis_detail": "Detalhado"}[mode]
@@ -423,7 +432,7 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		l.heading("Métricas", 14, 8, true)
 		for _, m := range report.Metrics {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return err
 			}
 			value := "não determinado"
 			if m.State == "observed" && m.Value != nil {
@@ -473,7 +482,7 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 	for _, c := range cases {
 		renderDecisionCase(l, c)
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if mode == "analysis_detail" {
@@ -481,7 +490,7 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 		for _, d := range details {
 			renderCaseDetail(l, d)
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
@@ -491,7 +500,7 @@ func layoutExecutive(ctx context.Context, report insightcontract.ExecutiveReport
 			l.paragraph(9, colorText, plain("• "+v))
 		}
 	}
-	return l, nil
+	return nil
 }
 
 func renderDecisionCase(l *pdfLayout, c insightcontract.DecisionCase) {

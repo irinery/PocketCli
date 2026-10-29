@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -672,7 +673,20 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %s %s\n", p.cyan("●"), p.bold(title), p.dim("· código ")+p.bold(p.yellow(planCode(plan.Hash))))
 	b.WriteString(row("APIs", investigationAPIsLine(input, p)))
-	b.WriteString(row("Janela", formatWindow(plan.WindowStart, plan.WindowEnd, input.Period)))
+	b.WriteString(row("Janela", formatWindow(plan.WindowStart, plan.WindowEnd, input.Period, plan.Resources...)))
+	if plan.WindowStart == "" {
+		loc := time.UTC
+		if l, err := time.LoadLocation(input.Period.Timezone); err == nil && input.Period.Timezone != "" {
+			loc = l
+		}
+		for i, line := range lifetimeRows(plan.Resources, plan.WindowEnd, input.Scope != nil && len(input.Scope.Teams) > 0, loc) {
+			label := ""
+			if i == 0 {
+				label = "Vida"
+			}
+			b.WriteString(row(label, line))
+		}
+	}
 	b.WriteString(row("Recursos", strings.Join(resources, p.dim(" · "))))
 	if len(modules) > 0 {
 		b.WriteString(row("Módulos", strings.Join(modules, ", ")))
@@ -742,13 +756,13 @@ func expandPlanConfirmation(confirm, hash string) string {
 	return confirm
 }
 
-func formatWindow(start, end string, period contract.Period) string {
+// formatWindow describes the analysis window. The "all" period has no fixed
+// start: when the resources report their lifetime it is shown as the span the
+// data really covers, otherwise as the whole history.
+func formatWindow(start, end string, period contract.Period, resources ...contract.Resource) string {
 	label := period.Preset
 	if period.Preset == "custom" {
 		label = period.FromDate + " a " + period.ToDate
-	}
-	if start == "" {
-		return label + " (todo o histórico)"
 	}
 	loc, err := time.LoadLocation(period.Timezone)
 	if err != nil || period.Timezone == "" {
@@ -761,7 +775,53 @@ func formatWindow(start, end string, period contract.Period) string {
 		}
 		return at.In(loc).Format("02/01/2006 15:04")
 	}
+	if start == "" {
+		from, to, lifetime := contract.EffectiveWindow(start, end, resources)
+		if !lifetime {
+			return label + " (todo o histórico)"
+		}
+		return fmt.Sprintf("%s → %s (%s, tempo de vida, %s)", format(from), format(to), label, loc.String())
+	}
 	return fmt.Sprintf("%s → %s %s", format(start), format(end), "("+label+", "+loc.String()+")")
+}
+
+// lifetimeRows lists, for the "all" period, how long each repository lived
+// (creation to last change) and what the Linear history spans. A targeted
+// team has its own start; without a team scope it is the organization's.
+func lifetimeRows(resources []contract.Resource, windowEnd string, teamsScoped bool, loc *time.Location) []string {
+	day := func(value string) string {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return value
+		}
+		return at.In(loc).Format("02/01/2006")
+	}
+	var lines []string
+	linearFrom := ""
+	for _, r := range resources {
+		from, to, ok := contract.ResourceLifetime(r, windowEnd)
+		if !ok {
+			continue
+		}
+		switch r.Source {
+		case "github":
+			lines = append(lines, fmt.Sprintf("%s  %s → %s", r.Name, day(from), day(to)))
+		case "linear":
+			if teamsScoped {
+				lines = append(lines, fmt.Sprintf("Linear %s  %s → %s", r.Name, day(from), day(to)))
+			} else if linearFrom == "" || from < linearFrom {
+				linearFrom = from
+			}
+		}
+	}
+	if linearFrom != "" {
+		lines = append(lines, fmt.Sprintf("Linear (organização)  %s → %s", day(linearFrom), day(windowEnd)))
+	}
+	sort.Strings(lines)
+	if len(lines) > 6 {
+		lines = append(lines[:6], fmt.Sprintf("… e mais %d", len(lines)-6))
+	}
+	return lines
 }
 
 // formatDuration drops zero units: 2h0m0s reads as 2h, 4m0s as 4m.
