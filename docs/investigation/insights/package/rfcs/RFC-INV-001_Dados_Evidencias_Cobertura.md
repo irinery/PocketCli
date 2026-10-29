@@ -1,8 +1,8 @@
 # RFC-INV-001 — Dados, evidências e cobertura
 
-**Estado:** proposta para implementação L1  
-**Data:** 2026-10-28  
-**Área:** coleta, armazenamento, leitura analítica e coordenação/persistência de análises  
+**Estado:** proposta para implementação L1
+**Data:** 2026-10-28
+**Área:** coleta, armazenamento, leitura analítica e coordenação/persistência de análises
 **Contrato:** `investigate.insights.v1` de RFC-INV-000; `investigate.v1` permanece compatível
 
 ## 1. Resumo e problema

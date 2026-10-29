@@ -210,12 +210,16 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 	if snapshot.ID != snapshotID || len(snapshot.DatasetHash) != 64 || snapshot.ID != "snap-"+snapshot.DatasetHash[:24] || data.Snapshot.DatasetHash != snapshot.DatasetHash {
 		return insightcontract.SourceBundle{}, fault("ERR_AUDIT_FAILED", "snapshot e dataset incompatíveis")
 	}
-	canonicalData := data
-	canonicalData.Snapshot.ID = ""
-	canonicalData.Snapshot.DatasetHash = ""
-	canonicalData.Snapshot.PublishedAt = ""
-	canonical, err := json.Marshal(canonicalData)
-	if err != nil || storage.Hash(canonical) != snapshot.DatasetHash {
+	datasetPath, err := c.store.Path("datasets", snapshotID)
+	if err != nil {
+		return insightcontract.SourceBundle{}, fault("ERR_AUDIT_FAILED", "caminho do dataset inválido")
+	}
+	publishedBytes, err := os.ReadFile(datasetPath)
+	if err != nil {
+		return insightcontract.SourceBundle{}, fault("ERR_AUDIT_FAILED", "bytes do dataset indisponíveis")
+	}
+	publishedHash, err := publishedDatasetHash(publishedBytes)
+	if err != nil || publishedHash != snapshot.DatasetHash {
 		return insightcontract.SourceBundle{}, fault("ERR_AUDIT_FAILED", "hash do dataset do snapshot inválido")
 	}
 	manifest := insightCoverageManifest{}
@@ -461,7 +465,7 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 	}
 	bundle.Evidence = filteredEvidence
 	sortSourceBundle(&bundle)
-	canonical, err = json.Marshal(struct {
+	canonical, err := json.Marshal(struct {
 		SnapshotHash           string                         `json:"snapshot_hash"`
 		Config                 insightcontract.AnalysisConfig `json:"config"`
 		QuestionCatalogVersion string                         `json:"question_catalog_version"`
@@ -728,6 +732,9 @@ func collectionsForQuestion(question, source string) []string {
 	case "decision_lineage":
 		if source == "linear" {
 			return []string{"issues", "history", "comments"}
+		}
+		if source == "github" {
+			return []string{"issues", "comments", "formal_links", "issue_dependencies"}
 		}
 		return []string{"issues", "comments", "formal_links"}
 	case "delivery_trace":

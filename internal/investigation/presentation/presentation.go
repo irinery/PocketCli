@@ -62,6 +62,10 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 	if err := validateReferences(source, facts, decisions, cfg); err != nil {
 		return insightcontract.ExecutiveReport{}, err
 	}
+	policyHash, err := insightcontract.PolicyHash(cfg.Policy)
+	if err != nil {
+		return insightcontract.ExecutiveReport{}, err
+	}
 
 	questions := append([]insightcontract.QuestionCoverage(nil), source.Questions...)
 	metrics := append([]insightcontract.Metric(nil), facts.Metrics...)
@@ -94,7 +98,7 @@ func Build(source insightcontract.SourceBundle, facts insightcontract.FactsResul
 		PublicationStatus: "ready", AnalysisStatus: decisions.Status,
 		SufficiencyStatus: sufficiency(source, decisions),
 		Headline:          headline(cases), Summary: "Síntese da análise vinculada ao snapshot; consulte dimensões, casos e limitações antes de concluir.",
-		RequestedScope: source.RequestedScope, Questions: questions, Dimensions: dimensions,
+		RequestedScope: source.RequestedScope, Objectives: append([]insightcontract.Objective(nil), cfg.Objectives...), PolicyHash: policyHash, Questions: questions, Dimensions: dimensions,
 		Metrics: metrics, Cases: cases, TotalCases: int64(len(decisions.Cases)), CaseIDs: caseIDs,
 		NextActions: []string{}, Limitations: mergeStrings(source.Limitations, facts.Limitations, decisions.Limitations),
 	}, nil

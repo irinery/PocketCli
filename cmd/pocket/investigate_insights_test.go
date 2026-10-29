@@ -12,7 +12,7 @@ import (
 func TestConfiguredInsightProviderNeedsExplicitPolicyProfileAndCredential(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("POCKETCLI_TEST_OPENAI_KEY", "")
+	t.Setenv("POCKETCLI_TEST_MIDDLEWARE_TOKEN", "")
 	cfg := insightcontract.AnalysisConfig{
 		Provider: insightcontract.ProviderConfig{Kind: "configured", Model: "model-test", EndpointProfile: "work"},
 		Policy:   insightcontract.Policy{ExternalProcessingAllowed: true},
@@ -25,7 +25,7 @@ func TestConfiguredInsightProviderNeedsExplicitPolicyProfileAndCredential(t *tes
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	profile := insightProviderProfileFile{Version: insightProviderProfileVersion, Profiles: []insightProviderProfile{{ID: "work", Adapter: "openai-responses", Model: "model-test", CredentialEnv: "POCKETCLI_TEST_OPENAI_KEY"}}}
+	profile := insightProviderProfileFile{Version: insightProviderProfileVersion, Profiles: []insightProviderProfile{{ID: "work", Adapter: "middlewareauth-llm", Model: "model-test", CredentialEnv: "POCKETCLI_TEST_MIDDLEWARE_TOKEN", ProjectID: "pocketcli", ProviderID: "openai", ProfileID: "default"}}}
 	data, err := json.Marshal(profile)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestConfiguredInsightProviderNeedsExplicitPolicyProfileAndCredential(t *tes
 	if err != nil || provider != nil {
 		t.Fatalf("sem credencial não deve habilitar provider: provider=%T err=%v", provider, err)
 	}
-	t.Setenv("POCKETCLI_TEST_OPENAI_KEY", "synthetic-key")
+	t.Setenv("POCKETCLI_TEST_MIDDLEWARE_TOKEN", "synthetic-token")
 	provider, err = configuredInsightProvider(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -55,12 +55,12 @@ func TestConfiguredInsightProviderNeedsExplicitPolicyProfileAndCredential(t *tes
 func TestConfiguredInsightProviderRejectsProfileMismatch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("POCKETCLI_TEST_OPENAI_KEY", "synthetic-key")
+	t.Setenv("POCKETCLI_TEST_MIDDLEWARE_TOKEN", "synthetic-token")
 	path := filepath.Join(home, ".config", "pocketcli", insightProviderProfilePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	profile := insightProviderProfileFile{Version: insightProviderProfileVersion, Profiles: []insightProviderProfile{{ID: "work", Adapter: "openai-responses", Model: "approved-model", CredentialEnv: "POCKETCLI_TEST_OPENAI_KEY"}}}
+	profile := insightProviderProfileFile{Version: insightProviderProfileVersion, Profiles: []insightProviderProfile{{ID: "work", Adapter: "middlewareauth-llm", Model: "approved-model", CredentialEnv: "POCKETCLI_TEST_MIDDLEWARE_TOKEN", ProjectID: "pocketcli", ProviderID: "openai", ProfileID: "default"}}}
 	data, _ := json.Marshal(profile)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)

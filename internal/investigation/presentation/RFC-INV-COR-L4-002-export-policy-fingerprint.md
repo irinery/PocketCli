@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | proposta; requer decisão do responsável pelo contrato comum |
+| Estado | ratificada e implementada na integração Sol em 28/10/2026 |
 | RFC/requisito de origem | RFC-INV-004 §5 passo 6, INV004-R11 |
 | Responsável pela decisão | responsável pelo contrato comum |
 | Consumidor | L4 (`report.ExecutiveFinalizer`) |
@@ -32,3 +32,9 @@ Adicionar ao retorno executivo um identificador imutável de política de conte�
 ## Limite da L4
 
 L4 não altera o contrato compartilhado congelado nem inventa um hash a partir de campos parciais. Até a decisão e atualização do contrato comum, o artefato registra hashes do conteúdo de relatório/casos e renderer, sem afirmar identidade explícita da política.
+
+## Decisão de integração Sol (28/10/2026)
+
+O pedido explícito de fechar os gates ratifica `PolicyHash` como SHA-256 da serialização JSON de **todos** os campos efetivos de `AnalysisConfig.Policy`, sem configuração do provider ou credencial. O hash é fixado no `ExecutiveReport`, entra na identidade de exportação junto com análise, modo e renderer, e é persistido no `ExecutiveArtifact`/manifest. Uma política diferente recebe artefato diferente mesmo com PDF visualmente igual. Artefatos antigos sem o campo continuam legíveis, mas não recebem uma identidade de política retroativa.
+
+O schema versionado e a fixture compartilhada trazem o campo e um vetor de hash reprodutível; `TestPolicyHashMatchesSharedFixture` e `TestExecutiveExportUsesSelectionAndCompleteDetailWithIdempotency` verificam o contrato e a idempotência.

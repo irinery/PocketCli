@@ -2,7 +2,7 @@
 
 | Campo | Valor |
 |---|---|
-| Estado | proposta; requer decisão do responsável pelo contrato comum |
+| Estado | ratificada e implementada na integração Sol em 28/10/2026 |
 | Data e autor | 28/10/2026 · L4 |
 | RFC/requisito de origem | RFC-INV-004 R02, R06, R12 |
 | Responsável pela implementação | responsável pelo contrato comum; consumidores em L1/L3/L4 |
@@ -78,6 +78,14 @@ A mudança seria aditiva a `investigate.insights.v1`; nenhuma alteração foi fe
 ## 8. Validação e encerramento
 
 Status proposto. Nenhuma mudança de contrato nem correção de produto foi aplicada. Requer decisão do responsável pelo contrato comum.
+
+### Decisão de integração Sol (28/10/2026)
+
+O pedido explícito de fechar os gates ratifica a extensão **aditiva** de `investigate.insights.v1`: `ExecutiveReport.Objectives` copia os objetivos efetivos da configuração imutável; `CaseDetail.Timeline` expõe itens tipados derivados de decisões, eventos, etapas e observações de entrega vinculados às entidades do caso. Os itens sem timestamp válido ficam no fim, sem ordem cronológica afirmada. IDs e evidências originais são preservados. Campos ausentes em análises antigas continuam vazios/desconhecidos.
+
+O schema versionado em `internal/investigation/insightcontract/insight_v1.schema.json` e a fixture compartilhada foram atualizados. A timeline conserva também observação, ator, valores anterior/novo e fim da etapa quando a fonte os fornece. A UI e o PDF expõem esses campos sem reinterpretar os eventos. `TestCaseTimelineSeparatesDecisionResultObservationAndUnknownDate`, os testes da apresentação e a integração offline cobrem a extensão.
+
+A agregação de suficiência existente em `presentation.sufficiency` fica ratificada: análise semântica `not_run`/`failed` é insuficiente; ausência de pergunta/dimensão aplicável é `not_applicable`; lacuna de cobertura, dimensão indeterminada ou análise parcial produz `partial` se houver alguma dimensão avaliada, senão `insufficient`; sem essas lacunas, `sufficient`. Publicação, exportação e nível de risco não alteram a suficiência. A regra é de evidência, não um score de saúde.
 
 ## 9. Prompt de reentrega
 

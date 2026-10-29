@@ -1,10 +1,10 @@
 # Handoff L1 — RFC-INV-001
 
-**Estado:** concluído para a fronteira L1, com limites desconhecidos preservados.  
-**Base comum:** `8cbd526ea327b4b3bc5ca2defe0a12a2bc40b901`. **Base auditada:** `b068cfdd40ea72f6c88df1c4ab69d30ab2905b67`.  
-**Branch/worktree:** `codex/luna-1-insights` / `/Users/irinery/.codex/worktrees/luna-1-insights/PocketCli`.  
+**Estado:** concluído para a fronteira L1, com limites desconhecidos preservados.
+**Base comum:** `8cbd526ea327b4b3bc5ca2defe0a12a2bc40b901`. **Base auditada:** `b068cfdd40ea72f6c88df1c4ab69d30ab2905b67`.
+**Branch/worktree:** `codex/luna-1-insights` / `/Users/irinery/.codex/worktrees/luna-1-insights/PocketCli`.
 **Commits L1:** `51c0e72`, `df24259`, `2c15daa`, `0263329`; a auditoria posterior descrita abaixo está em commit separado.
-**Contrato:** `investigate.insights.v1`, copiado e formatado no bootstrap comum.  
+**Contrato:** `investigate.insights.v1`, copiado e formatado no bootstrap comum.
 **Modelo efetivo:** Codex GPT-6 nesta sessão. O prompt do pacote pede Luna/high; essa configuração não estava disponível neste agente.
 
 ## Entrega

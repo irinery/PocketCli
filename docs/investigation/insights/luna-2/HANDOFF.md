@@ -1,7 +1,7 @@
 # Handoff — LUNA-2
 
-**Estado:** concluído para a fronteira L2.  
-**RFC:** RFC-INV-002. **Base:** cdadfef769d5f5b5a163a0cc583dded512dbffd1 (bootstrap comum). **Base auditada:** b068cfdd40ea72f6c88df1c4ab69d30ab2905b67. **Head funcional:** 5948d458cd382411fb519d4caf3a706fd456d140. **Worktree/branch:** /Users/irinery/.codex/worktrees/luna-2-analysisfacts/PocketCli, codex/luna-2-analysisfacts.  
+**Estado:** concluído para a fronteira L2.
+**RFC:** RFC-INV-002. **Base:** cdadfef769d5f5b5a163a0cc583dded512dbffd1 (bootstrap comum). **Base auditada:** b068cfdd40ea72f6c88df1c4ab69d30ab2905b67. **Head funcional:** 5948d458cd382411fb519d4caf3a706fd456d140. **Worktree/branch:** /Users/irinery/.codex/worktrees/luna-2-analysisfacts/PocketCli, codex/luna-2-analysisfacts.
 **Modelo/esforço efetivos:** Codex desta sessão; a ferramenta não expõe seleção de Luna/high, então não afirmo que esse perfil foi usado. **Contrato/hash:** internal/investigation/insightcontract/v1.go, SHA-256 c1abd2c95a2f0da87a24fe902285eef0ad067d83ceca4be15ba13d9fd4b9eeab.
 
 O checkout original estava no commit de referência, mas tinha alterações e arquivos não commitados de outro trabalho. Nenhum foi copiado ou alterado; o bootstrap e a implementação foram feitos em worktrees limpas.
