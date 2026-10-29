@@ -17,7 +17,10 @@ func (m *Mirror) DeclaredRevertTarget(ctx context.Context, oid string) (target s
 	if !oidPattern.MatchString(oid) {
 		return "", false, ErrCorrupt
 	}
-	command := exec.CommandContext(ctx, m.GitPath, "--git-dir="+m.Path, "show", "-s", "--format=%B", oid)
+	// `git log -1`, not `git show -s`: show still runs the diff machinery, and
+	// rename detection asks the promisor remote for blobs that this blob-less
+	// mirror does not have (lazy fetching is disabled), failing the read.
+	command := exec.CommandContext(ctx, m.GitPath, "--git-dir="+m.Path, "log", "-1", "--no-patch", "--no-show-signature", "--format=%B", oid)
 	command.Dir = m.Path
 	command.Env = m.environment("", nil)
 	command.Stderr = io.Discard

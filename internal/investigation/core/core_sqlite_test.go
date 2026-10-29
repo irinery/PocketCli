@@ -55,6 +55,7 @@ type fakeGitObserver struct {
 	branchErrors      map[string]error
 	revertTargets     map[string]string
 	revertUninspected map[string]bool
+	revertErrors      map[string]error
 	ancestorResults   map[string]bool
 }
 
@@ -102,6 +103,9 @@ func (f *fakeGitObserver) WalkCommits(_ context.Context, head string, visit func
 }
 
 func (f *fakeGitObserver) DeclaredRevertTarget(_ context.Context, oid string) (string, bool, error) {
+	if err := f.revertErrors[oid]; err != nil {
+		return "", false, err
+	}
 	if f.revertUninspected[oid] {
 		return "", false, nil
 	}

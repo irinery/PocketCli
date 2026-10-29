@@ -94,7 +94,12 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 			upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":commit:" + commit.OID))[:24], EntityID: entityID, Type: "commit_reachable_observed", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
 			target, inspected, err := observer.DeclaredRevertTarget(ctx, commit.OID)
 			if err != nil {
-				return false, fault("ERR_AUDIT_FAILED", "mensagem de commit Git indisponível")
+				if ctx.Err() != nil {
+					return false, ctx.Err()
+				}
+				// A message the mirror cannot serve is not a negative
+				// observation: record it as uninspected and keep the run alive.
+				target, inspected = "", false
 			}
 			if !inspected {
 				upsertEvent(d, query.Event{ID: "evt-" + storage.Hash([]byte(r.ID + ":revert-uninspected:" + commit.OID))[:24], EntityID: entityID, Type: "commit_revert_message_uninspected", EventAt: commit.CommittedAt, ObservedAt: journal.ObservedAt, NewValue: commit.OID, EvidenceID: evidence.ID})
@@ -121,10 +126,7 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 			return newCount < commitsPerRound, nil
 		})
 		if walkErr != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
+			return gitWalkFault(ctx, walkErr)
 		}
 		if !walkComplete {
 			complete = false
@@ -149,11 +151,25 @@ func (c *Core) collectGitCommits(ctx context.Context, plan contract.Plan, r cont
 		case !graphComplete:
 			reason = "branches pendentes ou grafo Git raso/incompleto"
 		case uninspectedMessages > 0:
-			reason = "mensagem de commit acima do limite de 64 KiB; declaração de revert não verificada"
+			reason = "mensagem de commit não inspecionada (acima de 64 KiB ou indisponível no espelho); declaração de revert não verificada"
 		default:
 			reason = "um ou mais commits sem data válida"
 		}
 	}
 	d.Coverage = append(d.Coverage, c.coverage(resource, "git_commits", status, int64(selectedReachable), reason))
 	return nil
+}
+
+// gitWalkFault reports why a commit walk failed. A fault raised by the visitor
+// keeps its own message; only a failure of the walk itself is reported as an
+// unavailable graph, so the operator is not told "graph" for another cause.
+func gitWalkFault(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var coded *contract.ErrorResponse
+	if errors.As(err, &coded) {
+		return err
+	}
+	return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
 }
