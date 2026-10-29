@@ -90,7 +90,7 @@ func New(reader contract.ReportReader, dir string, demo bool, annotationReader A
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, fmt.Errorf("ERR_PDF_DEPENDENCY: diretório de relatórios indisponível (%v)", err)
 	}
-	f := &Finalizer{reader: reader, annotations: annotationReader, editorial: editorialReader, queries: queryReader, dir: dir, demo: demo, rendererVersion: rendererVersion, timeout: 120 * time.Second, artifacts: map[string]contract.ReportArtifact{}, paths: map[string]string{}, revisions: map[string]int{}}
+	f := &Finalizer{reader: reader, annotations: annotationReader, editorial: editorialReader, queries: queryReader, dir: dir, demo: demo, rendererVersion: RendererVersion, timeout: 120 * time.Second, artifacts: map[string]contract.ReportArtifact{}, paths: map[string]string{}, revisions: map[string]int{}}
 	if err := f.loadManifests(); err != nil {
 		return nil, err
 	}
