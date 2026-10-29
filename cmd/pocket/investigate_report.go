@@ -14,6 +14,7 @@ import (
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/editorial"
 	"pocketcli/internal/investigation/queries"
+	"pocketcli/internal/investigation/report"
 	"pocketcli/internal/investigation/storage"
 	"pocketcli/internal/investigation/web"
 )
@@ -65,7 +66,8 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 		Editorial   []editorial.Draft
 		History     []queries.Execution
 		Saved       []queries.SavedQuery
-	}{in, annotationRows, drafts, history, savedQueries})
+		Renderer    string
+	}{in, annotationRows, drafts, history, savedQueries, report.RendererVersion})
 	if err != nil {
 		return empty, err
 	}

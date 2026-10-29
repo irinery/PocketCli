@@ -211,6 +211,34 @@ func (l *pdfLayout) heading(text string, size, before float64, underline bool) {
 	l.y += size * 0.35
 }
 
+// tocLine draws "title ........ page" with the page number flush right.
+// Titles longer than the line are cut with an ellipsis, so every entry takes
+// exactly one line and the table of contents has a fixed height.
+func (l *pdfLayout) tocLine(indent float64, font pdfFont, size float64, title, page string) {
+	lineH := size * 1.45
+	l.ensure(lineH)
+	pageW := textWidth(page, font, size)
+	maxTitle := pdfContentW - indent - pageW - 18
+	for textWidth(title, font, size) > maxTitle && len([]rune(title)) > 1 {
+		r := []rune(title)
+		title = string(r[:len(r)-2]) + "…"
+	}
+	x := pdfMargin + indent
+	l.drawText(x, l.y+size, font, size, colorText, title)
+	dotsFrom := x + textWidth(title, font, size) + 4
+	dotsTo := pdfMargin + pdfContentW - pageW - 4
+	dots := ""
+	for textWidth(dots+" .", fontRegular, size) <= dotsTo-dotsFrom {
+		dots += " ."
+	}
+	if dots != "" {
+		l.drawText(dotsFrom, l.y+size, fontRegular, size, colorMuted, dots)
+	}
+	l.drawText(pdfMargin+pdfContentW-pageW, l.y+size, font, size, colorText, page)
+	l.page().lines = append(l.page().lines, title+" … "+page)
+	l.y += lineH
+}
+
 func (l *pdfLayout) paragraph(size float64, color pdfColor, runs ...textRun) {
 	lineH := size * 1.45
 	for _, ln := range wrapRuns(runs, size, pdfContentW) {
@@ -351,7 +379,7 @@ func (l *pdfLayout) encode(title, footer string, created time.Time) ([]byte, err
 		obj(fmt.Sprintf("<< /Type /Font /Subtype /Type1 /BaseFont /%s /Encoding /WinAnsiEncoding >>", name))
 	}
 	date := "D:" + created.UTC().Format("20060102150405") + "Z"
-	obj(fmt.Sprintf("<< /Title %s /Producer %s /CreationDate (%s) >>", pdfTextString(title), pdfTextString("PocketCli investigate "+rendererVersion), date))
+	obj(fmt.Sprintf("<< /Title %s /Producer %s /CreationDate (%s) >>", pdfTextString(title), pdfTextString("PocketCli investigate "+RendererVersion), date))
 	for i, p := range l.pages {
 		label := fmt.Sprintf("%s · página %d de %d", footer, i+1, pageCount)
 		fmt.Fprintf(&p.ops, "BT /F1 7.50 Tf %.3f %.3f %.3f rg %.2f %.2f Td (%s) Tj ET\n", colorMuted.r, colorMuted.g, colorMuted.b, pdfMargin, pdfMargin-12, pdfEscape(encodeWinAnsi(label)))
