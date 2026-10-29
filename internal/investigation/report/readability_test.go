@@ -177,3 +177,62 @@ func TestLayoutIsDeterministic(t *testing.T) {
 		t.Fatal("o mesmo modelo gerou layouts diferentes")
 	}
 }
+
+func TestAllPeriodShowsLifetimeAndListsEmptyRepositories(t *testing.T) {
+	doc := readabilityDoc()
+	doc.Snapshot.WindowEnd = "2026-10-29T12:00:00Z"
+	doc.Snapshot.Resources[0].CreatedAt = "2019-05-02T00:00:00Z"
+	doc.Snapshot.Resources[1].CreatedAt = "2021-03-01T10:00:00Z"
+	doc.Snapshot.Resources[1].LastChangeAt = "2021-03-01T10:00:00Z"
+	for i, c := range doc.Snapshot.Coverage {
+		if c.Source == "git" {
+			c.Status, c.Reason = "complete", contract.EmptyRepositoryReason+"; sem branches nem commits para observar"
+			doc.Snapshot.Coverage[i] = c
+		}
+	}
+	doc.CoverageStatus = coverageLabel(doc.Snapshot.Coverage)
+	l, err := layoutReport(context.Background(), doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := l.text()
+	for _, want := range []string{
+		"2019-05-02T00:00:00Z — 2026-10-29T12:00:00Z (tempo de vida dos recursos)",
+		"Tempo de vida dos recursos",
+		"Somos-UNI/fuzzy-happiness",
+		"2021-03-01T10:00:00Z",
+		"Repositórios vazios",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("PDF sem %q", want)
+		}
+	}
+	if strings.Contains(text, " —  ") || strings.Contains(text, "Janela: —") {
+		t.Fatal("o início da janela não pode ficar em branco")
+	}
+	attention := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "code_history") && strings.Contains(line, "partial") {
+			attention = true
+		}
+	}
+	if attention {
+		t.Fatal("repositório vazio não deve aparecer como coleção parcial")
+	}
+
+	bounded := readabilityDoc()
+	bounded.Snapshot.WindowStart, bounded.Snapshot.WindowEnd = "2026-10-01T00:00:00Z", "2026-10-29T12:00:00Z"
+	l, err = layoutReport(context.Background(), bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(l.text(), "Tempo de vida dos recursos") {
+		t.Fatal("janela delimitada não tem tempo de vida")
+	}
+}
+
+func TestSnapshotWindowLabelFallsBackToWholeHistory(t *testing.T) {
+	if got := snapshotWindowLabel(contract.Snapshot{WindowEnd: "2026-10-29T12:00:00Z"}); got != "todo o histórico — 2026-10-29T12:00:00Z" {
+		t.Fatalf("janela sem tempo de vida: %q", got)
+	}
+}

@@ -238,3 +238,20 @@ func TestChangedFilesUsesParentTreeForDeletion(t *testing.T) {
 		t.Fatal("commit pai não está no espelho")
 	}
 }
+
+func TestMirrorReportsEmptyRemoteApartFromUnavailableOne(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty.git")
+	runGit(t, root, "init", "--bare", empty)
+	m, err := New(filepath.Join(root, "mirror.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.allowLocal = true
+	if _, err := m.Observe(context.Background(), "file://"+empty, nil, RefState{}, 10*1024*1024); !errors.Is(err, ErrEmptyRemote) {
+		t.Fatalf("repositório vazio: err=%v", err)
+	}
+	if _, err := m.Observe(context.Background(), "file://"+filepath.Join(root, "missing.git"), nil, RefState{}, 10*1024*1024); !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrEmptyRemote) {
+		t.Fatalf("origem ausente deve continuar indisponível: err=%v", err)
+	}
+}

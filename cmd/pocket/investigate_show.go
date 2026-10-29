@@ -167,7 +167,7 @@ func showSummary(ctx context.Context, out io.Writer, p palette, c *core.Core, sn
 	}
 	window := snapshot.WindowStart + " → " + snapshot.WindowEnd
 	if plan, err := c.LoadPlan(snapshot.PlanID); err == nil {
-		window = formatWindow(snapshot.WindowStart, snapshot.WindowEnd, plan.Input.Period)
+		window = formatWindow(snapshot.WindowStart, snapshot.WindowEnd, plan.Input.Period, snapshot.Resources...)
 	}
 	row := func(label, value string) { fmt.Fprintf(out, "  %s %s\n", p.dim(fmt.Sprintf("%-11s", label)), value) }
 	fmt.Fprintf(out, "%s %s %s\n", p.cyan("●"), p.bold("Dados coletados"), p.dim("· "+snapshot.ID))
@@ -175,13 +175,16 @@ func showSummary(ctx context.Context, out io.Writer, p palette, c *core.Core, sn
 	row("Publicado", snapshot.PublishedAt)
 	row("Coletado", data.countsLine(p))
 	row("Achados", data.findingsLine(p))
+	if line := data.emptyReposLine(p); line != "" {
+		row("Vazios", line)
+	}
 	fmt.Fprintf(out, "  %s\n", p.dim("Cobertura"))
 	for _, line := range data.coverage {
 		reason := ""
-		if line.Reason != "" && line.Status != "complete" {
+		if line.Reason != "" && (line.Status != "complete" || line.Empty) {
 			reason = p.dim(" — " + line.Reason)
 		}
-		fmt.Fprintf(out, "    %s %s %s %s%s\n", statusMark(p, line.Status), p.dim(line.Source+" "+line.Resource), line.Collection, p.dim(fmt.Sprintf("(%d)", line.Observed)), reason)
+		fmt.Fprintf(out, "    %s %s %s %s%s\n", statusMark(p, line.Status), p.dim(line.Source+" "+line.Name), line.Collection, p.dim(fmt.Sprintf("(%d)", line.Observed)), reason)
 	}
 	fmt.Fprintf(out, "  %s\n", p.dim("Ver os itens: ")+p.cyan("pocket investigate show "+investigationID+" issues|prs|findings|events|coverage|sql"))
 	return nil
@@ -190,12 +193,17 @@ func showSummary(ctx context.Context, out io.Writer, p palette, c *core.Core, sn
 type coverageLine struct {
 	Source, Resource, Collection, Status, Reason string
 	Observed                                     int64
+	// Name is the repository or team name when the snapshot knows it, and
+	// Empty marks the coverage of a repository with no commits.
+	Name  string
+	Empty bool
 }
 
 type collected struct {
 	counts     map[string]int64
 	severities map[string]int64
 	coverage   []coverageLine
+	emptyRepos []string
 	linearN    int64
 	githubN    int64
 }
@@ -233,10 +241,37 @@ func collectedData(ctx context.Context, c *core.Core, snapshotID string) (collec
 	if rows, err = run(`SELECT source, resource_id, collection, status, observed_count, reason FROM v_coverage ORDER BY source, resource_id, collection`); err != nil {
 		return d, err
 	}
-	for _, r := range rows {
-		d.coverage = append(d.coverage, coverageLine{Source: r[0].Value, Resource: r[1].Value, Collection: r[2].Value, Status: r[3].Value, Observed: integer(r[4]), Reason: r[5].Value})
+	names := map[string]string{}
+	if snapshot, err := c.GetSnapshot(ctx, snapshotID); err == nil {
+		for _, r := range snapshot.Resources {
+			names[r.ID] = r.Name
+		}
 	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		line := coverageLine{Source: r[0].Value, Resource: r[1].Value, Collection: r[2].Value, Status: r[3].Value, Observed: integer(r[4]), Reason: r[5].Value}
+		line.Name = line.Resource
+		if name := names[line.Resource]; name != "" {
+			line.Name = name
+		}
+		line.Empty = contract.IsEmptyRepository(contract.Coverage{Source: line.Source, Reason: line.Reason})
+		if line.Empty && !seen[line.Resource] {
+			seen[line.Resource] = true
+			d.emptyRepos = append(d.emptyRepos, line.Name)
+		}
+		d.coverage = append(d.coverage, line)
+	}
+	sort.Strings(d.emptyRepos)
 	return d, nil
+}
+
+// emptyReposLine names the repositories that exist but have no commits, so
+// an empty repository is listed instead of reading as a failed Git fetch.
+func (d collected) emptyReposLine(p palette) string {
+	if len(d.emptyRepos) == 0 {
+		return ""
+	}
+	return p.yellow(strings.Join(d.emptyRepos, ", ")) + p.dim(" (sem commits; coleta Git concluída)")
 }
 
 func (d collected) countsLine(p palette) string {
@@ -308,7 +343,11 @@ func collectedRows(ctx context.Context, c *core.Core, snapshotID string, p palet
 	if err != nil {
 		return nil
 	}
-	return [][2]string{{"Coletado", d.countsLine(p)}, {"Achados", d.findingsLine(p)}, {"Cobertura", d.coverageLineSummary(p)}}
+	rows := [][2]string{{"Coletado", d.countsLine(p)}, {"Achados", d.findingsLine(p)}, {"Cobertura", d.coverageLineSummary(p)}}
+	if line := d.emptyReposLine(p); line != "" {
+		rows = append(rows, [2]string{"Vazios", line})
+	}
+	return rows
 }
 
 func statusLabel(status string) string {

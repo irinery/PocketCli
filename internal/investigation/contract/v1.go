@@ -80,6 +80,13 @@ type Resource struct {
 	Source string `json:"source"`
 	Name   string `json:"name"`
 	Access string `json:"access"`
+	// CreatedAt and LastChangeAt bound the resource's own lifetime. They are
+	// filled only for the "all" period, where the window has no fixed start:
+	// a GitHub repository runs from its creation to its last push, a Linear
+	// team from the organization's creation (or its own, when targeted).
+	// An empty LastChangeAt means the lifetime runs up to the window end.
+	CreatedAt    string `json:"created_at,omitempty"`
+	LastChangeAt string `json:"last_change_at,omitempty"`
 }
 type Plan struct {
 	InvestigationID      string     `json:"investigation_id"`

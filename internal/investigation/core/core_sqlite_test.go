@@ -43,6 +43,7 @@ type fakeFinalizer struct {
 
 type fakeGitObserver struct {
 	priors            []gitmirror.RefState
+	observeErr        error
 	result            gitmirror.Observation
 	commits           []gitmirror.Commit
 	commitsByHead     map[string][]gitmirror.Commit
@@ -67,7 +68,7 @@ func (f *fakeGitObserver) IsAncestor(_ context.Context, ancestor, descendant str
 func (f *fakeGitObserver) Observe(_ context.Context, _ string, _ []byte, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
 	f.priors = append(f.priors, prior)
 	f.result.OldOID = prior.OID
-	return f.result, nil
+	return f.result, f.observeErr
 }
 
 func (f *fakeGitObserver) ObserveHead(_ context.Context, _ string, _ []byte, head gitmirror.HeadRef, prior gitmirror.RefState, _ int64) (gitmirror.Observation, error) {
