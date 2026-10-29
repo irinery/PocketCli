@@ -16,6 +16,10 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 - `tests/run_smoke.sh`: descobre `tests/smoke/test_*.sh`, aplica budgets por cenário e registra tempos para o resumo da CI.
 - `tests/lib/ci.sh`: concentra budgets por perfil (`linux`, `macos`, `alpine`) e helpers de medição.
 
+O budget total do perfil `macos` é 100s. Na CI de 28/10/2026, os 28 testes shell passaram em 79s no runner arm64 hospedado, acima do teto antigo de 50s; o novo teto mantém falha para regressões maiores. Para reproduzir localmente: `POCKETCLI_CI_PROFILE=macos sh tests/run_all.sh` (Go, Git e shell POSIX instalados; sem credenciais externas).
+
+Para validar a projeção de dependências formais da timeline GitHub, rode `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestGitHubDependencyTimelineAddsRemovesAndMirrors|TestGitHubChildBatchReadsReviewsAndSkipsIrrelevantTimelines' ./internal/investigation/core`. Pré-requisitos: Go e compilador C para SQLite; os testes usam transporte simulado, sem credenciais nem variáveis de ambiente obrigatórias.
+
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
 
 Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.

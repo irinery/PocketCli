@@ -94,7 +94,7 @@ case "${POCKET_ANSIBLE_STUB_MODE:-success}" in
         exit 42
         ;;
     timeout)
-        sleep 2
+        sleep 1.5
         printf 'LATE\n'
         exit 0
         ;;

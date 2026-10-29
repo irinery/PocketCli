@@ -19,9 +19,8 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-// One GraphQL batch brings every review and identifies which timelines have
-// an event in the window. Only those timelines are read over REST, and review
-// events keep the IDs the REST path would give them.
+// One GraphQL batch brings reviews and skips irrelevant PR timelines. Issue
+// timelines still need REST because GraphQL's state events omit dependencies.
 func TestGitHubChildBatchReadsReviewsAndSkipsIrrelevantTimelines(t *testing.T) {
 	batches := 0
 	var rest []string
@@ -94,7 +93,7 @@ func TestGitHubChildBatchReadsReviewsAndSkipsIrrelevantTimelines(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Strings(rest)
-	if batches != 1 || strings.Join(rest, ",") != "/repos/acme/api/issues/7/timeline" {
+	if batches != 1 || strings.Join(rest, ",") != "/repos/acme/api/issues/7/timeline,/repos/acme/api/issues/8/timeline" {
 		t.Fatalf("lotes=%d leituras REST por item=%v", batches, rest)
 	}
 	var pr query.PullRequest

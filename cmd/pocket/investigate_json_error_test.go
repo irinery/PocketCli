@@ -42,6 +42,7 @@ func TestInvestigationJSONErrorsKeepCodeAndHideUnknownDetails(t *testing.T) {
 
 func TestInvestigationJSONCredentialsRequireEnvironmentWithoutPrompt(t *testing.T) {
 	t.Setenv("POCKETCLI_INVESTIGATE_GITHUB_TOKEN", "")
+	t.Setenv("PATH", t.TempDir()) // Isola a prova de credencial ausente do gh da máquina.
 	store := secrets.NewSessionStore()
 	err := loadCredentials(store, contract.PlanInput{GitHubEnabled: true}, false)
 	var response *contract.ErrorResponse
