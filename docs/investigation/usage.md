@@ -128,6 +128,8 @@ pocket investigate show INVESTIGATION_ID sql "SELECT identifier, state FROM v_is
   4 linhas · horários em UTC
 ```
 
+Um repositório sem nenhum commit não é falha de coleta: a coleta Git dele sai `complete` com o motivo "repositório vazio", e ele é listado numa linha **Vazios** (no resumo da coleta, no `show`, na visão geral da interface e na seção de cobertura do PDF).
+
 `-n/--limit` vai de 1 a 1000 (padrão 20), `--snapshot ID` escolhe um snapshot anterior e `--json` devolve o resultado para scripts. O tópico `sql` aceita só um `SELECT` sobre as views do snapshot (`v_issues`, `v_pull_requests`, `v_events`, `v_findings`, `v_coverage`, `v_links`, `v_components`, `v_evidence`, `v_metrics`), com os mesmos limites do SQL da interface. Títulos passam pela mesma redação de segredos da coleta.
 
 ## Receitas
@@ -195,6 +197,19 @@ Subcomandos: `doctor` (motor, chaves e PDF), `start PLAN_ID -c CÓDIGO`, `resume
 
 `Nh` (de 1h a 8760h) conta horas corridas até agora; `Nd` (de 1d a 3650d) conta dias corridos no fuso do plano; `1y` é um ano; `all` não limita; `custom` usa `--from/--to`. Com janela limitada, a primeira coleta pede às APIs só o que pode estar ativo nela, em vez de percorrer o histórico inteiro.
 
+`all` é o **tempo de vida** de cada fonte, e o plano, o `show`, o PDF e a interface mostram esse intervalo em vez de um início em branco:
+
+- **GitHub:** cada repositório vai da sua criação até a última alteração (último push).
+- **Linear:** todo o tempo da organização (a data de criação da organização) até o fim da janela, salvo se a investigação for direcionada a um time (`-t`), caso em que vale a criação daquele time.
+
+```text
+Janela      02/05/2019 00:00 → 29/10/2026 12:00 (all, tempo de vida, UTC)
+Vida        Linear (organização)  02/05/2019 → 29/10/2026
+            acme/api  01/03/2021 → 30/09/2026
+```
+
+O intervalo é informativo: a coleta continua sem filtro de início, então commits importados de antes da criação do repositório no GitHub entram do mesmo jeito.
+
 ### Limites e rate limit
 
 O ritmo padrão é 1200 requests/h no Linear e 300 no GitHub, com a coleta agrupada em lotes para gastar poucas requests (um time com 121 issues em 12 h coletou com 20). Mude em `limits:` do YAML (`github_requests_per_hour`, `linear_requests_per_hour`, `max_session_ms`, `max_transfer_bytes`, `max_local_bytes`). Se uma API pedir espera ou a sessão acabar, o run fica **pausado**, não falha.
@@ -210,6 +225,17 @@ O ritmo padrão é 1200 requests/h no Linear e 300 no GitHub, com a coleta agrup
 | `failed` | Erro não recuperável | Veja a mensagem; `stats RUN_ID` mostra o consumo |
 
 O retry do PDF é local: não chama GitHub nem Linear de novo. Também dá para preparar outra coleta pelo terminal com `refresh INVESTIGATION_ID` e atualizar a UI quando houver novo snapshot. Veja `refresh --help`, `serve --help` e `report --help`.
+
+## PDF consolidado e remoção dos dados
+
+Na interface (`pocket investigate serve`), a aba **Relatórios** tem o botão **Gerar PDF consolidado**: um único PDF com todo o histórico coletado, os achados, as métricas, os comentários, as consultas, a redação editorial aceita e, como seção 13, as decisões, os casos e as evidências da análise executiva mais recente. Sem análise executiva o PDF sai igual, com um aviso; o consolidado é regerado quando existe uma análise mais nova. Os PDFs do Agent não incorporam imagens: o que a coleta guarda de imagens são só os links, que aparecem como referência nas evidências.
+
+Abaixo das revisões aparece **Aprovar e remover os dados**. Aprovar:
+
+1. guarda uma cópia do PDF consolidado, conferida contra o resumo (SHA-256) registrado, em `~/.local/share/pocketcli/approved-reports/` (fora dos dados coletados);
+2. apaga desta máquina tudo o que foi coletado para aquela investigação: planos, runs, snapshots, datasets, journals, espelhos Git, evidências, comentários, consultas, análises e revisões de PDF. As evidências que outra investigação também lê, e o schema do Linear, ficam; o cache de respostas das APIs é limpo por inteiro (ele só poupa requests numa coleta futura). Os itens mantidos e qualquer sobra são listados no resultado.
+
+É irreversível e exige conferência explícita: marcar a caixa e digitar o identificador do snapshot. Nada é removido se o PDF no disco não conferir com o resumo, nem enquanto houver uma coleta em andamento naquela investigação. Para obter os dados de novo é preciso uma nova análise.
 
 ## Escopo em YAML
 

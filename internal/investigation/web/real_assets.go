@@ -76,6 +76,28 @@ const realAppJSTemplate = `(() => {
     item.append(node('span', '', label), control);
     return item;
   };
+  // The "all" period has no fixed start: it is the span the resources lived
+  // (creation to last change), or the whole history when nothing is known.
+  const windowText = (start, end, resources) => {
+    if (start) return start + ' — ' + end;
+    let from = '', to = '';
+    (resources || []).forEach(item => {
+      if (!item.created_at) return;
+      const last = item.last_change_at && item.last_change_at < end ? item.last_change_at : end;
+      if (!from || item.created_at < from) from = item.created_at;
+      if (last > to) to = last;
+    });
+    return from ? from + ' — ' + to + ' (tempo de vida)' : 'Todo o histórico — ' + end;
+  };
+  const emptyRepositories = (coverage, resources) => {
+    const names = {};
+    (resources || []).forEach(item => { names[item.id] = item.name; });
+    const found = new Set();
+    (coverage || []).forEach(item => {
+      if (item.source === 'git' && (item.reason || '').startsWith('repositório vazio')) found.add(names[item.resource_id] || item.resource_id);
+    });
+    return Array.from(found).sort();
+  };
   const table = (labels, rows) => {
     const wrapper = node('div', 'result-wrap'), t = node('table', 'data-table');
     const head = node('tr');
@@ -317,7 +339,7 @@ const realAppJSTemplate = `(() => {
         plan = await write('/plans' + (budget === 20 ? '' : '?discovery_budget=' + budget), input);
         feedback.replaceChildren(node('h3', '', 'Plano resolvido'));
         feedback.append(node('p', '', 'Hash de confirmação: ' + plan.hash));
-        feedback.append(node('p', '', 'Janela: ' + (plan.window_start || 'Todo o histórico') + ' — ' + plan.window_end));
+        feedback.append(node('p', '', 'Janela: ' + windowText(plan.window_start, plan.window_end, plan.resources)));
         feedback.append(node('p', 'muted', 'Custo e duração: a estimar. Limites efetivos estão no plano abaixo.'));
         feedback.append(table(['Fonte', 'Recurso', 'Acesso'], (plan.resources || []).map(item => [item.source, item.name, item.access])));
         (plan.warnings || []).forEach(warning => feedback.append(node('p', 'callout', warning)));
@@ -381,7 +403,7 @@ const realAppJSTemplate = `(() => {
       ['Achados', 'sob demanda', 'Relatório legacy'],
       ['Fontes', new Set((snapshot.coverage || []).map(c => c.source)).size, 'Fontes no snapshot'],
       ['Cobertura', snapshot.status, 'Estado da coleta'],
-      ['Janela', (snapshot.window_start || 'Início não informado') + ' — ' + snapshot.window_end, 'Período analisado']
+      ['Janela', windowText(snapshot.window_start, snapshot.window_end, snapshot.resources), 'Período analisado']
     ];
     values.forEach(([label, value, description]) => {
       const item = node('section', 'card metric-card');
@@ -389,9 +411,13 @@ const realAppJSTemplate = `(() => {
       grid.append(item);
     });
     main.append(grid);
+    const resourceNames = {};
+    (snapshot.resources || []).forEach(item => { resourceNames[item.id] = item.name; });
+    const empty = emptyRepositories(snapshot.coverage, snapshot.resources);
+    if (empty.length) main.append(node('p', 'callout', 'Repositórios vazios (sem commits; coleta Git concluída): ' + empty.join(', ')));
     const coverage = card('Cobertura por fonte');
     coverage.append(table(['Fonte', 'Recurso', 'Coleção', 'Estado', 'Observado', 'Motivo'],
-      (snapshot.coverage || []).map(c => [c.source, c.resource_id, c.collection, c.status, c.observed, c.reason || '—'])));
+      (snapshot.coverage || []).map(c => [c.source, resourceNames[c.resource_id] || c.resource_id, c.collection, c.status, c.observed, c.reason || '—'])));
     main.append(coverage);
   }
   async function renderInsightOverview(parent) {
@@ -956,6 +982,35 @@ const realAppJSTemplate = `(() => {
     })));
     parent.append(box);
   }
+  // Approving the consolidated PDF keeps a verified copy outside the data and
+  // then erases everything collected for this investigation from the machine.
+  function approvalCard(artifact) {
+    const box = card('Aprovar e remover os dados');
+    box.append(node('p', 'callout', 'Ao aprovar, uma cópia verificada do PDF consolidado (revisão ' + artifact.revision + ') é guardada fora dos dados coletados e todos os dados desta investigação são apagados desta máquina: snapshots, consultas SQL, comentários, espelhos Git e análises. Para obtê-los de novo será preciso uma nova análise. Esta ação não pode ser desfeita.'));
+    const checked = node('input'); checked.type = 'checkbox';
+    const label = node('label'); label.append(checked, document.createTextNode(' Conferi o PDF consolidado e quero remover os dados desta máquina.'));
+    const typed = node('input'); typed.placeholder = snapshot.id;
+    box.append(label, field('Digite o identificador do snapshot para confirmar', typed));
+    const approve = button('Aprovar PDF e remover dados', async () => {
+      if (!checked.checked || typed.value !== snapshot.id) throw new Error('Marque a conferência e digite o identificador do snapshot.');
+      approve.disabled = true;
+      try {
+        const result = await write('/reports/' + segment(artifact.id) + '/approve', {remove_data: true, confirm_snapshot_id: typed.value});
+        snapshot = null; snapshots = []; findings = []; queries = [];
+        main.replaceChildren(heading('Dados removidos', 'O PDF foi aprovado e os dados saíram desta máquina.'));
+        const done = card('Concluído');
+        const purge = result.purge || {};
+        done.append(node('p', '', 'PDF aprovado guardado em: ' + result.approved_path));
+        done.append(node('p', 'muted', (purge.files || 0) + ' arquivos removidos · ' + (purge.snapshots || 0) + ' snapshot(s) · cache de respostas das APIs limpo.'));
+        if ((purge.shared || []).length) done.append(node('p', 'callout', 'Mantidos por também servirem a outra investigação: ' + purge.shared.join(', ')));
+        if ((purge.leftover || []).length) done.append(node('p', 'callout', 'Ainda citam esta investigação: ' + purge.leftover.join(', ')));
+        done.append(node('p', 'muted', 'Rode uma nova análise para obter os dados novamente.'));
+        main.append(done);
+      } catch (error) { approve.disabled = false; throw error; }
+    }, 'primary');
+    box.append(approve);
+    return box;
+  }
   async function reports() {
     main.replaceChildren(heading('Relatórios', 'PDF completo do snapshot publicado.'));
     const box = card('Gerar revisão');
@@ -970,15 +1025,29 @@ const realAppJSTemplate = `(() => {
       finally { generate.disabled = false; }
     }, 'primary');
     box.append(label, generate); main.append(box);
+    const consolidated = card('PDF consolidado');
+    consolidated.append(node('p', 'muted', 'Um único PDF com todo o histórico coletado, os achados, as decisões da análise executiva mais recente, os comentários, as consultas e a redação editorial aceita.'));
+    const consolidate = button('Gerar PDF consolidado', async () => {
+      consolidate.disabled = true;
+      try {
+        await write('/reports', {snapshot_id: snapshot.id, annotation_revision: 0, include_approved_editorial: true, consolidated: true});
+        setView('reports');
+      } catch (error) { fail(consolidated, error); }
+      finally { consolidate.disabled = false; }
+    }, 'primary');
+    consolidated.append(consolidate); main.append(consolidated);
     const history = card('Revisões');
     const artifacts = await api('/reports?snapshot_id=' + segment(snapshot.id));
     (artifacts || []).forEach(artifact => {
-      const link = node('a', '', 'Revisão ' + artifact.revision + ' · ' + artifact.page_count + ' páginas · baixar PDF');
+      const link = node('a', '', (artifact.consolidated ? 'Consolidado · ' : '') + 'Revisão ' + artifact.revision + ' · ' + artifact.page_count + ' páginas · baixar PDF');
       link.href = '/api/v1/reports/' + segment(artifact.id) + '/download';
       history.append(link, node('p', 'code', artifact.sha256));
+      (artifact.warnings || []).forEach(warning => history.append(node('p', 'callout', warning)));
     });
     if (!artifacts || !artifacts.length) history.append(node('p', 'empty', 'Nenhum relatório gerado.'));
     main.append(history);
+    const latest = (artifacts || []).filter(artifact => artifact.consolidated).sort((a, b) => b.revision - a.revision)[0];
+    if (latest) main.append(approvalCard(latest));
   }
   if (main) {
     $('#nav').addEventListener('click', event => {

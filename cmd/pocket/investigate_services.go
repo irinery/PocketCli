@@ -162,7 +162,7 @@ func serveInvestigation(cmd *cobra.Command, args []string) error {
 		}
 	}
 	jobs := web.NewReportJobs()
-	options := web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError), InsightReader: services.insights, AnalysisController: services.insights, ExecutiveExporter: services.executive}
+	options := web.PreviewOptions{InvestigationID: args[0], SnapshotID: selectedSnapshot, BindHost: "127.0.0.1", Port: port, DataDir: "", QueryHistory: services.queries, ReportJobs: jobs, PDFUnavailableReason: errorText(services.reportError), InsightReader: services.insights, AnalysisController: services.insights, ExecutiveExporter: services.executive, ApprovedReportsDir: filepath.Join(filepath.Dir(services.store.Root), "approved-reports")}
 	if services.executiveError != nil {
 		options.PDFUnavailableReason += errorText(services.executiveError)
 	}
