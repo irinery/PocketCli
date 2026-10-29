@@ -14,7 +14,7 @@ import (
 // RendererVersion identifies the in-process PDF layout recorded in each
 // report. The CLI report cache includes it, so a layout change regenerates
 // reports that were built with an older one.
-const RendererVersion = "pdf-nativo/2"
+const RendererVersion = "pdf-nativo/3"
 
 // renderReport lays out the frozen report model and encodes it as PDF bytes.
 func renderReport(ctx context.Context, doc model, created time.Time) ([]byte, int, error) {
@@ -217,7 +217,7 @@ func (v *reportView) layoutPass(ctx context.Context, tocPages map[string]int) (*
 		l.paragraph(9.5, colorMuted, plain("Relatório determinístico da investigação."))
 	}
 	for _, kv := range [][2]string{
-		{"Investigação:", s.InvestigationID}, {"Snapshot:", s.ID}, {"Janela:", s.WindowStart + " — " + s.WindowEnd},
+		{"Investigação:", s.InvestigationID}, {"Snapshot:", s.ID}, {"Janela:", snapshotWindowLabel(s)},
 		{"Status:", s.Status}, {"Cobertura:", doc.CoverageStatus}, {"Gerado em:", doc.GeneratedAt},
 		{"Dataset hash:", s.DatasetHash}, {"Regras:", s.RulesetVersion}, {"Mapeamento:", s.MappingVersion},
 	} {
@@ -346,6 +346,10 @@ func (v *reportView) renderSummary(l *pdfLayout) {
 	}
 	l.paragraph(10, colorText, bold("Achados:"), plain(fmt.Sprintf("%d ·", doc.FindingCount)), bold("Registros:"), plain(fmt.Sprintf("%d ·", doc.RecordCount)), bold("Cobertura:"), plain(fmt.Sprintf("%s (%s)", doc.CoverageStatus, collections)))
 
+	if empty := v.emptyRepositories(); len(empty) > 0 {
+		l.paragraph(10, colorText, bold("Repositórios vazios:"), plain(strings.Join(empty, ", ")+" — sem commits; a coleta Git está completa e não há histórico de código a analisar."))
+	}
+
 	counts := v.counts()
 	var kinds []string
 	for _, k := range v.kindOrder() {
@@ -415,7 +419,69 @@ func (v *reportView) renderSummary(l *pdfLayout) {
 		}
 		l.heading("Recursos analisados", 11, 6, false)
 		l.table([]float64{0.07, 0.26, 0.38, 0.09, 0.09, 0.11}, []string{"Fonte", "Recurso", "ID", "Completas", "A revisar", "Issues/PRs"}, rows)
+		if lives := v.lifetimeRows(); len(lives) > 0 {
+			l.heading("Tempo de vida dos recursos", 11, 6, false)
+			l.paragraph(9, colorMuted, plain("Período \"all\": cada repositório vai da criação à última alteração (push); no Linear, da criação da organização — ou do team, quando a investigação foi direcionada — até o fim da janela."))
+			l.table([]float64{0.09, 0.31, 0.2, 0.28, 0.12}, []string{"Fonte", "Recurso", "Criado em", "Última alteração", "Dias"}, lives)
+		}
 	}
+}
+
+// snapshotWindowLabel states the window. The "all" period has no fixed
+// start, so it is the span the resources lived, or the whole history when
+// the sources did not report it.
+func snapshotWindowLabel(s contract.Snapshot) string {
+	if s.WindowStart != "" {
+		return s.WindowStart + " — " + s.WindowEnd
+	}
+	if from, to, lifetime := contract.EffectiveWindow(s.WindowStart, s.WindowEnd, s.Resources); lifetime {
+		return from + " — " + to + " (tempo de vida dos recursos)"
+	}
+	return "todo o histórico — " + s.WindowEnd
+}
+
+// lifetimeRows lists each resource's own lifetime. It only applies to the
+// "all" period; a bounded window has nothing to add.
+func (v *reportView) lifetimeRows() [][]string {
+	s := v.doc.Snapshot
+	if s.WindowStart != "" {
+		return nil
+	}
+	var rows [][]string
+	for _, r := range s.Resources {
+		from, to, ok := contract.ResourceLifetime(r, s.WindowEnd)
+		if !ok {
+			continue
+		}
+		last := to
+		if r.LastChangeAt == "" {
+			last += " (fim da janela)"
+		}
+		days := "?"
+		if a, err := time.Parse(time.RFC3339, from); err == nil {
+			if b, err := time.Parse(time.RFC3339, to); err == nil && !b.Before(a) {
+				days = strconv.Itoa(int(b.Sub(a).Hours() / 24))
+			}
+		}
+		rows = append(rows, []string{r.Source, v.resource(r.Source, r.ID), from, last, days})
+	}
+	return rows
+}
+
+// emptyRepositories names the repositories whose Git history is empty, so a
+// repository with nothing to read is listed instead of looking like a gap.
+func (v *reportView) emptyRepositories() []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, c := range v.doc.Snapshot.Coverage {
+		if !contract.IsEmptyRepository(c) || seen[c.ResourceID] {
+			continue
+		}
+		seen[c.ResourceID] = true
+		names = append(names, v.resource(c.Source, c.ResourceID))
+	}
+	sort.Strings(names)
+	return names
 }
 
 // coverageStatusLabel is the status in plain words for the summary line.
@@ -478,6 +544,9 @@ func (v *reportView) renderCoverage(l *pdfLayout) {
 		parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
 	}
 	l.paragraph(10, colorText, bold(fmt.Sprintf("%d coleções:", len(s.Coverage))), plain(strings.Join(parts, " · ")+"."))
+	if empty := v.emptyRepositories(); len(empty) > 0 {
+		l.paragraph(10, colorText, bold("Repositórios vazios (sem commits):"), plain(strings.Join(empty, ", ")+". Contam como coleta completa: não há o que ler em Git."))
+	}
 	if len(attention) == 0 {
 		l.paragraph(10, colorText, plain("Todas as coleções selecionadas foram lidas por completo."))
 		return
