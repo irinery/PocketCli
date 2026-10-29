@@ -338,6 +338,14 @@ test_permission_scanner() {
     assert_contains "$out" "WORLD_WRITABLE:HIGH" T03-10
     assert_contains "$out" "SENSITIVE_FILE_WORLD_READABLE:HIGH" T03-10
     unset rc
+
+    repo=$(new_repo)
+    printf 'package fixture\n' > "$repo/investigate_credentials_test.go"
+    chmod 644 "$repo/investigate_credentials_test.go"
+    run_scanner scripts/security/03_filesystem_permission_audit.sh "$repo" "$out" "$err" repo || rc=$?
+    assert_rc 0 "${rc:-0}" T03-11
+    assert_contains "$out" "No permission issues found." T03-11
+    unset rc
 }
 
 test_hardening_scanner() {

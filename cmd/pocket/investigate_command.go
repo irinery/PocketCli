@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	osexec "os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -46,6 +49,12 @@ func newInvestigateCommand() *cobra.Command {
 		for _, api := range []struct{ name, env string }{{"GitHub", "POCKETCLI_INVESTIGATE_GITHUB_TOKEN"}, {"Linear", "POCKETCLI_INVESTIGATE_LINEAR_KEY"}} {
 			if os.Getenv(api.env) != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "investigate: API %s: chave em %s\n", api.name, api.env)
+			} else if api.name == "GitHub" {
+				if token := githubTokenFromCLI(); token != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), "investigate: API GitHub: conta autenticada disponível via gh")
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "investigate: API %s: sem %s nem sessão autenticada de gh; a chave será pedida no prompt\n", api.name, api.env)
+				}
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "investigate: API %s: sem %s; a chave será pedida no prompt\n", api.name, api.env)
 			}
@@ -149,6 +158,7 @@ func newInvestigateCommand() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{Use: "show INVESTIGATION_ID [issues|prs|findings|events|coverage|sql \"SELECT …\"]", Short: "Mostra no terminal o que a coleta real extraiu", Args: cobra.MinimumNArgs(1), RunE: showInvestigation})
 	cmd.AddCommand(&cobra.Command{Use: "serve INVESTIGATION_ID", Short: "Abre a interface web local", Args: cobra.MinimumNArgs(1), RunE: serveInvestigation})
 	cmd.AddCommand(&cobra.Command{Use: "report INVESTIGATION_ID", Short: "Gera o PDF do último snapshot (local)", Args: cobra.MinimumNArgs(1), RunE: reportInvestigation})
+	cmd.AddCommand(newInvestigateAnalyzeCommand())
 	return cmd
 }
 
@@ -801,12 +811,24 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 		if !source.enabled {
 			continue
 		}
-		value := os.Getenv(source.env)
+		value := strings.TrimSpace(os.Getenv(source.env))
+		credentialSource := source.env
+		if value == "" && source.name == "github" {
+			value = githubTokenFromCLI()
+			if value != "" {
+				credentialSource = "gh auth token"
+			}
+		}
 		if value != "" && allowPrompt {
 			// Say it: a key from the environment skips the prompt, and a stale
 			// one (revoked, from an old session) is a common reason for a refusal.
-			fmt.Fprintf(os.Stderr, "Chave %s: usando %s do ambiente\n", source.name, source.env)
+			if credentialSource == "gh auth token" {
+				fmt.Fprintf(os.Stderr, "Chave %s: usando a conta ativa de gh (%s)\n", source.name, describeKey(value))
+			} else {
+				fmt.Fprintf(os.Stderr, "Chave %s: usando %s do ambiente (%s)\n", source.name, source.env, describeKey(value))
+			}
 		}
+		fromPrompt := false
 		if value == "" {
 			if !allowPrompt {
 				return &contract.ErrorResponse{Code: "ERR_CREDENTIAL_REQUIRED", Message: source.env + " ausente"}
@@ -818,8 +840,15 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 			if err != nil {
 				return err
 			}
-			value = string(data)
+			value = strings.TrimSpace(string(data))
 			clear(data)
+			fromPrompt = true
+		}
+		if err := checkKeyShape(source.name, value); err != nil {
+			return err
+		}
+		if fromPrompt {
+			fmt.Fprintf(os.Stderr, "Chave %s recebida (%s)\n", source.name, describeKey(value))
 		}
 		if _, err := store.Put(context.Background(), contract.CredentialInput{Source: source.name, Secret: value, Persistence: "session"}); err != nil {
 			return err
@@ -827,6 +856,26 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 	}
 	return nil
 }
+
+// githubTokenFromCLI reuses the user's active GitHub CLI login without placing
+// the token in argv, shell history, or diagnostic output. An unavailable or
+// unauthenticated gh installation leaves the normal prompt/environment path.
+func githubTokenFromCLI() string {
+	path, err := osexec.LookPath("gh")
+	if err != nil {
+		return ""
+	}
+	output, err := osexec.Command(path, "auth", "token", "--hostname", "github.com").Output()
+	if err != nil {
+		return ""
+	}
+	token := strings.TrimSpace(string(output))
+	if token == "" {
+		return ""
+	}
+	return token
+}
+
 func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonMode bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -931,10 +980,10 @@ func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonM
 const investigateHelp = `Coleta, pelas APIs do GitHub e do Linear (somente leitura), o histórico autorizado
 e publica um snapshot local com SQL, interface web e PDF.
 
-Por padrão usa as duas APIs, com as chaves POCKETCLI_INVESTIGATE_GITHUB_TOKEN e
-POCKETCLI_INVESTIGATE_LINEAR_KEY (ou prompt sem eco). Escolher só --team usa só o
-Linear; escolher só --repo usa só o GitHub. Antes de coletar, o plano mostra as APIs
-e pede o código de 8 caracteres.
+Por padrão usa as duas APIs. GitHub aceita POCKETCLI_INVESTIGATE_GITHUB_TOKEN ou a
+sessão autenticada do gh; Linear aceita POCKETCLI_INVESTIGATE_LINEAR_KEY (ou prompt
+sem eco para ambas). Escolher só --team usa só o Linear; escolher só --repo usa só
+o GitHub. Antes de coletar, o plano mostra as APIs e pede o código de 8 caracteres.
 
 Flags:
   -p, --period P     janela: 12h, 7d, 30d, 90d, 1y, all ou custom
@@ -952,7 +1001,11 @@ Flags:
   -y, --yes          mostra o plano e coleta sem pedir o código (um passo só)
       --scope ARQ    YAML de escopo (ou - para stdin)
       --timezone TZ  fuso da janela (padrão America/Sao_Paulo)
-      --json         saída estruturada para scripts`
+      --json         saída estruturada para scripts
+
+Análise de insights não recolhe dados de novo. Para iniciá-la, use
+pocket investigate analyze --snapshot ID --config CAMINHO_LOCAL_JSON; veja
+docs/investigation/insights/README.md para configuração de provider e orçamento.`
 
 const investigateExamples = `  pocket investigate                                 # assistente interativo
   pocket investigate -t ENG --since 12h              # só Linear, time ENG, últimas 12h
@@ -962,4 +1015,44 @@ const investigateExamples = `  pocket investigate                               
   pocket investigate -s linear -p 7d -y              # um passo só: plano + coleta
   pocket investigate -t ENG --since 7d --plan        # só mostra o plano
   pocket investigate start PLAN_ID -c CODIGO         # inicia um plano preparado
+  pocket investigate analyze --snapshot ID --config ./analysis.json
   pocket investigate show ID issues -n 20            # vê no terminal o que foi extraído`
+
+// knownKeyPrefixes are the public type markers of GitHub and Linear keys.
+var knownKeyPrefixes = []struct{ prefix, source string }{
+	{"github_pat_", "github"}, {"ghp_", "github"}, {"gho_", "github"}, {"ghu_", "github"}, {"ghs_", "github"}, {"ghr_", "github"},
+	{"lin_api_", "linear"}, {"lin_oauth_", "linear"},
+}
+
+func keyPrefix(value string) (prefix, source string) {
+	for _, known := range knownKeyPrefixes {
+		if strings.HasPrefix(value, known.prefix) {
+			return known.prefix, known.source
+		}
+	}
+	return "", ""
+}
+
+// describeKey shows the key type marker and length, never the secret: enough
+// to spot a truncated paste or a key in the wrong variable.
+func describeKey(value string) string {
+	if prefix, _ := keyPrefix(value); prefix != "" {
+		return fmt.Sprintf("%s…, %d caracteres", prefix, utf8.RuneCountInString(value))
+	}
+	return fmt.Sprintf("formato não reconhecido, %d caracteres", utf8.RuneCountInString(value))
+}
+
+// checkKeyShape rejects what no source accepts before any request: a key with
+// spaces or control characters (a bad paste) and a key that belongs to the
+// other source (a Linear key at the GitHub prompt, or the reverse).
+func checkKeyShape(source, value string) error {
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: "a chave " + source + " contém espaço ou caractere de controle; cole de novo só o token"}
+		}
+	}
+	if prefix, owner := keyPrefix(value); owner != "" && owner != source {
+		return &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: fmt.Sprintf("a chave informada para %s parece ser do %s (%s…); confira em qual prompt ou variável ela foi colocada", source, owner, prefix)}
+	}
+	return nil
+}
