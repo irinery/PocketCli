@@ -164,7 +164,11 @@ func (v *reportView) plannedSections() []section {
 	if len(doc.Editorial) > 0 {
 		out = append(out, section{"editorial", "11. Redação assistida aceita", 1})
 	}
-	out = append(out, section{"queries", "12. Consultas SQL", 1}, section{"provenance", "14. Revisão e proveniência", 1})
+	out = append(out, section{"queries", "12. Consultas SQL", 1})
+	if doc.Executive != nil {
+		out = append(out, section{"decisions", "13. Decisões e análise executiva", 1})
+	}
+	out = append(out, section{"provenance", "14. Revisão e proveniência", 1})
 	return out
 }
 
@@ -317,6 +321,14 @@ func (v *reportView) layoutPass(ctx context.Context, tocPages map[string]int) (*
 		}
 		l.preformatted(q.SQL, 8)
 		renderQueryResult(l, q.Result)
+	}
+
+	if doc.Executive != nil {
+		l.heading("13. Decisões e análise executiva", 15, 14, true)
+		mark("decisions")
+		if err := v.renderDecisions(ctx, l); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	l.heading("14. Revisão e proveniência", 15, 14, true)

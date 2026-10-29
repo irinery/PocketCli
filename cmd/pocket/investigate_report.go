@@ -25,6 +25,9 @@ type reportCache struct {
 	notes     *annotations.Store
 	editorial *editorial.Service
 	queries   *queries.Store
+	// executive tells which analysis a consolidated PDF would carry, so a
+	// newer analysis never reuses an older consolidated file.
+	executive report.ExecutiveSource
 	mu        sync.Mutex
 }
 
@@ -34,6 +37,9 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 	var empty contract.ReportArtifact
 	if in.SnapshotID == "" {
 		return empty, &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: "snapshot_id obrigatório"}
+	}
+	if in.Consolidated {
+		in.IncludeApprovedEditorial = true
 	}
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
@@ -60,6 +66,14 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 	savedQueries := r.queries.List(in.SnapshotID)
 	sort.Slice(history, func(i, j int) bool { return history[i].ID < history[j].ID })
 	sort.Slice(savedQueries, func(i, j int) bool { return savedQueries[i].ID < savedQueries[j].ID })
+	analysisID := ""
+	if in.Consolidated && r.executive != nil {
+		id, _, err := r.executive.LatestAnalysisID(ctx, in.SnapshotID)
+		if err != nil {
+			return empty, pdfAttemptError(err)
+		}
+		analysisID = id
+	}
 	canonical, err := json.Marshal(struct {
 		Request     contract.FinalizeRequest
 		Annotations []annotations.Annotation
@@ -67,7 +81,8 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 		History     []queries.Execution
 		Saved       []queries.SavedQuery
 		Renderer    string
-	}{in, annotationRows, drafts, history, savedQueries, report.RendererVersion})
+		Analysis    string
+	}{in, annotationRows, drafts, history, savedQueries, report.RendererVersion, analysisID})
 	if err != nil {
 		return empty, err
 	}
