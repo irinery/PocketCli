@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"pocketcli/internal/investigation/contract"
@@ -171,5 +172,9 @@ func gitWalkFault(ctx context.Context, err error) error {
 	if errors.As(err, &coded) {
 		return err
 	}
-	return fault("ERR_AUDIT_FAILED", "grafo de commits indisponível")
+	message := "grafo de commits indisponível"
+	if detail := strings.TrimPrefix(err.Error(), gitmirror.ErrCorrupt.Error()+": "); detail != err.Error() {
+		message += " (" + detail + ")"
+	}
+	return fault("ERR_AUDIT_FAILED", message)
 }
