@@ -168,6 +168,9 @@ _cmd_doctor() { exec sh "${POCKETCLI_DIR}/tests/test_ish.sh"; }
 _investigate_ensure_binary() {
     _inv_bin="${POCKETCLI_GO_BINARY:-${POCKETCLI_DIR}/bin/pocket-go}"
     [ -x "${_inv_bin}" ] && return 0
+    if _investigate_build_running; then
+        die "O Investigation Agent ainda está sendo compilado em segundo plano. Aguarde terminar (log: ${_inv_bin}.build.log) e rode de novo."
+    fi
     _inv_cmd="CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o ${_inv_bin} ./cmd/pocket"
     _inv_mode="${POCKETCLI_INVESTIGATE_BUILD:-ask}"
     if [ -n "${POCKETCLI_GO_BINARY:-}" ] || [ "${_inv_mode}" = "no" ]; then
@@ -201,60 +204,148 @@ _investigate_ensure_binary() {
 }
 
 # Builds the agent into ${_inv_bin} through a temporary file, so a failed
-# build never replaces a working binary, and records the commit it was built
-# from in ${_inv_bin}.rev (pocket update compares it with HEAD).
+# build never replaces a working binary, and records the commit the sources
+# were at when the build started in ${_inv_bin}.rev (pocket update compares
+# it with HEAD).
 _investigate_build_binary() {
     mkdir -p "$(dirname "${_inv_bin}")"
     _inv_tmp="${_inv_bin}.build.$$"
+    _inv_rev=$(git -C "${POCKETCLI_DIR}" rev-parse HEAD 2>/dev/null || true)
     printf '%s\n' "[PocketCli] Compilando o Investigation Agent..." >&2
     if ! (cd "${POCKETCLI_DIR}" && CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o "${_inv_tmp}" ./cmd/pocket) >&2; then
         rm -f "${_inv_tmp}"
         return 1
     fi
     mv "${_inv_tmp}" "${_inv_bin}"
-    git -C "${POCKETCLI_DIR}" rev-parse HEAD >"${_inv_bin}.rev" 2>/dev/null || rm -f "${_inv_bin}.rev"
+    if [ -n "${_inv_rev}" ]; then
+        printf '%s\n' "${_inv_rev}" >"${_inv_bin}.rev"
+    else
+        rm -f "${_inv_bin}.rev"
+    fi
 }
 
-# After an update, rebuild the agent if it was ever built here and is not at
-# the current commit. Never builds for the first time (first use offers it),
-# never replaces an explicit POCKETCLI_GO_BINARY, honors
-# POCKETCLI_INVESTIGATE_BUILD=no, and never fails the update: on any problem
-# the previous binary stays and the manual command is shown.
+# The agent is compiled in the background after an update. Until the new
+# binary is complete and swapped in with one rename, the previous one keeps
+# serving. A lock directory (with the builder's pid) says a build is running,
+# ${_inv_bin}.build.log keeps its output and ${_inv_bin}.failed marks a build
+# that did not finish.
+_investigate_build_running() {
+    _inv_lock="${_inv_bin}.lock"
+    [ -d "${_inv_lock}" ] || return 1
+    _inv_pid=$(cat "${_inv_lock}/pid" 2>/dev/null || true)
+    if [ -n "${_inv_pid}" ] && kill -0 "${_inv_pid}" 2>/dev/null; then
+        return 0
+    fi
+    rm -rf "${_inv_lock}" # the builder died without releasing it
+    return 1
+}
+
+# Hidden command: `pocket __build-agent` is the background builder.
+_cmd_build_agent() {
+    _inv_bin="${POCKETCLI_GO_BINARY:-${POCKETCLI_DIR}/bin/pocket-go}"
+    mkdir -p "$(dirname "${_inv_bin}")"
+    if [ "${POCKETCLI_BUILD_LOCK_HELD:-}" = "1" ]; then
+        _inv_lock="${_inv_bin}.lock" # taken by pocket update before it started this builder
+    else
+        if _investigate_build_running; then
+            return 0
+        fi
+        mkdir "${_inv_lock}" 2>/dev/null || return 0
+    fi
+    printf '%s\n' "$$" >"${_inv_lock}/pid"
+    rm -f "${_inv_bin}.failed"
+    if _investigate_build_binary; then
+        printf '%s\n' "[PocketCli] Investigation Agent compilado e liberado." >&2
+    else
+        printf '%s\n' "build falhou em $(date -u +%Y-%m-%dT%H:%M:%SZ); o binário anterior foi mantido" >"${_inv_bin}.failed"
+        printf '%s\n' "[PocketCli] Build do Investigation Agent falhou; o binário anterior foi mantido." >&2
+    fi
+    rm -rf "${_inv_lock}"
+    return 0
+}
+
+# After an update, bring the agent to the current commit: compile in the
+# background (or, with POCKETCLI_INVESTIGATE_BUILD_WAIT=yes, wait for it) when
+# the binary is missing or its recorded commit differs from HEAD. Never
+# replaces an explicit POCKETCLI_GO_BINARY, honors
+# POCKETCLI_INVESTIGATE_BUILD=no, and never fails the update: without Go, a
+# C compiler or the sources it only says what to run.
 _update_investigate_agent() {
     _inv_bin="${POCKETCLI_DIR}/bin/pocket-go"
-    if [ -n "${POCKETCLI_GO_BINARY:-}" ] || [ "${POCKETCLI_INVESTIGATE_BUILD:-}" = "no" ] || [ ! -x "${_inv_bin}" ]; then
+    if [ -n "${POCKETCLI_GO_BINARY:-}" ] || [ "${POCKETCLI_INVESTIGATE_BUILD:-}" = "no" ]; then
         return 0
     fi
     explain_step "Checking the Investigation Agent build"
     _inv_head=$(git -C "${POCKETCLI_DIR}" rev-parse HEAD 2>/dev/null || true)
     _inv_built=$(cat "${_inv_bin}.rev" 2>/dev/null || true)
-    if [ -n "${_inv_head}" ] && [ "${_inv_head}" = "${_inv_built}" ]; then
+    if [ -x "${_inv_bin}" ] && [ -n "${_inv_head}" ] && [ "${_inv_head}" = "${_inv_built}" ]; then
         explain "Investigation Agent already built from ${_inv_head}."
         return 0
     fi
     _inv_cmd="cd ${POCKETCLI_DIR} && CGO_ENABLED=1 go build -buildvcs=false -tags investigate_sqlite -o ${_inv_bin} ./cmd/pocket"
-    if ! command -v go >/dev/null 2>&1 || [ ! -d "${POCKETCLI_DIR}/cmd/pocket" ] \
-        || ! { command -v cc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; }; then
-        warn "Investigation Agent desatualizado e sem Go/compilador C para recompilar. Rode: ${_inv_cmd}"
+    if [ ! -d "${POCKETCLI_DIR}/cmd/pocket" ]; then
+        explain "No Go sources in ${POCKETCLI_DIR}; nothing to build."
         return 0
     fi
-    info "Recompilando o Investigation Agent para a versão atualizada..."
-    if _investigate_build_binary; then
-        ok "Investigation Agent recompilado."
+    if ! command -v go >/dev/null 2>&1 \
+        || ! { command -v cc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; }; then
+        if [ -x "${_inv_bin}" ]; then
+            warn "Investigation Agent desatualizado e sem Go/compilador C para recompilar. Rode: ${_inv_cmd}"
+        else
+            explain "Go and a C compiler are needed to build the Investigation Agent: ${_inv_cmd}"
+        fi
+        return 0
+    fi
+    if _investigate_build_running; then
+        info "O Investigation Agent já está sendo compilado em segundo plano."
+        return 0
+    fi
+    _inv_log="${_inv_bin}.build.log"
+    mkdir -p "$(dirname "${_inv_bin}")"
+    if [ "${POCKETCLI_INVESTIGATE_BUILD_WAIT:-}" = "yes" ]; then
+        info "Compilando o Investigation Agent (aguardando)..."
+        _cmd_build_agent >"${_inv_log}" 2>&1 || true
+        if [ -e "${_inv_bin}.failed" ]; then
+            warn "Falha ao compilar o Investigation Agent; o binário anterior foi mantido. Log: ${_inv_log}"
+        else
+            ok "Investigation Agent compilado."
+        fi
+        return 0
+    fi
+    # Take the lock here, so nothing can start a second build or offer one
+    # while the background process is still starting.
+    mkdir "${_inv_bin}.lock" 2>/dev/null || return 0
+    printf '%s\n' "$$" >"${_inv_bin}.lock/pid"
+    POCKETCLI_BUILD_LOCK_HELD=1 nohup sh "${POCKETCLI_DIR}/pocket" __build-agent >"${_inv_log}" 2>&1 </dev/null &
+    printf '%s\n' "$!" >"${_inv_bin}.lock/pid"
+    info "Compilando o Investigation Agent em segundo plano (cerca de 1 minuto)."
+    explain_kv "build_log" "${_inv_log}"
+    if [ -x "${_inv_bin}" ]; then
+        info "A versão atual continua em uso e só é trocada quando a nova ficar pronta. Log: ${_inv_log}"
     else
-        warn "Falha ao recompilar o Investigation Agent; o binário anterior foi mantido. Rode: ${_inv_cmd}"
+        info "O pocket investigate fica disponível quando terminar. Log: ${_inv_log}"
     fi
     return 0
 }
 
+# What a running or failed background build means for the command about to run.
+_investigate_report_build_state() {
+    if _investigate_build_running; then
+        printf '%s\n' "[PocketCli] O Investigation Agent está sendo atualizado em segundo plano; usando a versão atual até terminar (log: ${_inv_bin}.build.log)." >&2
+    elif [ -e "${_inv_bin}.failed" ]; then
+        printf '%s\n' "[PocketCli] A última compilação do Investigation Agent falhou ($(cat "${_inv_bin}.failed")). Log: ${_inv_bin}.build.log. Rode pocket update para tentar de novo." >&2
+    fi
+}
+
 _cmd_investigate() {
     _investigate_ensure_binary "$@"
+    _investigate_report_build_state
     exec "${_inv_bin}" investigate "$@"
 }
 
 _persist_command_if_needed() {
     case "${1:-}" in
-        ''|help|-h|--help|version|-v|--version|resume|__restore|session) return 0 ;;
+        ''|help|-h|--help|version|-v|--version|resume|__restore|__build-agent|session) return 0 ;;
     esac
     for _persist_arg in "$@"; do
         case "${_persist_arg}" in
@@ -531,6 +622,7 @@ case "${CMD}" in
     doctor)                     _cmd_doctor ;;
     resume)                     _cmd_resume ;;
     __restore)                  _cmd_restore ;;
+    __build-agent)              _cmd_build_agent ;;
     tailscale-setup)            _cmd_ts setup ;;
     tailscale-start)            _cmd_ts start ;;
     tailscale-restart)          _cmd_ts restart ;;
