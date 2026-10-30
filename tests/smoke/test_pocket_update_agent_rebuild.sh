@@ -1,8 +1,9 @@
 #!/usr/bin/env sh
 
-# `pocket update` recompiles the Investigation Agent when it was built here
-# and is behind the checkout. A fake `git` and `go` stand in for both, so
-# nothing is fetched or compiled.
+# `pocket update` compiles the Investigation Agent in the background and
+# releases it only when the build is complete. A fake `git` and `go` stand in
+# for both (the fake `go` waits on a gate file), so nothing is fetched or
+# compiled and the test controls when the build finishes.
 
 set -eu
 
@@ -34,8 +35,13 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 printf '%s\n' "${OUT}" >>"${POCKETCLI_BUILD_LOG}"
+waited=0
+while [ -e "${POCKETCLI_GATE:-/nonexistent}" ] && [ "${waited}" -lt 200 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+done
 [ -n "${POCKETCLI_GO_FAIL:-}" ] && exit 1
-printf '#!/usr/bin/env sh\nprintf "built\\n"\n' >"${OUT}"
+printf '#!/usr/bin/env sh\nprintf "built %s\\n" "$*"\n' >"${OUT}"
 chmod +x "${OUT}"
 SH
 cat >"${FAKE_BIN}/cc" <<'SH'
@@ -46,62 +52,99 @@ chmod +x "${FAKE_BIN}/git" "${FAKE_BIN}/go" "${FAKE_BIN}/cc"
 
 HEAD_FILE="${WORKDIR}/head"
 BUILD_LOG="${WORKDIR}/build.log"
+GATE="${WORKDIR}/gate"
 BIN="${CODE_DIR}/bin/pocket-go"
 
-run_update() {
-    env -u POCKETCLI_GO_BINARY -u POCKETCLI_INVESTIGATE_BUILD HOME="${HOME_DIR}" PATH="${FAKE_BIN}:/usr/bin:/bin" \
-        POCKETCLI_TEST_HEAD="${HEAD_FILE}" POCKETCLI_BUILD_LOG="${BUILD_LOG}" "$@" \
-        sh "${CODE_DIR}/pocket" update >"${WORKDIR}/out" 2>"${WORKDIR}/err" </dev/null
+pocket_env() {
+    env -u POCKETCLI_GO_BINARY -u POCKETCLI_INVESTIGATE_BUILD -u POCKETCLI_INVESTIGATE_BUILD_WAIT \
+        HOME="${HOME_DIR}" PATH="${FAKE_BIN}:/usr/bin:/bin" POCKETCLI_TEST_HEAD="${HEAD_FILE}" \
+        POCKETCLI_BUILD_LOG="${BUILD_LOG}" POCKETCLI_GATE="${GATE}" "$@"
 }
+run_update() { pocket_env "$@" sh "${CODE_DIR}/pocket" update >"${WORKDIR}/out" 2>"${WORKDIR}/err" </dev/null; }
+run_investigate() { pocket_env sh "${CODE_DIR}/pocket" investigate doctor >"${WORKDIR}/iout" 2>"${WORKDIR}/ierr" </dev/null; }
 
 builds() { if [ -e "${BUILD_LOG}" ]; then wc -l <"${BUILD_LOG}" | tr -d ' '; else printf '0'; fi; }
 
+# Waits until the background builder has released its lock.
+wait_idle() {
+    waited=0
+    while [ -d "${BIN}.lock" ] && [ "${waited}" -lt 200 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    [ ! -d "${BIN}.lock" ] || fail 'a compilação em segundo plano não terminou'
+}
+
 fail() {
-    printf 'FAIL update rebuilds the agent: %s\n' "$1" >&2
+    printf 'FAIL update builds the agent in the background: %s\n' "$1" >&2
     exit 1
 }
 
 printf 'aaaa1111\n' >"${HEAD_FILE}"
 
-# 1. Never built here: update does not build for the first time.
-run_update || fail 'update falhou sem binário'
-[ "$(builds)" = 0 ] || fail 'compilou sem o agente ter sido instalado antes'
-
-# 2. Built before (no revision recorded): update recompiles and records HEAD.
-printf '#!/usr/bin/env sh\nprintf "old\\n"\n' >"${BIN}"
-chmod +x "${BIN}"
+# 1. Not built yet: update returns while the build is still running, and
+#    nothing is released until it finishes.
+: >"${GATE}"
 run_update || fail "update falhou: $(cat "${WORKDIR}/err")"
-[ "$(builds)" = 1 ] || fail 'deveria recompilar o agente desatualizado'
-[ "$("${BIN}")" = built ] || fail 'binário não foi substituído'
+[ -d "${BIN}.lock" ] || fail 'update deveria deixar a compilação rodando em segundo plano'
+[ ! -e "${BIN}" ] || fail 'binário liberado antes de a compilação terminar'
+if run_investigate; then fail 'pocket investigate rodou sem binário'; fi
+grep -F 'sendo compilado em segundo plano' "${WORKDIR}/ierr" >/dev/null || fail 'uso durante a compilação sem aviso'
+[ "$(builds)" -le 1 ] || fail 'mais de um go build'
+rm -f "${GATE}"
+wait_idle
+[ -x "${BIN}" ] || fail 'binário não foi liberado ao terminar'
 [ "$(cat "${BIN}.rev")" = aaaa1111 ] || fail 'commit compilado não foi registrado'
-for leftover in "${CODE_DIR}/bin/"*.build.*; do
+[ "$(builds)" = 1 ] || fail 'deveria ter compilado uma vez'
+for leftover in "${CODE_DIR}/bin/"*.build.[0-9]*; do
     [ ! -e "${leftover}" ] || fail 'arquivo temporário de build ficou para trás'
 done
 
-# 3. Same commit: nothing to rebuild.
+# 2. Same commit: nothing to rebuild.
 run_update || fail 'segundo update falhou'
 [ "$(builds)" = 1 ] || fail 'recompilou com o agente já no commit atual'
 
-# 4. New commit: rebuild again.
+# 3. New commit: the old binary keeps serving while the new one builds.
 printf 'bbbb2222\n' >"${HEAD_FILE}"
+: >"${GATE}"
 run_update || fail 'update com commit novo falhou'
-[ "$(builds)" = 2 ] || fail 'não recompilou depois de um commit novo'
+[ "$(cat "${BIN}.rev")" = aaaa1111 ] || fail 'binário trocado antes da hora'
+run_investigate || fail "o binário atual deveria continuar servindo: $(cat "${WORKDIR}/ierr")"
+grep -F 'versão atual até terminar' "${WORKDIR}/ierr" >/dev/null || fail 'sem aviso de compilação em andamento'
+# A second update while it builds does not start another build.
+run_update || fail 'update durante a compilação falhou'
+rm -f "${GATE}"
+wait_idle
 [ "$(cat "${BIN}.rev")" = bbbb2222 ] || fail 'commit novo não foi registrado'
+[ "$(builds)" = 2 ] || fail "esperava 2 builds no total, houve $(builds)"
 
-# 5. A failed build keeps the previous binary and never fails the update.
+# 4. A failed build keeps the previous binary, marks the failure and warns.
 printf 'cccc3333\n' >"${HEAD_FILE}"
 run_update POCKETCLI_GO_FAIL=1 || fail 'build com falha derrubou o update'
-[ "$("${BIN}")" = built ] || fail 'binário anterior não foi mantido'
+wait_idle
 [ "$(cat "${BIN}.rev")" = bbbb2222 ] || fail 'commit registrado mudou apesar da falha'
-grep -F 'binário anterior foi mantido' "${WORKDIR}/err" "${WORKDIR}/out" >/dev/null || fail 'falha sem aviso nem comando manual'
-for leftover in "${CODE_DIR}/bin/"*.build.*; do
+[ -e "${BIN}.failed" ] || fail 'falha sem marcador'
+run_investigate || fail 'binário anterior deveria continuar servindo'
+grep -F 'última compilação do Investigation Agent falhou' "${WORKDIR}/ierr" >/dev/null || fail 'falha anterior sem aviso'
+for leftover in "${CODE_DIR}/bin/"*.build.[0-9]*; do
     [ ! -e "${leftover}" ] || fail 'build com falha deixou temporário'
 done
 
+# 5. POCKETCLI_INVESTIGATE_BUILD_WAIT=yes waits and releases before returning.
+run_update POCKETCLI_INVESTIGATE_BUILD_WAIT=yes || fail 'update com espera falhou'
+[ ! -e "${BIN}.failed" ] || fail 'marcador de falha não foi limpo após sucesso'
+[ "$(cat "${BIN}.rev")" = cccc3333 ] || fail 'update com espera não liberou o binário'
+
 # 6. Opt-outs: POCKETCLI_INVESTIGATE_BUILD=no and an explicit binary.
+printf 'dddd4444\n' >"${HEAD_FILE}"
 before=$(builds)
 run_update POCKETCLI_INVESTIGATE_BUILD=no || fail 'update com BUILD=no falhou'
 run_update POCKETCLI_GO_BINARY="${WORKDIR}/custom-agent" || fail 'update com binário explícito falhou'
 [ "$(builds)" = "${before}" ] || fail 'compilou apesar do opt-out'
 
-printf 'PASS pocket update rebuilds the investigation agent when it is behind\n'
+# 7. Without Go the update still succeeds and says what to run.
+rm -f "${FAKE_BIN}/go"
+run_update || fail 'update sem Go falhou'
+grep -F 'sem Go/compilador C' "${WORKDIR}/err" "${WORKDIR}/out" >/dev/null || fail 'sem Go e sem aviso'
+
+printf 'PASS pocket update compiles the investigation agent in the background and releases it when done\n'
