@@ -255,3 +255,18 @@ func TestMirrorReportsEmptyRemoteApartFromUnavailableOne(t *testing.T) {
 		t.Fatalf("origem ausente deve continuar indisponível: err=%v", err)
 	}
 }
+
+func TestWalkCommitsFailureCarriesGitsOwnMessage(t *testing.T) {
+	root := t.TempDir()
+	m, err := New(filepath.Join(root, "mirror.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.WalkCommits(context.Background(), strings.Repeat("a", 40), func(Commit) (bool, error) { return true, nil })
+	if !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "git log:") {
+		t.Fatalf("o erro deveria manter ErrCorrupt e dizer o que o git respondeu: %v", err)
+	}
+}

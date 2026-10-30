@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/url"
@@ -93,7 +94,8 @@ func (m *Mirror) WalkCommits(ctx context.Context, head string, visit func(Commit
 	command := exec.CommandContext(ctx, m.GitPath, "--git-dir="+m.Path, "log", "--no-patch", "--topo-order", "--format=%H%x09%cI", head)
 	command.Dir = m.Path
 	command.Env = m.environment("", nil)
-	command.Stderr = io.Discard
+	var stderr cappedBuffer
+	command.Stderr = &stderr
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return false, ErrCorrupt
@@ -129,9 +131,24 @@ func (m *Mirror) WalkCommits(ctx context.Context, head string, visit func(Commit
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		return false, ErrCorrupt
+		return false, walkFailure(&stderr)
 	}
 	return true, nil
+}
+
+// walkFailure keeps what git said when a commit walk fails, so the run's
+// error says why instead of only that the graph is unavailable. The mirror is
+// local and the command never carries a credential. errors.Is(err,
+// ErrCorrupt) still holds.
+func walkFailure(stderr *cappedBuffer) error {
+	text := strings.Join(strings.Fields(stderr.String()), " ")
+	if text == "" {
+		return ErrCorrupt
+	}
+	if len(text) > 300 {
+		text = text[:300] + "…"
+	}
+	return fmt.Errorf("%w: git log: %s", ErrCorrupt, text)
 }
 
 type Mirror struct {

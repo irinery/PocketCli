@@ -194,6 +194,10 @@ func TestGitWalkFaultKeepsTheVisitorsOwnMessage(t *testing.T) {
 	if !strings.Contains(got.Error(), "grafo de commits indisponível") {
 		t.Fatalf("falha do percurso: %v", got)
 	}
+	detailed := gitWalkFault(ctx, fmt.Errorf("%w: git log: fatal: bad object", gitmirror.ErrCorrupt))
+	if !strings.Contains(detailed.Error(), "grafo de commits indisponível (git log: fatal: bad object)") {
+		t.Fatalf("a resposta do git deveria aparecer: %v", detailed)
+	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	if got := gitWalkFault(cancelled, own); !errors.Is(got, context.Canceled) {
