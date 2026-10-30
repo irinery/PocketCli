@@ -142,9 +142,24 @@ run_update POCKETCLI_INVESTIGATE_BUILD=no || fail 'update com BUILD=no falhou'
 run_update POCKETCLI_GO_BINARY="${WORKDIR}/custom-agent" || fail 'update com binário explícito falhou'
 [ "$(builds)" = "${before}" ] || fail 'compilou apesar do opt-out'
 
-# 7. Without Go the update still succeeds and says what to run.
-rm -f "${FAKE_BIN}/go"
-run_update || fail 'update sem Go falhou'
+# 7. Without Go or a C compiler the update still succeeds and says what to
+#    run. The runner may have a real toolchain under /usr/bin, so this uses a
+#    PATH made of everything in /usr/bin and /bin except the toolchain.
+NOTOOLS="${WORKDIR}/notools"
+GITBIN="${WORKDIR}/gitbin"
+mkdir -p "${NOTOOLS}" "${GITBIN}"
+cp "${FAKE_BIN}/git" "${GITBIN}/git"
+for tool in /usr/bin/* /bin/*; do
+    name=${tool##*/}
+    case "${name}" in
+        go|cc|c99|c89|gcc|clang|git|tcc|g++|c++) continue ;;
+    esac
+    [ -e "${NOTOOLS}/${name}" ] || ln -s "${tool}" "${NOTOOLS}/${name}"
+done
+printf 'eeee5555\n' >"${HEAD_FILE}"
+before=$(builds)
+run_update PATH="${GITBIN}:${NOTOOLS}" || fail 'update sem Go falhou'
 grep -F 'sem Go/compilador C' "${WORKDIR}/err" "${WORKDIR}/out" >/dev/null || fail 'sem Go e sem aviso'
+[ "$(builds)" = "${before}" ] || fail 'compilou sem toolchain'
 
 printf 'PASS pocket update compiles the investigation agent in the background and releases it when done\n'
