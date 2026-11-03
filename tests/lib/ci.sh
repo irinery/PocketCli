@@ -65,6 +65,15 @@ ci_smoke_budget() {
                 *) printf '%s' "${POCKETCLI_SMOKE_FALLBACK_BUDGET:-3}" ;;
             esac
             ;;
+        # The agent builds in the background and the test polls until each
+        # build is released: 1-3s on Linux/Alpine, but 4-6s on the hosted
+        # macOS arm64 runner, above the generic 5s.
+        test_pocket_update_agent_rebuild.sh)
+            case "$(ci_profile)" in
+                macos) printf '%s' "${POCKETCLI_SMOKE_AGENT_REBUILD_BUDGET:-10}" ;;
+                *) printf '%s' "${POCKETCLI_SMOKE_AGENT_REBUILD_BUDGET:-6}" ;;
+            esac
+            ;;
         *)
             printf '%s' "${POCKETCLI_SMOKE_GENERIC_BUDGET:-5}"
             ;;
