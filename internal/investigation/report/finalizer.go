@@ -39,6 +39,9 @@ type model struct {
 	// Executive carries the decisions of a consolidated report; nil when the
 	// snapshot has no finished executive analysis.
 	Executive *ExecutiveBundle
+	// RealNames shows the source names of actors instead of their
+	// pseudonyms; it is the user's profile preference.
+	RealNames bool
 }
 
 func coverageLabel(items []contract.Coverage) string {
@@ -73,6 +76,7 @@ type Finalizer struct {
 	rendererVersion string
 	timeout         time.Duration
 	executive       ExecutiveSource
+	realNames       bool
 	mu              sync.Mutex
 	artifacts       map[string]contract.ReportArtifact
 	paths           map[string]string
@@ -99,6 +103,14 @@ func New(reader contract.ReportReader, dir string, demo bool, annotationReader A
 		return nil, err
 	}
 	return f, nil
+}
+
+// SetActorNames chooses between the actors' pseudonyms (the default) and
+// the names the sources reported, as the user's profile asks.
+func (f *Finalizer) SetActorNames(real bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.realNames = real
 }
 
 // SetExecutiveSource lets consolidated reports include the decision analysis.
@@ -198,6 +210,7 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 	f.mu.Lock()
 	f.revisions[in.SnapshotID]++
 	revision := f.revisions[in.SnapshotID]
+	realNames := f.realNames
 	f.mu.Unlock()
 	jobDir, err := os.MkdirTemp(f.dir, "report-job-")
 	if err != nil {
@@ -220,7 +233,7 @@ func (f *Finalizer) Finalize(ctx context.Context, in contract.FinalizeRequest) (
 		executions = f.queries.AllHistory(in.SnapshotID)
 		savedQueries = f.queries.List(in.SnapshotID)
 	}
-	doc := model{Snapshot: snapshot, CoverageStatus: coverageLabel(snapshot.Coverage), Records: records, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FindingCount: findingCount, RecordCount: len(records), Revision: revision, RendererVersion: f.rendererVersion, Demo: f.demo, Annotations: annotationRows, AnnotationRevision: annotationRevision, Editorial: editorialRows, Executions: executions, SavedQueries: savedQueries}
+	doc := model{Snapshot: snapshot, CoverageStatus: coverageLabel(snapshot.Coverage), Records: records, GeneratedAt: time.Now().UTC().Format(time.RFC3339), FindingCount: findingCount, RecordCount: len(records), Revision: revision, RendererVersion: f.rendererVersion, Demo: f.demo, Annotations: annotationRows, AnnotationRevision: annotationRevision, Editorial: editorialRows, Executions: executions, SavedQueries: savedQueries, RealNames: realNames}
 	jobCtx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 	warnings := []string{}

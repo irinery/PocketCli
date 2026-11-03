@@ -29,6 +29,14 @@ type Dataset struct {
 	Rework       []contract.ReworkRecord
 	Deliveries   []contract.DeliveryRecord
 	Metrics      []contract.Metric
+	Cycles       []Cycle
+}
+
+// Cycle is a Linear team cycle as the observed issues report it. Its final
+// scope is the set of observed issues that belong to it.
+type Cycle struct {
+	ID, TeamID, StartsAt, EndsAt, CompletedAt string
+	Number                                    int
 }
 
 type Event struct{ ID, EntityID, Type, EventAt, ObservedAt, ActorID, ActorKind, OldValue, NewValue, EvidenceID string }
@@ -37,6 +45,7 @@ type Issue struct {
 	ID, Identifier, Source, Title, State, AssigneeID, TeamID, ComponentID string
 	Outcome                                                               string
 	CreatedAt, UpdatedAt, StartedAt, CompletedAt                          string
+	CanceledAt, CycleID                                                   string
 	EstimateBeforeStart, EstimateCurrent                                  *float64
 	ReopenCount                                                           int
 	IsContext, DurationValid                                              bool

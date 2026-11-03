@@ -189,6 +189,7 @@ Sem terminal, `pocket investigate` sem `--confirm` nem `--yes` retorna `ERR_CONF
 | `--timezone TZ` | | Fuso da janela | `America/Sao_Paulo` |
 | `--investigation ID` | | Acrescenta o snapshot a uma investigação existente | nova |
 | `--discovery-budget N` | | Chamadas de descoberta por fonte | 20 |
+| `--publish-partial MOTIVO` | | Publica o snapshot mesmo com fila de reconciliação pendente; o motivo fica na proveniência | snapshot provisório |
 | `--json` | | Saída estruturada, sem prompts | — |
 
 Subcomandos: `doctor` (motor, chaves e PDF), `start PLAN_ID -c CÓDIGO`, `resume RUN_ID`, `refresh INVESTIGATION_ID`, `show INVESTIGATION_ID [tópico]` (dados extraídos, no terminal), `serve INVESTIGATION_ID` (interface web), `report INVESTIGATION_ID`, `stats RUN_ID` e `import-runtime INVESTIGATION_ID FILE`. `pocket investigate --help` lista tudo com exemplos.
@@ -200,13 +201,16 @@ Subcomandos: `doctor` (motor, chaves e PDF), `start PLAN_ID -c CÓDIGO`, `resume
 `all` é o **tempo de vida** de cada fonte, e o plano, o `show`, o PDF e a interface mostram esse intervalo em vez de um início em branco:
 
 - **GitHub:** cada repositório vai da sua criação até a última alteração (último push).
-- **Linear:** todo o tempo da organização (a data de criação da organização) até o fim da janela, salvo se a investigação for direcionada a um time (`-t`), caso em que vale a criação daquele time.
+- **Linear:** cada time vai da própria criação até a aposentadoria (`retiredAt`) ou o fim da janela. A data de criação da organização aparece só como nota nos avisos do plano.
 
 ```text
-Janela      02/05/2019 00:00 → 29/10/2026 12:00 (all, tempo de vida, UTC)
-Vida        Linear (organização)  02/05/2019 → 29/10/2026
+Janela      01/03/2021 00:00 → 29/10/2026 12:00 (all, tempo de vida, UTC)
+Vida        Linear ENG  21/07/2026 → 29/10/2026
+            Linear QA  21/07/2026 → 20/08/2026 (aposentado)
             acme/api  01/03/2021 → 30/09/2026
 ```
+
+No PDF, a janela de recursos considera só os recursos com algum registro observado: um repositório vazio ou legado continua na tabela de tempo de vida, marcado "sem registros", mas não puxa o início da janela para trás. Ao lado dela, a **janela de atividade** vai do primeiro ao último evento observado (criação, início, conclusão ou cancelamento de issues, PRs e eventos).
 
 O intervalo é informativo: a coleta continua sem filtro de início, então commits importados de antes da criação do repositório no GitHub entram do mesmo jeito.
 
@@ -324,3 +328,23 @@ Claude é opcional. A chave Anthropic fica em memória no processo; a listagem d
 O preview guarda comentários em `annotations/annotations.jsonl`, consultas em `queries.jsonl`, rascunhos em `editorial/editorial.jsonl` e relatórios em `reports/`. Esses dados são locais ao usuário. A configuração do preview não é a mesma coisa que o banco/snapshot do Core usado pelo fluxo real.
 
 Para requisitos e persistência do preview, veja [dependências do preview](luna-dependencies.md). Para a sequência de implementação do Core, cobertura e limites conhecidos, veja [implementação SOL](sol-implementation.md).
+
+### Publicação com fila pendente
+
+Algumas coleções por issue (histórico, comentários, relações e anexos do Linear; revisões, checks e arquivos do GitHub) leem no máximo 100 itens por rodada e deixam o resto numa fila de reconciliação. Enquanto houver fila, o snapshot fica com status `provisional` e o PDF mostra "provisório — fila de reconciliação pendente" com as coleções afetadas. Rode `pocket investigate refresh INVESTIGATION_ID` para avançar a fila ou, se aceitar os dados parciais, passe `--publish-partial "motivo"` (em `investigate`, `start` ou `refresh`): o snapshot sai `published` e a proveniência do PDF registra o motivo, o horário e as filas pendentes.
+
+As métricas que dependem do histórico por issue (permanência por etapa e conclusões registradas por ator no Linear) mostram "base: X de Y issues do team" e recebem o rótulo **baixa cobertura** quando menos da metade das issues do team teve o histórico lido.
+
+### Atores e nomes
+
+Os atores aparecem no relatório com pseudônimos estáveis ("Pessoa A", "Pessoa B"…), atribuídos pela ordem da primeira atividade observada. O snapshot guarda o mapeamento para o `displayName` do Linear ou o `login` do GitHub. Para ver os nomes no PDF, crie `~/.config/pocketcli/profile/investigation-report.json`:
+
+```json
+{"version": "1", "actor_names": "real"}
+```
+
+Sem esse arquivo, ou com um arquivo inválido, o relatório usa os pseudônimos. O arquivo fica em `profile/`, então `pocket update` não o sobrescreve. Nenhuma métrica de ator é score de produtividade.
+
+### Evolução
+
+Antes dos registros, o PDF traz a seção "Evolução": issues criadas, concluídas e canceladas por mês (UTC) e por time; os ciclos do Linear (número, início, fim, escopo final e concluídas), com o escopo final contado pelas issues observadas no ciclo; e os projetos do Linear pelo nome, com issues e concluídas. Os vínculos `belongs_to_project` também mostram o nome do projeto em vez de `proj-<hash>`.
