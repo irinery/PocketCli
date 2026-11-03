@@ -87,6 +87,11 @@ type Resource struct {
 	// An empty LastChangeAt means the lifetime runs up to the window end.
 	CreatedAt    string `json:"created_at,omitempty"`
 	LastChangeAt string `json:"last_change_at,omitempty"`
+	// Fork marks a GitHub repository forked from Parent (owner/name, empty
+	// when the listing did not say). Its Git history is the upstream's, so
+	// it is not collected as the organization's code.
+	Fork   bool   `json:"fork,omitempty"`
+	Parent string `json:"parent,omitempty"`
 }
 type Plan struct {
 	InvestigationID      string     `json:"investigation_id"`

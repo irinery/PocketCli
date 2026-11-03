@@ -270,12 +270,13 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 					CreatedAt string `json:"created_at"`
 					PushedAt  string `json:"pushed_at"`
 					UpdatedAt string `json:"updated_at"`
+					Fork      bool   `json:"fork"`
 				}
 				if json.Unmarshal(item, &r) == nil && r.ID > 0 {
 					if !validRepo(r.FullName) {
 						return out, fault("ERR_UNAVAILABLE", "nome de repositório inválido na descoberta")
 					}
-					resource := contract.Resource{ID: fmt.Sprintf("%d", r.ID), Source: "github", Name: r.FullName, Access: "read"}
+					resource := contract.Resource{ID: fmt.Sprintf("%d", r.ID), Source: "github", Name: r.FullName, Access: "read", Fork: r.Fork}
 					if input.Period.Preset == "all" {
 						resource.CreatedAt, resource.LastChangeAt = repositoryLifetime(r.CreatedAt, r.PushedAt, r.UpdatedAt)
 					}
@@ -528,11 +529,18 @@ func (c *Core) discoverRepository(ctx context.Context, name string, lifetime boo
 		CreatedAt string `json:"created_at"`
 		PushedAt  string `json:"pushed_at"`
 		UpdatedAt string `json:"updated_at"`
+		Fork      bool   `json:"fork"`
+		Parent    struct {
+			FullName string `json:"full_name"`
+		} `json:"parent"`
 	}
 	if json.Unmarshal(data, &repo) != nil || repo.ID == 0 || !validRepo(repo.FullName) {
 		return empty, fault("ERR_UNAVAILABLE", "repositório inválido")
 	}
-	resource := contract.Resource{ID: fmt.Sprintf("%d", repo.ID), Source: "github", Name: repo.FullName, Access: "read"}
+	resource := contract.Resource{ID: fmt.Sprintf("%d", repo.ID), Source: "github", Name: repo.FullName, Access: "read", Fork: repo.Fork}
+	if repo.Fork && validRepo(repo.Parent.FullName) {
+		resource.Parent = repo.Parent.FullName
+	}
 	if lifetime {
 		resource.CreatedAt, resource.LastChangeAt = repositoryLifetime(repo.CreatedAt, repo.PushedAt, repo.UpdatedAt)
 	}
