@@ -399,6 +399,10 @@ func reworkMetrics(d query.Dataset) []contract.Metric {
 			name = "Reversões declaradas em commits"
 			definition = "Commits com trailer exato de git revert apontando para commit também observado no mesmo repositório"
 			limitation = "O trailer declara a reversão; a equivalência inversa do patch não foi demonstrada e não identifica culpa ou causa."
+		} else if kind == "stage_rejection" {
+			name = "Entradas em etapa de reprovação"
+			definition = "Entradas observadas em etapas do fluxo que devolvem o trabalho (Reprovado, Rejeitado, Devolvido…)"
+			limitation = "O nome da etapa é a única evidência de reprovação; histórico parcial reduz a contagem e não identifica causa."
 		} else if kind == "declared_correction" {
 			name = "Correções declaradas após reabertura"
 			definition = "PRs mesclados com Fixes #N explícito para issue com reabertura observada antes do merge"

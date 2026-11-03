@@ -143,6 +143,18 @@ Pendências da Fase 2:
 
 ## Fase 3 — Redução de ruído (médios)
 
+**Status (2026-11-03): implementada** em `rules/noise.go` (`rules.Version` 1.18.0):
+- 3.1: `R-BLOCK-001` (`medium`, "Item em andamento bloqueado") só quando o item
+  bloqueado está `started`/`in_progress`/`open`; entre itens planejados vira
+  `R-BLOCK-002` (`info`, "Dependência planejada observada"). Agora há um achado por
+  item bloqueado, e não um por relação.
+- 3.2: métrica "Pontos entregues no team X" (soma por team, sem somar entre teams) e
+  achado `R-BATCH-001` (`info`) para ≥20 issues de um projeto criadas em 24h.
+- 3.3: achado `R-MOVE-001` (`info`), um por team, para issues criadas antes do team, e
+  métrica de números de identificador ausentes (só no período `all`).
+- 3.4: métrica de duplicadas por team e retrabalho `stage_rejection` para entradas em
+  etapas de reprovação (Reprovado, Rejeitado, Devolvido…).
+
 | Item | Correção | Arquivo |
 |---|---|---|
 | 3.1 R-BLOCK infla severidade | `medium` só quando o bloqueado está `started`; backlog↔backlog vira `info` "dependência planejada". Agrupar por cadeia (ITEM-24 aparecia 7×). | `rules/rules.go:187`, `issueActiveObserved` |

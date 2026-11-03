@@ -102,7 +102,7 @@ func TestLinearBlockingRelationPaginatesBothDirectionsAndFeedsRule(t *testing.T)
 	}
 	var blocked int
 	for _, finding := range rules.Evaluate(d).Findings {
-		if finding.RuleID == "R-BLOCK-001" {
+		if finding.RuleID == "R-BLOCK-001" || finding.RuleID == "R-BLOCK-002" {
 			blocked++
 			if finding.SubjectID != "linear-dependent" || len(finding.EvidenceIDs) != 3 {
 				t.Fatalf("achado sem estados e relação observados: %+v", finding)
