@@ -151,7 +151,9 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			if plan.Input.Modules.Deployments {
 				steps = append(steps, func(ctx context.Context) error { return c.collectDeployments(ctx, plan, r, &d, run) })
 			}
-			if plan.Input.Modules.CodeHistory {
+			if plan.Input.Modules.CodeHistory && r.Fork {
+				d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "git", ID: r.ID}, "code_history", "not_selected", 0, contract.ForkReason(r)))
+			} else if plan.Input.Modules.CodeHistory {
 				steps = append(steps,
 					func(ctx context.Context) error { return c.collectGitRef(ctx, plan, r, &d, run) },
 					func(ctx context.Context) error { return c.collectGitBranches(ctx, plan, r, &d, run) },

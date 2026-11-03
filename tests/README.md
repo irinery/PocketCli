@@ -24,6 +24,8 @@ Para validar o período `all` (tempo de vida), repositórios vazios, o PDF conso
 
 Para validar a projeção de dependências formais da timeline GitHub, rode `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestGitHubDependencyTimelineAddsRemovesAndMirrors|TestGitHubChildBatchReadsReviewsAndSkipsIrrelevantTimelines' ./internal/investigation/core`. Pré-requisitos: Go e compilador C para SQLite; os testes usam transporte simulado, sem credenciais nem variáveis de ambiente obrigatórias.
 
+Para validar o escopo Git do relatório (PRs citados no Linear em repositórios não coletados, aviso de cobertura insuficiente e forks fora do histórico Git), rode `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestForkDiscoveryRecordsUpstream|TestAttachmentToUncollectedRepositoryIsKeptAsOutOfScope|TestLinearAttachmentPaginatesAndConfirmsOnlyCollectedPullRequest' ./internal/investigation/core` e `go test -buildvcs=false -run 'TestSummaryNamesForksAndUncollectedRepositories' ./internal/investigation/report`. Pré-requisitos: Go e compilador C para SQLite; os testes usam transporte simulado, sem credenciais nem variáveis de ambiente.
+
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
 
 Para validar a seleção da conta GitHub salva e a alternativa por outra PAT, rode `go test -buildvcs=false -run 'TestGitHubLoginFromCLI|TestChooseSavedGitHubCredential|TestLoadCredentialsUsesGitHubCLISessionWhenEnvIsMissing' ./cmd/pocket`. Pré-requisitos: Go; os testes usam um `gh` falso e entrada local, sem credenciais reais ou rede.

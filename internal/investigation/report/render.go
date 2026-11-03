@@ -361,6 +361,7 @@ func (v *reportView) renderSummary(l *pdfLayout) {
 	if empty := v.emptyRepositories(); len(empty) > 0 {
 		l.paragraph(10, colorText, bold("Repositórios vazios:"), plain(strings.Join(empty, ", ")+" — sem commits; a coleta Git está completa e não há histórico de código a analisar."))
 	}
+	v.renderUncollected(l)
 
 	counts := v.counts()
 	var kinds []string
@@ -496,6 +497,28 @@ func (v *reportView) emptyRepositories() []string {
 	return names
 }
 
+// renderUncollected names the repositories Linear cites in pull request
+// links but the run did not read, and says when they are so many that the
+// Git side cannot speak for the work tracked in Linear.
+func (v *reportView) renderUncollected(l *pdfLayout) {
+	if forks := contract.Forks(v.doc.Snapshot.Resources); len(forks) > 0 {
+		l.paragraph(10, colorText, bold("Forks sem histórico Git coletado:"), plain(strings.Join(forks, ", ")+" — o código é do upstream e não é atribuído à organização."))
+	}
+	repos := contract.UncollectedRepositories(v.doc.Snapshot.Coverage)
+	if len(repos) == 0 {
+		return
+	}
+	outside, total, insufficient := contract.PullReferenceGap(v.doc.Snapshot.Coverage)
+	if insufficient {
+		l.paragraph(10, colorText, bold("Cobertura Git insuficiente:"), plain(fmt.Sprintf("%d de %d PRs citados no Linear (%d%%) estão em repositórios que esta investigação não leu. Métricas de código, componentes e vínculos não representam o trabalho registrado no Linear.", outside, total, outside*100/total)))
+	}
+	names := make([]string, 0, len(repos))
+	for _, r := range repos {
+		names = append(names, fmt.Sprintf("%s (%d PRs, %s)", r.Name, r.References, coverageStatusLabel(r.Status)))
+	}
+	l.paragraph(10, colorText, bold("Repositórios citados no Linear e não coletados:"), plain(strings.Join(names, ", ")+"."))
+}
+
 // coverageStatusLabel is the status in plain words for the summary line.
 func coverageStatusLabel(status string) string {
 	switch status {
@@ -559,6 +582,7 @@ func (v *reportView) renderCoverage(l *pdfLayout) {
 	if empty := v.emptyRepositories(); len(empty) > 0 {
 		l.paragraph(10, colorText, bold("Repositórios vazios (sem commits):"), plain(strings.Join(empty, ", ")+". Contam como coleta completa: não há o que ler em Git."))
 	}
+	v.renderUncollected(l)
 	if len(attention) == 0 {
 		l.paragraph(10, colorText, plain("Todas as coleções selecionadas foram lidas por completo."))
 		return
