@@ -55,6 +55,12 @@ func (c *Core) collectDataset(ctx context.Context, plan contract.Plan, run *cont
 			if err != nil {
 				return d, err
 			}
+			for _, actor := range prior.Snapshot.Actors {
+				noteActor(&d, actor.ID, actor.Source, actor.Name)
+			}
+			for _, cycle := range prior.Cycles {
+				upsertCycle(&d, cycle)
+			}
 			evidenceHashes := make(map[string]string, len(prior.Evidence))
 			for _, evidence := range prior.Evidence {
 				evidenceHashes[evidence.ID] = evidence.SHA256
@@ -405,8 +411,9 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				MergedAt    *string `json:"merged_at"`
 				Draft       bool    `json:"draft"`
 				User        struct {
-					ID   int64  `json:"id"`
-					Type string `json:"type"`
+					ID    int64  `json:"id"`
+					Type  string `json:"type"`
+					Login string `json:"login"`
 				} `json:"user"`
 				Head struct {
 					SHA string `json:"sha"`
@@ -435,6 +442,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 				if obj.User.ID > 0 {
 					p.AuthorID = fmt.Sprintf("github-%d", obj.User.ID)
 					p.AuthorKind = githubAccountKind(obj.User.Type)
+					noteActor(d, p.AuthorID, "github", obj.User.Login)
 				}
 				if obj.MergedAt != nil {
 					p.MergedAt = *obj.MergedAt
@@ -637,14 +645,14 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	if err != nil {
 		return err
 	}
-	const fullQuery = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
-	const deltaQuery = `query TeamIssuesDelta($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
-	const gapQuery = `query TeamIssuesGap($team: ID!, $after: String, $since: DateTimeOrDuration!, $until: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since, lt: $until}}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	const fullQuery = `query TeamIssues($team: ID!, $after: String) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}}) { nodes { id identifier title description createdAt updatedAt completedAt canceledAt startedAt estimate assignee { id displayName } state { name type } project { id name } cycle { id number startsAt endsAt completedAt } } pageInfo { hasNextPage endCursor } } }`
+	const deltaQuery = `query TeamIssuesDelta($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since}}) { nodes { id identifier title description createdAt updatedAt completedAt canceledAt startedAt estimate assignee { id displayName } state { name type } project { id name } cycle { id number startsAt endsAt completedAt } } pageInfo { hasNextPage endCursor } } }`
+	const gapQuery = `query TeamIssuesGap($team: ID!, $after: String, $since: DateTimeOrDuration!, $until: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {team: {id: {eq: $team}}, updatedAt: {gte: $since, lt: $until}}) { nodes { id identifier title description createdAt updatedAt completedAt canceledAt startedAt estimate assignee { id displayName } state { name type } project { id name } cycle { id number startsAt endsAt completedAt } } pageInfo { hasNextPage endCursor } } }`
 	// The first read of a bounded window identifies its issues on the server
 	// instead of walking the whole team: a custom window keeps only issues
 	// updated since its start (anything created in it was updated in it), and
 	// a preset window also keeps open issues, which carry into it.
-	const windowQuery = `query TeamIssuesWindow($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {and: [{team: {id: {eq: $team}}}, {or: [{updatedAt: {gte: $since}}, {state: {type: {nin: ["completed", "canceled"]}}}]}]}) { nodes { id identifier title description createdAt updatedAt completedAt startedAt estimate assignee { id } state { name type } project { id name } } pageInfo { hasNextPage endCursor } } }`
+	const windowQuery = `query TeamIssuesWindow($team: ID!, $after: String, $since: DateTimeOrDuration!) { issues(first: 100, after: $after, includeArchived: true, orderBy: updatedAt, filter: {and: [{team: {id: {eq: $team}}}, {or: [{updatedAt: {gte: $since}}, {state: {type: {nin: ["completed", "canceled"]}}}]}]}) { nodes { id identifier title description createdAt updatedAt completedAt canceledAt startedAt estimate assignee { id displayName } state { name type } project { id name } cycle { id number startsAt endsAt completedAt } } pageInfo { hasNextPage endCursor } } }`
 	status, reason := "complete", ""
 	items := []json.RawMessage{}
 	pagesComplete := true
@@ -766,10 +774,15 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 	for _, raw := range items {
 		var node struct {
 			ID, Identifier, Title, CreatedAt, UpdatedAt, CompletedAt, StartedAt string
+			CanceledAt                                                          string
 			Estimate                                                            *float64
-			Assignee                                                            *struct{ ID string }
+			Assignee                                                            *struct{ ID, DisplayName string }
 			State                                                               *struct{ Name, Type string }
 			Project                                                             *struct{ ID, Name string }
+			Cycle                                                               *struct {
+				ID, StartsAt, EndsAt, CompletedAt string
+				Number                            int
+			}
 		}
 		if json.Unmarshal(raw, &node) != nil || node.ID == "" {
 			status = "partial"
@@ -798,8 +811,16 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 		if i.Outcome == "completed" {
 			i.CompletedAt = node.CompletedAt
 		}
+		if i.Outcome == "cancelled" {
+			i.CanceledAt = node.CanceledAt
+		}
+		if node.Cycle != nil && node.Cycle.ID != "" {
+			i.CycleID = node.Cycle.ID
+			upsertCycle(d, query.Cycle{ID: node.Cycle.ID, TeamID: r.ID, Number: node.Cycle.Number, StartsAt: contract.NormalizeInstant(node.Cycle.StartsAt), EndsAt: contract.NormalizeInstant(node.Cycle.EndsAt), CompletedAt: contract.NormalizeInstant(node.Cycle.CompletedAt)})
+		}
 		if node.Assignee != nil {
 			i.AssigneeID = node.Assignee.ID
+			noteActor(d, node.Assignee.ID, "linear", c.safeTitle(ctx, node.Assignee.DisplayName))
 		}
 		i.State = state
 		setIssueCycle(&i)

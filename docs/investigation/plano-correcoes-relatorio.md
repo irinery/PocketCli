@@ -64,6 +64,43 @@ um fork (1.2) também ficou para depois. O que mudou:
 
 ## Fase 2 — Métricas confiáveis (altos)
 
+**Status (2026-11-02): implementada** (itens 2.1 a 2.4). Pendências registradas no fim
+desta fase. O que mudou:
+- 2.1 `core/core.go`: cada team usa o próprio `createdAt` e o `retiredAt` vira
+  `LastChangeAt`; a data da organização só aparece como aviso do plano.
+  `contract.ObservedResources` tira da janela os recursos sem nenhum registro;
+  `Snapshot.ActivityStart/ActivityEnd` (`core/publication.go`) dão a janela de atividade,
+  que o PDF mostra ao lado da janela de recursos. O texto de "Tempo de vida dos recursos"
+  e o resumo do plano na CLI listam cada team (aposentado com a data de aposentadoria).
+- 2.2 `core/run.go` define o status: com fila de reconciliação pendente
+  (`contract.PendingQueues`), o snapshot sai `provisional`; `--publish-partial MOTIVO`
+  (`RunRequest.PublishPartial`, preservado no `Run`) publica e grava
+  `Snapshot.PublishOverride` (motivo, horário, filas), exibido na proveniência do PDF.
+  As métricas de etapa e as conclusões por ator do Linear ganham `Metric.Base`
+  ("base: X de Y issues do team") e o rótulo **baixa cobertura** abaixo de 50%.
+- 2.3 A coleta lê `displayName` (assignee, actor do histórico, autor de comentário) e o
+  `login` do GitHub (autor de PR, revisor, ator da timeline) e guarda em
+  `Snapshot.Actors`; `rules/actors.go` atribui "Pessoa A, B…" pela ordem da primeira
+  atividade. Nomes reais só com `profile/investigation-report.json`
+  (`{"version":"1","actor_names":"real"}`), lido em `cmd/pocket` e passado ao
+  renderizador; o cache de PDF considera a preferência.
+- 2.4 A query de issues lê `canceledAt` e `cycle { id number startsAt endsAt completedAt }`;
+  `rules/evolution.go` gera séries por mês × team (criadas/concluídas/canceladas), por
+  ciclo (escopo final = issues observadas no ciclo, concluídas) e por projeto (pelo nome).
+  A seção "Evolução" do PDF fica antes dos registros, e os vínculos mostram o nome do
+  projeto.
+
+Pendências da Fase 2:
+- A seção "Evolução" não tem número: as seções 3 e 10–14 seguem a numeração do HTML vivo,
+  que não foi alterado (a árvore principal tem mudanças locais em `web/`). Levar a série
+  temporal ao HTML fica para depois.
+- Os ciclos vêm das issues observadas; um ciclo sem issues não aparece, e o escopo é contado
+  em issues (o `scopeHistory` do Linear, em pontos, não é lido).
+- A fila de histórico do Linear continua limitada a 100 issues por rodada e reescolhe as
+  issues pelo cursor, mesmo as que já têm etapas retidas de rodadas anteriores; por isso o
+  ENG pode seguir `provisional` após vários `refresh`. Pular as issues já cobertas é a
+  próxima correção.
+
 ### 2.1 Janela e tempo de vida
 - **Sintoma:** janela de 2023-03 a 2026-11 para 3,5 meses de atividade; todos os
   times com a data da organização; o time QA, aposentado em 08-20, aparece ativo.

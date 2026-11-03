@@ -105,7 +105,7 @@ func (c *Core) StartRun(ctx context.Context, req contract.RunRequest) (contract.
 			return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao persistir idempotência")
 		}
 	}
-	run := contract.Run{ID: id, PlanID: plan.ID, State: "queued", Stage: "queued", Coverage: "pending"}
+	run := contract.Run{ID: id, PlanID: plan.ID, State: "queued", Stage: "queued", Coverage: "pending", PublishPartial: strings.TrimSpace(req.PublishPartial)}
 	if err := c.store.Put("runs", id, run); err != nil {
 		release()
 		return contract.Run{}, fault("ERR_AUDIT_FAILED", "falha ao criar run")
@@ -196,7 +196,9 @@ func (c *Core) execute(ctx context.Context, run contract.Run, plan contract.Plan
 		if !c.saveRun(&run) {
 			return
 		}
-		d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: rules.Version, MappingVersion: MappingVersion, QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Status: "published"}
+		d.Snapshot = contract.Snapshot{PlanID: plan.ID, PlanHash: plan.Hash, Resources: plan.Resources, Modules: plan.Input.Modules, ObservationStartedAt: started, ObservationFinishedAt: c.setup.now().UTC().Format(time.RFC3339), InvestigationID: plan.InvestigationID, SchemaVersion: contract.Version, RulesetVersion: rules.Version, MappingVersion: MappingVersion, QueryCatalogVersion: query.CatalogVersion, AnalysisReferenceAt: plan.WindowEnd, WindowStart: plan.WindowStart, WindowEnd: plan.WindowEnd, Coverage: d.Coverage, Actors: d.Snapshot.Actors}
+		d.Snapshot.ActivityStart, d.Snapshot.ActivityEnd = activityWindow(d)
+		d.Snapshot.Status, d.Snapshot.PublishOverride = publicationStatus(d.Coverage, run.PublishPartial, c.setup.now())
 		canonical, marshalErr := json.Marshal(d)
 		if marshalErr != nil {
 			run.State = "failed"

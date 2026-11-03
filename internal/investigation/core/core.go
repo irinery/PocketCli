@@ -285,8 +285,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			}
 		}
 	}
+	linearOrgCreatedAt := ""
 	if input.LinearEnabled {
-		const q = `query Teams($after: String) { organization { createdAt } teams(first: 100, after: $after) { nodes { id key name createdAt } pageInfo { hasNextPage endCursor } } }`
+		const q = `query Teams($after: String) { organization { createdAt } teams(first: 100, after: $after) { nodes { id key name createdAt retiredAt } pageInfo { hasNextPage endCursor } } }`
 		var result struct {
 			Organization struct {
 				CreatedAt string `json:"createdAt"`
@@ -297,6 +298,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 					Key       string `json:"key"`
 					Name      string `json:"name"`
 					CreatedAt string `json:"createdAt"`
+					RetiredAt string `json:"retiredAt"`
 				} `json:"nodes"`
 				PageInfo struct {
 					HasNextPage bool   `json:"hasNextPage"`
@@ -324,6 +326,7 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 			if err := json.Unmarshal(data, &result); err != nil || result.Teams.Nodes == nil {
 				return out, fault("ERR_UNAVAILABLE", "teams Linear inválidos")
 			}
+			linearOrgCreatedAt = contract.NormalizeInstant(result.Organization.CreatedAt)
 			for _, team := range result.Teams.Nodes {
 				matches := make(map[string]bool)
 				for _, selected := range input.Scope.Teams {
@@ -355,14 +358,10 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 				}
 				resource := contract.Resource{ID: team.ID, Source: "linear", Name: team.Key, Access: "read"}
 				if input.Period.Preset == "all" {
-					// Without a team scope the history is the whole
-					// organization's; a targeted team has its own lifetime.
+					// Each team lives from its own creation to its
+					// retirement; the organization's date is only a note.
 					resource.CreatedAt = contract.NormalizeInstant(team.CreatedAt)
-					if len(input.Scope.Teams) == 0 {
-						if org := contract.NormalizeInstant(result.Organization.CreatedAt); org != "" {
-							resource.CreatedAt = org
-						}
-					}
+					resource.LastChangeAt = contract.NormalizeInstant(team.RetiredAt)
 				}
 				resources = append(resources, resource)
 			}
@@ -414,6 +413,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}{canonicalInput, auth, resources, period.WindowStart, period.WindowEnd})
 	id := planID
 	warnings := []string{}
+	if input.Period.Preset == "all" && linearOrgCreatedAt != "" {
+		warnings = append(warnings, "organização Linear criada em "+linearOrgCreatedAt+"; cada team usa a própria data de criação e de aposentadoria")
+	}
 	if verifiedGitHubVersion != "" {
 		warnings = append(warnings, "GitHub REST API "+verifiedGitHubVersion+" confirmada pelo servidor")
 	}

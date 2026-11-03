@@ -27,19 +27,17 @@ func TestFormatWindowShowsLifetimeForAllPeriod(t *testing.T) {
 	}
 }
 
-func TestLifetimeRowsListRepositoriesAndLinearScope(t *testing.T) {
+// Each Linear team keeps its own lifetime; a retired team ends at its
+// retirement instead of the window end.
+func TestLifetimeRowsListRepositoriesAndEachTeam(t *testing.T) {
 	end := "2026-10-29T12:00:00Z"
 	resources := []contract.Resource{
 		{Source: "github", Name: "acme/api", CreatedAt: "2021-03-01T10:00:00Z", LastChangeAt: "2026-09-30T08:30:00Z"},
-		{Source: "linear", Name: "ENG", CreatedAt: "2019-05-02T00:00:00Z"},
-		{Source: "linear", Name: "AIF", CreatedAt: "2022-07-10T12:00:00Z"},
+		{Source: "linear", Name: "ENG", CreatedAt: "2026-07-21T14:03:48Z"},
+		{Source: "linear", Name: "QA", CreatedAt: "2026-07-21T14:43:47Z", LastChangeAt: "2026-08-20T12:56:16Z"},
 	}
-	organization := strings.Join(lifetimeRows(resources, end, false, time.UTC), "|")
-	if want := "Linear (organização)  02/05/2019 → 29/10/2026|acme/api  01/03/2021 → 30/09/2026"; organization != want {
-		t.Fatalf("organização:\n%s\nesperado:\n%s", organization, want)
-	}
-	targeted := strings.Join(lifetimeRows(resources, end, true, time.UTC), "|")
-	if !strings.Contains(targeted, "Linear AIF  10/07/2022 → 29/10/2026") || strings.Contains(targeted, "organização") {
-		t.Fatalf("team direcionado usa o próprio início: %s", targeted)
+	got := strings.Join(lifetimeRows(resources, end, time.UTC), "|")
+	if want := "Linear ENG  21/07/2026 → 29/10/2026|Linear QA  21/07/2026 → 20/08/2026 (aposentado)|acme/api  01/03/2021 → 30/09/2026"; got != want {
+		t.Fatalf("tempo de vida:\n%s\nesperado:\n%s", got, want)
 	}
 }

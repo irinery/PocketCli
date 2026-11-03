@@ -83,7 +83,7 @@ type Resource struct {
 	// CreatedAt and LastChangeAt bound the resource's own lifetime. They are
 	// filled only for the "all" period, where the window has no fixed start:
 	// a GitHub repository runs from its creation to its last push, a Linear
-	// team from the organization's creation (or its own, when targeted).
+	// team from its own creation to its retirement, if any.
 	// An empty LastChangeAt means the lifetime runs up to the window end.
 	CreatedAt    string `json:"created_at,omitempty"`
 	LastChangeAt string `json:"last_change_at,omitempty"`
@@ -108,6 +108,10 @@ type RunRequest struct {
 	PlanID            string `json:"plan_id"`
 	ConfirmedPlanHash string `json:"confirmed_plan_hash"`
 	IdempotencyKey    string `json:"idempotency_key"`
+	// PublishPartial is the operator's reason to publish although a
+	// reconciliation queue is still pending. Empty keeps such a snapshot
+	// provisional.
+	PublishPartial string `json:"publish_partial,omitempty"`
 }
 type Run struct {
 	ID         string         `json:"id"`
@@ -121,6 +125,8 @@ type Run struct {
 	Coverage   string         `json:"coverage"`
 	SnapshotID string         `json:"snapshot_id,omitempty"`
 	LastError  *ErrorResponse `json:"last_error,omitempty"`
+	// PublishPartial carries RunRequest.PublishPartial through resumes.
+	PublishPartial string `json:"publish_partial,omitempty"`
 }
 type Coverage struct {
 	Source     string `json:"source"`
@@ -152,6 +158,32 @@ type Snapshot struct {
 	DatasetHash           string     `json:"dataset_hash"`
 	Status                string     `json:"status"`
 	Coverage              []Coverage `json:"coverage"`
+	// ActivityStart and ActivityEnd are the first and last instants a record
+	// was observed inside the window; empty when nothing was observed.
+	ActivityStart string `json:"activity_start,omitempty"`
+	ActivityEnd   string `json:"activity_end,omitempty"`
+	// PublishOverride records who accepted publishing over a pending
+	// reconciliation queue, and which queues were pending.
+	PublishOverride *PublishOverride `json:"publish_override,omitempty"`
+	// Actors maps the source identities behind actor metrics to a stable
+	// pseudonym and, when the source reported it, a display name.
+	Actors []Actor `json:"actors,omitempty"`
+}
+
+// PublishOverride is the provenance of a publication over pending queues.
+type PublishOverride struct {
+	Reason  string   `json:"reason"`
+	At      string   `json:"at"`
+	Pending []string `json:"pending"`
+}
+
+// Actor is one source identity. Name is the Linear displayName or the GitHub
+// login; reports show Pseudonym unless the user's profile asks for names.
+type Actor struct {
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	Name      string `json:"name,omitempty"`
+	Pseudonym string `json:"pseudonym"`
 }
 
 // Kind: null, text, integer, real, boolean. Value: canonical textual form.
@@ -225,6 +257,18 @@ type Metric struct {
 	EligibleSize *int64   `json:"eligible_size"`
 	Definition   string   `json:"definition"`
 	Limitations  []string `json:"limitations"`
+	// Base is the share of the team's issues whose history fed the metric,
+	// for metrics that depend on per-issue history.
+	Base *MetricBase `json:"base,omitempty"`
+	// Dimensions places a time-series metric: series, month, team, cycle.
+	Dimensions map[string]string `json:"dimensions,omitempty"`
+}
+
+// MetricBase says how many of the eligible issues a metric was computed on.
+type MetricBase struct {
+	Observed int64 `json:"observed"`
+	Total    int64 `json:"total"`
+	Low      bool  `json:"low_coverage"`
 }
 type ComponentRecord struct {
 	ID                   string `json:"component_id"`

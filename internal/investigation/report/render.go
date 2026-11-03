@@ -14,7 +14,7 @@ import (
 // RendererVersion identifies the in-process PDF layout recorded in each
 // report. The CLI report cache includes it, so a layout change regenerates
 // reports that were built with an older one.
-const RendererVersion = "pdf-nativo/3"
+const RendererVersion = "pdf-nativo/4"
 
 // renderReport lays out the frozen report model and encodes it as PDF bytes.
 func renderReport(ctx context.Context, doc model, created time.Time) ([]byte, int, error) {
@@ -57,12 +57,31 @@ func newReportView(doc model) *reportView {
 			pairs = append(pairs, r.ID, r.Name)
 		}
 	}
-	v.replacer = strings.NewReplacer(pairs...)
 	for _, r := range doc.Records {
 		if r.Evidence != nil {
 			v.locators[r.Evidence.ID] = r.Evidence.Locator
 		}
+		if c := r.Component; c != nil && c.Kind == "linear_project" && c.Name != "" {
+			v.names[c.ID] = c.Name
+			pairs = append(pairs, c.ID, c.Name)
+		}
 	}
+	if doc.RealNames {
+		actors := append([]contract.Actor(nil), doc.Snapshot.Actors...)
+		// "Pessoa AB" before "Pessoa A": the replacer tries pairs in order.
+		sort.Slice(actors, func(i, j int) bool {
+			if len(actors[i].Pseudonym) != len(actors[j].Pseudonym) {
+				return len(actors[i].Pseudonym) > len(actors[j].Pseudonym)
+			}
+			return actors[i].Pseudonym < actors[j].Pseudonym
+		})
+		for _, a := range actors {
+			if a.Pseudonym != "" && a.Name != "" {
+				pairs = append(pairs, a.Pseudonym, a.Name)
+			}
+		}
+	}
+	v.replacer = strings.NewReplacer(pairs...)
 	return v
 }
 
@@ -154,8 +173,11 @@ func (v *reportView) plannedSections() []section {
 	out := []section{
 		{"summary", "1. Resumo determinístico", 1},
 		{"coverage", "2. Cobertura — " + doc.CoverageStatus, 1},
-		{"records", "3. Registros da análise", 1},
 	}
+	if v.hasEvolution() {
+		out = append(out, section{"evolution", "Evolução", 1})
+	}
+	out = append(out, section{"records", "3. Registros da análise", 1})
 	counts := v.counts()
 	for i, k := range v.kindOrder() {
 		out = append(out, section{"kind:" + k.kind, fmt.Sprintf("3.%d %s (%d)", i+1, k.title, counts[k.kind]), 2})
@@ -222,7 +244,7 @@ func (v *reportView) layoutPass(ctx context.Context, tocPages map[string]int) (*
 	}
 	for _, kv := range [][2]string{
 		{"Investigação:", s.InvestigationID}, {"Snapshot:", s.ID}, {"Janela:", snapshotWindowLabel(s)},
-		{"Status:", s.Status}, {"Cobertura:", doc.CoverageStatus}, {"Gerado em:", doc.GeneratedAt},
+		{"Janela de atividade:", activityWindowLabel(s)}, {"Status:", snapshotStatusLabel(s)}, {"Cobertura:", doc.CoverageStatus}, {"Gerado em:", doc.GeneratedAt},
 		{"Dataset hash:", s.DatasetHash}, {"Regras:", s.RulesetVersion}, {"Mapeamento:", s.MappingVersion},
 	} {
 		l.paragraph(9, colorText, bold(kv[0]), plain(kv[1]))
@@ -248,6 +270,12 @@ func (v *reportView) layoutPass(ctx context.Context, tocPages map[string]int) (*
 	l.heading("2. Cobertura — "+doc.CoverageStatus, 15, 14, true)
 	mark("coverage")
 	v.renderCoverage(l)
+
+	if v.hasEvolution() {
+		l.heading("Evolução", 15, 14, true)
+		mark("evolution")
+		v.renderEvolution(l)
+	}
 
 	l.heading("3. Registros da análise", 15, 14, true)
 	mark("records")
@@ -334,6 +362,14 @@ func (v *reportView) layoutPass(ctx context.Context, tocPages map[string]int) (*
 	l.heading("14. Revisão e proveniência", 15, 14, true)
 	mark("provenance")
 	l.paragraph(10, colorText, plain(fmt.Sprintf("Snapshot %s · dataset %s · relatório revision %d · revisão global dos comentários %d · gerado %s · renderer %s.", s.ID, s.DatasetHash, doc.Revision, doc.AnnotationRevision, doc.GeneratedAt, doc.RendererVersion)))
+	if o := s.PublishOverride; o != nil {
+		l.paragraph(10, colorText, bold("Publicação com fila pendente:"), plain(fmt.Sprintf("autorizada pelo operador em %s — motivo: %s. Filas pendentes: %s.", o.At, o.Reason, strings.Join(o.Pending, ", "))))
+	}
+	if doc.RealNames {
+		l.paragraph(8, colorMuted, plain("Atores exibidos com os nomes informados pelas fontes, conforme o perfil do usuário."))
+	} else if len(s.Actors) > 0 {
+		l.paragraph(8, colorMuted, plain("Atores exibidos com pseudônimos estáveis (Pessoa A, B…); os nomes ficam no snapshot e aparecem só se o perfil do usuário pedir."))
+	}
 	l.paragraph(8, colorMuted, plain("PDF congelado. Abrir o HTML vivo ou encerrar o servidor não altera este arquivo."))
 	return l, found, ctx.Err()
 }
@@ -434,7 +470,7 @@ func (v *reportView) renderSummary(l *pdfLayout) {
 		l.table([]float64{0.07, 0.26, 0.38, 0.09, 0.09, 0.11}, []string{"Fonte", "Recurso", "ID", "Completas", "A revisar", "Issues/PRs"}, rows)
 		if lives := v.lifetimeRows(); len(lives) > 0 {
 			l.heading("Tempo de vida dos recursos", 11, 6, false)
-			l.paragraph(9, colorMuted, plain("Período \"all\": cada repositório vai da criação à última alteração (push); no Linear, da criação da organização — ou do team, quando a investigação foi direcionada — até o fim da janela."))
+			l.paragraph(9, colorMuted, plain("Período \"all\": cada repositório vai da criação à última alteração (push); cada team do Linear, da própria criação até a aposentadoria ou o fim da janela. A janela de recursos considera só recursos com algum registro observado; a janela de atividade vai do primeiro ao último evento observado."))
 			l.table([]float64{0.09, 0.31, 0.2, 0.28, 0.12}, []string{"Fonte", "Recurso", "Criado em", "Última alteração", "Dias"}, lives)
 		}
 	}
@@ -447,7 +483,7 @@ func snapshotWindowLabel(s contract.Snapshot) string {
 	if s.WindowStart != "" {
 		return s.WindowStart + " — " + s.WindowEnd
 	}
-	if from, to, lifetime := contract.EffectiveWindow(s.WindowStart, s.WindowEnd, s.Resources); lifetime {
+	if from, to, lifetime := contract.EffectiveWindow(s.WindowStart, s.WindowEnd, contract.ObservedResources(s.Resources, s.Coverage)); lifetime {
 		return from + " — " + to + " (tempo de vida dos recursos)"
 	}
 	return "todo o histórico — " + s.WindowEnd
@@ -459,6 +495,10 @@ func (v *reportView) lifetimeRows() [][]string {
 	s := v.doc.Snapshot
 	if s.WindowStart != "" {
 		return nil
+	}
+	observed := map[string]bool{}
+	for _, r := range contract.ObservedResources(s.Resources, s.Coverage) {
+		observed[r.ID] = true
 	}
 	var rows [][]string
 	for _, r := range s.Resources {
@@ -476,7 +516,11 @@ func (v *reportView) lifetimeRows() [][]string {
 				days = strconv.Itoa(int(b.Sub(a).Hours() / 24))
 			}
 		}
-		rows = append(rows, []string{r.Source, v.resource(r.Source, r.ID), from, last, days})
+		name := v.resource(r.Source, r.ID)
+		if !observed[r.ID] {
+			name += " (sem registros; fora da janela)"
+		}
+		rows = append(rows, []string{r.Source, name, from, last, days})
 	}
 	return rows
 }
@@ -637,6 +681,13 @@ func (v *reportView) renderRecord(l *pdfLayout, r contract.ReportRecord) {
 			value = m.Value.Value + " " + m.Unit
 		}
 		l.paragraph(9.5, colorText, bold("Métrica:"), plain(fmt.Sprintf("%s = %s · amostra %d / %s", v.label(m.Name), value, m.SampleSize, formatIntPtr(m.EligibleSize))))
+		if b := m.Base; b != nil {
+			runs := []textRun{plain(fmt.Sprintf("base: %d de %d issues do team (%d%%)", b.Observed, b.Total, b.Percent()))}
+			if b.Low {
+				runs = append(runs, bold("· baixa cobertura"))
+			}
+			l.paragraph(9.5, colorText, runs...)
+		}
 		l.paragraph(9.5, colorText, plain(v.label(m.Definition)+". "+strings.Join(m.Limitations, " ")))
 	}
 	if c := r.Coverage; c != nil {
@@ -648,7 +699,7 @@ func (v *reportView) renderRecord(l *pdfLayout, r contract.ReportRecord) {
 		l.paragraph(8.5, colorMuted, textRun{fontMono, "SHA-256 " + e.SHA256})
 	}
 	if k := r.Link; k != nil {
-		l.paragraph(9.5, colorText, bold("Vínculo:"), plain(fmt.Sprintf("%s — %s → %s · %s · evidência %s", k.SourceID, k.Relation, k.TargetID, k.Status, k.EvidenceID)))
+		l.paragraph(9.5, colorText, bold("Vínculo:"), plain(fmt.Sprintf("%s — %s → %s · %s · evidência %s", v.label(k.SourceID), k.Relation, v.label(k.TargetID), k.Status, k.EvidenceID)))
 	}
 	if st := r.Stage; st != nil {
 		l.paragraph(9.5, colorText, bold("Etapa:"), plain(fmt.Sprintf("%s · sujeito %s · início %s · fim %s · duração válida %t", st.Stage, st.SubjectID, st.StartedAt, st.EndedAt, st.DurationValid)))

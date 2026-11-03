@@ -28,6 +28,9 @@ type reportCache struct {
 	// executive tells which analysis a consolidated PDF would carry, so a
 	// newer analysis never reuses an older consolidated file.
 	executive report.ExecutiveSource
+	// realNames is the profile's actor-name preference; a PDF made with
+	// pseudonyms is never served for names, nor the other way round.
+	realNames bool
 	mu        sync.Mutex
 }
 
@@ -82,7 +85,8 @@ func (r *reportCache) Finalize(ctx context.Context, in contract.FinalizeRequest)
 		Saved       []queries.SavedQuery
 		Renderer    string
 		Analysis    string
-	}{in, annotationRows, drafts, history, savedQueries, report.RendererVersion, analysisID})
+		RealNames   bool
+	}{in, annotationRows, drafts, history, savedQueries, report.RendererVersion, analysisID, r.realNames})
 	if err != nil {
 		return empty, err
 	}

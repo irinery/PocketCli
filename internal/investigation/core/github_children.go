@@ -259,8 +259,9 @@ func (c *Core) projectReview(plan contract.Plan, r contract.Resource, target git
 		SubmittedAt string `json:"submitted_at"`
 		State       string `json:"state"`
 		User        struct {
-			ID   int64  `json:"id"`
-			Type string `json:"type"`
+			ID    int64  `json:"id"`
+			Type  string `json:"type"`
+			Login string `json:"login"`
 		} `json:"user"`
 	}
 	if json.Unmarshal(raw, &review) != nil || review.ID == 0 {
@@ -279,6 +280,7 @@ func (c *Core) projectReview(plan contract.Plan, r contract.Resource, target git
 	if review.User.ID > 0 {
 		actor = fmt.Sprintf("github-%d", review.User.ID)
 		actorKind = githubAccountKind(review.User.Type)
+		noteActor(d, actor, "github", review.User.Login)
 	}
 	p := &d.PullRequests[target.Index]
 	eventType := githubReviewEventType(actor, actorKind, p.AuthorID, review.State)
@@ -311,8 +313,9 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 		CreatedAt   string `json:"created_at"`
 		StateReason string `json:"state_reason"`
 		Actor       struct {
-			ID   int64  `json:"id"`
-			Type string `json:"type"`
+			ID    int64  `json:"id"`
+			Type  string `json:"type"`
+			Login string `json:"login"`
 		} `json:"actor"`
 	}
 	if json.Unmarshal(raw, &entry) != nil {
@@ -341,6 +344,7 @@ func (c *Core) projectTimeline(plan contract.Plan, r contract.Resource, target g
 	if entry.Actor.ID > 0 {
 		actor = fmt.Sprintf("github-%d", entry.Actor.ID)
 		actorKind = githubAccountKind(entry.Actor.Type)
+		noteActor(d, actor, "github", entry.Actor.Login)
 	}
 	event := query.Event{ID: "evt-" + storage.Hash([]byte(locator))[:24], EntityID: target.EntityID, Type: entry.Event, EventAt: entry.CreatedAt, ObservedAt: e.ObservedAt, ActorID: actor, ActorKind: actorKind, EvidenceID: e.ID}
 	if entry.Event == "closed" {

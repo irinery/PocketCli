@@ -101,7 +101,9 @@ func newInvestigationServicesWithSecrets(secretStore *secrets.SessionStore) (*in
 	finalizer, reportErr := report.New(c, filepath.Join(store.Root, "reports"), false, notes, edit, queryHistory)
 	var cached web.ReportService
 	if reportErr == nil {
-		cache := &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory}
+		realNames := investigationRealNames()
+		finalizer.SetActorNames(realNames)
+		cache := &reportCache{inner: finalizer, store: store, notes: notes, editorial: edit, queries: queryHistory, realNames: realNames}
 		if executiveErr == nil {
 			finalizer.SetExecutiveSource(executive)
 			cache.executive = executive

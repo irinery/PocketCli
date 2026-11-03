@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.16.0"
+const Version = "1.17.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -235,6 +235,7 @@ func Evaluate(d query.Dataset) query.Dataset {
 			d.Findings = append(d.Findings, finding("R-DELIVERY-001", "high", delivery.ComponentID, "Correção não comprovada no artefato observado", "O commit de merge da correção declarada não é ancestral da revisão observada do artefato.", "direct", evidence, "A ausência do commit no grafo não exclui patch equivalente por cherry-pick nem erro na proveniência declarada do artefato."))
 		}
 	}
+	d.Snapshot.Actors, _ = pseudonyms(d)
 	d.Metrics = metrics(d)
 	sort.Slice(d.Findings, func(i, j int) bool { return d.Findings[i].ID < d.Findings[j].ID })
 	return d
@@ -521,6 +522,7 @@ func metrics(d query.Dataset) []contract.Metric {
 	out = append(out, cycleTimeMetrics(d)...)
 	out = append(out, openAgingMetrics(d)...)
 	out = append(out, linearStageMetrics(d)...)
+	out = append(out, evolutionMetrics(d)...)
 	return out
 }
 

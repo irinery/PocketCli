@@ -134,13 +134,12 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 		ids = append(ids, actor)
 	}
 	sort.Strings(ids)
+	_, labels := pseudonyms(d)
+	historyBase := linearHistoryBase(d, "")
 	out := make([]contract.Metric, 0, len(ids)*4+1)
 	var botAccounts, userAccounts, unknownAccounts int64
 	for _, actor := range ids {
-		label := strings.TrimSpace(actor)
-		if len(label) > 128 {
-			label = label[:128]
-		}
+		label := actorLabel(labels, actor)
 		limit := "Contagens observadas, sem atribuição causal ou score de produtividade; tipo de conta não verificado."
 		switch accountKinds[actor] {
 		case "bot":
@@ -153,7 +152,11 @@ func actorMetrics(d query.Dataset) []contract.Metric {
 			unknownAccounts++
 		}
 		if closures[actor] > 0 {
-			out = append(out, integerMetric(metricID("metric-closures-actor", actor), "Conclusões registradas por "+label, closures[actor], closures[actor], nil, "Transições de estado para concluído registradas com este ator na janela; quem registrou não necessariamente resolveu", limit))
+			metric := integerMetric(metricID("metric-closures-actor", actor), "Conclusões registradas por "+label, closures[actor], closures[actor], nil, "Transições de estado para concluído registradas com este ator na janela; quem registrou não necessariamente resolveu", limit)
+			if !strings.HasPrefix(actor, "github-") {
+				withBase(&metric, historyBase, "issues Linear")
+			}
+			out = append(out, metric)
 		}
 		if assigned[actor] > 0 {
 			out = append(out, integerMetric(metricID("metric-completed-assignee", actor), "Issues concluídas com responsável observado "+label, assigned[actor], assigned[actor], &completedEligible, "Issues não contextuais com completed_at na janela e assignee_id observado no snapshot", "Responsável do snapshot pode ser diferente do responsável no encerramento; não atribui execução, autoria ou produtividade."))
@@ -505,6 +508,7 @@ func cycleTimeMetrics(d query.Dataset) []contract.Metric {
 	teams := make(map[string]*cohort)
 	assignees := make(map[string]*cohort)
 	assigneeLabels := make(map[string]string)
+	_, labels := pseudonyms(d)
 	for _, issue := range d.Issues {
 		if issue.TeamID == "" || !completedIssueInWindow(issue, d.Snapshot) {
 			continue
@@ -522,7 +526,7 @@ func cycleTimeMetrics(d query.Dataset) []contract.Metric {
 			if assigned == nil {
 				assigned = &cohort{}
 				assignees[key] = assigned
-				assigneeLabels[key] = "team " + issue.TeamID + ", responsável observado " + issue.AssigneeID
+				assigneeLabels[key] = "team " + issue.TeamID + ", responsável observado " + actorLabel(labels, issue.AssigneeID)
 			}
 			assigned.eligible++
 		}
@@ -671,6 +675,7 @@ func linearStageMetrics(d query.Dataset) []contract.Metric {
 	}
 	sort.Strings(keys)
 	out := make([]contract.Metric, 0, 3*len(keys))
+	bases := make(map[string]*contract.MetricBase)
 	for _, key := range keys {
 		group := groups[key]
 		label := "etapa \"" + group.stage + "\" do team " + group.team
@@ -690,11 +695,18 @@ func linearStageMetrics(d query.Dataset) []contract.Metric {
 			p85 = contract.Cell{Kind: "integer", Value: strconv.FormatInt(values[int(math.Ceil(0.85*float64(n)))-1], 10)}
 		}
 		count, closed := int64(n), group.closed
-		out = append(out,
-			contract.Metric{ID: metricID("metric-stage-median-team", key), Name: "Permanência mediana na " + label, Value: median, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Mediana convencional entre a entrada no estado e a transição seguinte que sai dele, para saídas observadas na janela.", Limitations: limits},
-			contract.Metric{ID: metricID("metric-stage-p85-team", key), Name: "Permanência p85 na " + label, Value: p85, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Nearest rank ceil(0.85*n) da permanência no estado, para saídas observadas na janela.", Limitations: limits},
+		stageMetrics := []contract.Metric{
+			{ID: metricID("metric-stage-median-team", key), Name: "Permanência mediana na " + label, Value: median, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Mediana convencional entre a entrada no estado e a transição seguinte que sai dele, para saídas observadas na janela.", Limitations: limits},
+			{ID: metricID("metric-stage-p85-team", key), Name: "Permanência p85 na " + label, Value: p85, Unit: "seconds", SampleSize: count, EligibleSize: &closed, Definition: "Nearest rank ceil(0.85*n) da permanência no estado, para saídas observadas na janela.", Limitations: append([]string(nil), limits...)},
 			integerMetric(metricID("metric-stage-open-team", key), "Itens ainda na "+label+" ao fim da janela", group.open, group.open, nil, "Intervalos iniciados antes do fim da janela sem transição de saída observada até o fim da janela.", "Contagem de permanência em aberto; não mede atraso nem prioridade."),
-		)
+		}
+		if bases[group.team] == nil {
+			bases[group.team] = linearHistoryBase(d, group.team)
+		}
+		for i := range stageMetrics {
+			withBase(&stageMetrics[i], bases[group.team], "issues do team")
+		}
+		out = append(out, stageMetrics...)
 	}
 	return out
 }
