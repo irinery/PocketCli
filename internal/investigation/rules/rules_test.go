@@ -311,7 +311,7 @@ func TestBlockFindingRequiresBothActiveStatesAndDirectEvidence(t *testing.T) {
 		t.Helper()
 		var found []contract.Finding
 		for _, finding := range Evaluate(d).Findings {
-			if finding.RuleID == "R-BLOCK-001" {
+			if finding.RuleID == "R-BLOCK-001" || finding.RuleID == "R-BLOCK-002" {
 				found = append(found, finding)
 			}
 		}

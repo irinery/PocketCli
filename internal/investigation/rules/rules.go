@@ -13,7 +13,7 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
-const Version = "1.17.0"
+const Version = "1.18.0"
 
 func Evaluate(d query.Dataset) query.Dataset {
 	d.Findings = []contract.Finding{}
@@ -184,14 +184,11 @@ func Evaluate(d query.Dataset) query.Dataset {
 				}
 			}
 		}
-		if l.Relation == "blocked_by" && l.Status == "direct" && l.EvidenceID != "" {
-			source, sourceFound := issueByID[l.SourceID]
-			target, targetFound := issueByID[l.TargetID]
-			if sourceFound && targetFound && source.EvidenceID != "" && target.EvidenceID != "" && issueActiveObserved(source) && issueActiveObserved(target) {
-				d.Findings = append(d.Findings, finding("R-BLOCK-001", "medium", l.SourceID, "Dependência pendente observada", "Há relação explícita de bloqueio entre dois itens com estado ativo observado.", "direct", []string{l.EvidenceID, source.EvidenceID, target.EvidenceID}, "A relação e os estados observados não demonstram quanto tempo houve bloqueio nem sua causa adicional."))
-			}
-		}
 	}
+	d.Findings = append(d.Findings, blockFindings(d, issueByID)...)
+	d.Findings = append(d.Findings, batchFindings(d, issueByID)...)
+	d.Findings = append(d.Findings, teamMoveFindings(d)...)
+	d.Rework = append(d.Rework, rejectionRework(d, issueByID, reworkIDs)...)
 	for _, delivery := range d.Deliveries {
 		if delivery.RevisionSHA == "" || (delivery.ProvenanceStatus != "declared" && delivery.ProvenanceStatus != "observed") || delivery.EvidenceID == "" || !observedInWindow(delivery.ObservedAt, d.Snapshot) {
 			continue
@@ -523,6 +520,7 @@ func metrics(d query.Dataset) []contract.Metric {
 	out = append(out, openAgingMetrics(d)...)
 	out = append(out, linearStageMetrics(d)...)
 	out = append(out, evolutionMetrics(d)...)
+	out = append(out, weightMetrics(d)...)
 	return out
 }
 
