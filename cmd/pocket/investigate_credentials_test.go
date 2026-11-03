@@ -98,3 +98,41 @@ func TestLoadCredentialsUsesGitHubCLISessionWhenEnvIsMissing(t *testing.T) {
 		t.Fatalf("GitHub CLI token should not satisfy Linear credentials: %v", err)
 	}
 }
+
+func TestGitHubLoginFromCLIVerifiesSavedAccountWithoutShowingToken(t *testing.T) {
+	binDir := t.TempDir()
+	ghPath := filepath.Join(binDir, "gh")
+	script := "#!/bin/sh\n[ \"$1\" = api ] && [ \"$2\" = user ] || exit 1\nprintf '%s\\n' 'irinery'\n"
+	if err := os.WriteFile(ghPath, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if got := githubLoginFromCLI(); got != "irinery" {
+		t.Fatalf("login verificado = %q, esperado irinery", got)
+	}
+}
+
+func TestChooseSavedGitHubCredential(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		input    string
+		useSaved bool
+		wantErr  bool
+	}{
+		{name: "enter keeps saved", input: "\n", useSaved: true},
+		{name: "yes keeps saved", input: "s\n", useSaved: true},
+		{name: "no asks for other PAT", input: "n\n", useSaved: false},
+		{name: "invalid answer fails", input: "maybe\n", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output strings.Builder
+			useSaved, err := chooseSavedGitHubCredential(strings.NewReader(test.input), &output, "conta salva (@irinery)")
+			if (err != nil) != test.wantErr || useSaved != test.useSaved {
+				t.Fatalf("useSaved=%t err=%v", useSaved, err)
+			}
+			if !strings.Contains(output.String(), "@irinery") || !strings.Contains(output.String(), "[S/n]") {
+				t.Fatalf("prompt não apresentou conta e escolha: %q", output.String())
+			}
+		})
+	}
+}
