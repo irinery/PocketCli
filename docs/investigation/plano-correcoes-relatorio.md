@@ -1,9 +1,8 @@
 # Plano de correções do relatório determinístico
 
-Origem: snapshot `snap-exemplo` (Acme, 2026-11-03), comparado
-com a API do GitHub e do Linear em 2026-11-02. As contagens do Linear bateram 100%
-(1637 issues, 1115 concluídas, 62 canceladas, 65 duplicadas, 395 abertas). A parte
-GitHub, a janela temporal e a legibilidade das métricas não.
+Origem: um relatório real gerado pelo Investigation Agent, comparado com as APIs do
+GitHub e do Linear em 2026-11-02. As contagens do Linear (issues por team e por estado)
+bateram 100%. A parte GitHub, a janela temporal e a legibilidade das métricas não.
 
 Cada item lista: sintoma observado → causa no código → correção → teste.
 
@@ -11,7 +10,7 @@ Cada item lista: sintoma observado → causa no código → correção → teste
 
 **Status (2026-11-02): implementada**, exceto a consulta `/orgs/{org}` do item 1.1.3,
 adiada. Ela exigiria chamadas fora do orçamento de descoberta do plano; a detecção via
-anexos do Linear cobre o caso da Acme. A inclusão opcional dos commits próprios de
+anexos do Linear cobre o caso observado. A inclusão opcional dos commits próprios de
 um fork (1.2) também ficou para depois. O que mudou:
 - `core/links.go`: anexos de PR em repos não coletados viram `references_pr` com
   status `out_of_scope` e geram coberturas `referenced_repository` (por repo) e
@@ -24,9 +23,9 @@ um fork (1.2) também ficou para depois. O que mudou:
   repos citados e não coletados e os forks ignorados.
 
 ### 1.1 Repositórios privados invisíveis aparecem como cobertura válida
-- **Sintoma:** só 4 repos públicos legados analisados; anexos do Linear apontam para
-  ≥10 repos privados (`repo-a`, `repo-b`, `repo-c`…) que não entraram.
-  `empty-repo` aparece como "coleta completa".
+- **Sintoma:** só os repositórios públicos legados da org foram analisados; os anexos
+  do Linear apontam para cerca de 10 repositórios privados que não entraram. Um
+  repositório vazio aparece como "coleta completa".
 - **Causa:** `core/core.go:262` descobre repos via `/user/repos?affiliation=…`. Se o
   token não é membro da org, a lista só traz o que é público e nada sinaliza a lacuna.
 - **Correção:**
@@ -42,8 +41,8 @@ um fork (1.2) também ficou para depois. O que mudou:
   `forbidden` + aviso no resumo.
 
 ### 1.2 Código de fork atribuído à org
-- **Sintoma:** 578 de 589 componentes e 579 vínculos `modifies_file` vêm do fork
-  `vendor-sdk` (62 commits, todos da Meta).
+- **Sintoma:** quase todos os componentes e vínculos `modifies_file` vêm de um fork de
+  um SDK de terceiros, sem nenhum commit da org.
 - **Causa:** a descoberta (`core/core.go:267`, `discoverRepository`) não lê `fork` nem
   `parent`; `manifests.go`, `git_commit_files.go` e `pr_head_components.go` marcam tudo
   como `ImplementationStatus: "identified"`.
@@ -55,7 +54,7 @@ um fork (1.2) também ficou para depois. O que mudou:
   como fork.
 
 ### 1.3 Anexos Linear→PR descartados em silêncio
-- **Sintoma:** 261 anexos coletados e nenhum vínculo issue→PR.
+- **Sintoma:** centenas de anexos coletados e nenhum vínculo issue→PR.
 - **Causa:** `core/links.go:57` faz `continue` quando o PR não está no dataset.
 - **Correção:** emitir `references_pr` com `Status: "out_of_scope"` e o alvo como chave
   externa (`owner/repo#n`). Adicionar a métrica "Issues com PR fora do escopo". Isso
@@ -97,13 +96,13 @@ Pendências da Fase 2:
 - Os ciclos vêm das issues observadas; um ciclo sem issues não aparece, e o escopo é contado
   em issues (o `scopeHistory` do Linear, em pontos, não é lido).
 - A fila de histórico do Linear continua limitada a 100 issues por rodada e reescolhe as
-  issues pelo cursor, mesmo as que já têm etapas retidas de rodadas anteriores; por isso o
-  ENG pode seguir `provisional` após vários `refresh`. Pular as issues já cobertas é a
+  issues pelo cursor, mesmo as que já têm etapas retidas de rodadas anteriores; por isso um
+  team grande pode seguir `provisional` após vários `refresh`. Pular as issues já cobertas é a
   próxima correção.
 
 ### 2.1 Janela e tempo de vida
-- **Sintoma:** janela de 2023-03 a 2026-11 para 3,5 meses de atividade; todos os
-  times com a data da organização; o time QA, aposentado em 08-20, aparece ativo.
+- **Sintoma:** janela de mais de três anos para poucos meses de atividade; todos os
+  times com a data da organização; um time aposentado aparece ativo.
 - **Causa:** `core/core.go:360` troca a data do team pela da org quando não há escopo de
   team. A query de teams não lê `retiredAt`. `contract.EffectiveWindow` usa recursos
   sem atividade (repos vazios/legados) como limite inferior.
@@ -115,8 +114,9 @@ Pendências da Fase 2:
   de atividade começa no 1º evento.
 
 ### 2.2 Métricas de etapa sobre amostra enviesada
-- **Sintoma:** o histórico do ENG tinha 871 de 971 issues pendentes. As permanências
-  por etapa do ENG saem de cerca de 100 issues, enquanto CAD/PRD saem de quase todas.
+- **Sintoma:** o histórico do maior team tinha cerca de 90% das issues pendentes. As
+  permanências por etapa desse team saem de cerca de 100 issues, enquanto teams
+  menores saem de quase todas.
 - **Causa:** `core/linear_children.go:120` limita a 100 issues por team por rodada
   (ordem por UUID), e o relatório foi publicado com a fila pendente.
 - **Correção:** (a) não permitir status `published` com fila de reconciliação pendente
@@ -127,7 +127,7 @@ Pendências da Fase 2:
   cobertura; publicação bloqueada sem override.
 
 ### 2.3 Atores ilegíveis
-- **Sintoma:** 14 atores como UUID, com "tipo desconhecido".
+- **Sintoma:** todos os atores como UUID, com "tipo desconhecido".
 - **Causa:** `rules/metrics_detail.go:141` usa o ID cru como rótulo.
 - **Correção:** resolver `user.id → displayName` (Linear `users`, GitHub `login`) e
   guardar o mapeamento no dataset. A exibição de nomes é uma preferência em
@@ -157,9 +157,9 @@ Pendências da Fase 2:
 
 | Item | Correção | Arquivo |
 |---|---|---|
-| 3.1 R-BLOCK infla severidade | `medium` só quando o bloqueado está `started`; backlog↔backlog vira `info` "dependência planejada". Agrupar por cadeia (ITEM-24 aparecia 7×). | `rules/rules.go:187`, `issueActiveObserved` |
+| 3.1 R-BLOCK infla severidade | `medium` só quando o bloqueado está `started`; backlog↔backlog vira `info` "dependência planejada". Agrupar por cadeia (o mesmo item aparecia várias vezes). | `rules/rules.go:187`, `issueActiveObserved` |
 | 3.2 Entrega sem peso | Somar pontos de estimativa ao lado da contagem. Achado `info` para lote (≥20 issues do mesmo projeto em 24h). | `rules/rules.go:488` |
-| 3.3 Movimentação entre teams | Achado quando `issue.createdAt < team.createdAt` ou há lacunas de numeração (ENG: 189). | `rules/` + query de teams |
+| 3.3 Movimentação entre teams | Achado quando `issue.createdAt < team.createdAt` ou há lacunas de numeração. | `rules/` + query de teams |
 | 3.4 Retrabalho estreito | Incluir taxa de duplicadas e transições para etapas de reprovação como tipos de retrabalho. | `rules/rules.go` |
 
 ## Fase 4 — Forma
@@ -175,8 +175,8 @@ Pendências da Fase 2:
 2. 2.1 e 2.2 (correção de números), depois 2.4 e 2.3.
 3. Fases 3 e 4.
 
-Para validar, gerar um novo snapshot da Acme e conferir contra os agregados do
-Linear (contagens por team/mês/status) e contra o aviso de repos privados. Para o
+Para validar, gerar um novo snapshot da mesma organização e conferir contra os
+agregados do Linear (contagens por team/mês/status) e contra o aviso de repos privados. Para o
 GitHub completo, é preciso um token de membro da org; isso não é código.
 
 Para cada PR, rodar o fluxo local de `gofmt`, `go test ./internal/investigation/...`,
