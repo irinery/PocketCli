@@ -29,4 +29,6 @@ func canonicalizeDataset(d *query.Dataset) {
 	sort.Slice(d.Rework, func(i, j int) bool { return d.Rework[i].ID < d.Rework[j].ID })
 	sort.Slice(d.Deliveries, func(i, j int) bool { return d.Deliveries[i].ID < d.Deliveries[j].ID })
 	sort.Slice(d.Metrics, func(i, j int) bool { return d.Metrics[i].ID < d.Metrics[j].ID })
+	sort.Slice(d.Cycles, func(i, j int) bool { return d.Cycles[i].ID < d.Cycles[j].ID })
+	sort.Slice(d.Snapshot.Actors, func(i, j int) bool { return d.Snapshot.Actors[i].ID < d.Snapshot.Actors[j].ID })
 }

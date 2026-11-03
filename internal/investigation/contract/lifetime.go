@@ -66,3 +66,25 @@ func EffectiveWindow(start, end string, resources []Resource) (from, to string, 
 	}
 	return from, to, true
 }
+
+// ObservedResources keeps the resources the run observed at least one record
+// for, so an empty or legacy repository does not stretch the window back to
+// its creation. Without coverage (a plan not run yet) every resource counts.
+func ObservedResources(resources []Resource, coverage []Coverage) []Resource {
+	if len(coverage) == 0 {
+		return resources
+	}
+	observed := make(map[string]bool)
+	for _, c := range coverage {
+		if c.Observed > 0 {
+			observed[c.ResourceID] = true
+		}
+	}
+	out := make([]Resource, 0, len(resources))
+	for _, r := range resources {
+		if observed[r.ID] {
+			out = append(out, r)
+		}
+	}
+	return out
+}

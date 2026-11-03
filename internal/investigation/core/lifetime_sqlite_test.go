@@ -15,8 +15,9 @@ import (
 )
 
 // The "all" period is each source's real lifetime: a repository from its
-// creation to its last push, Linear from the organization's creation unless
-// a team was targeted. A bounded period records none of it.
+// creation to its last push, a Linear team from its own creation to its
+// retirement. The organization's older date is only a plan note. A bounded
+// period records none of it.
 func TestAllPeriodResolvesSourceLifetimes(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -25,13 +26,15 @@ func TestAllPeriodResolvesSourceLifetimes(t *testing.T) {
 		githubFrom   string
 		githubTo     string
 		linearFrom   string
+		retiredAt    string
 		wantFrom     string
 		wantTo       string
 		wantLifetime bool
 	}{
-		{"organization", "all", nil, "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", "2019-05-02T00:00:00Z", "2019-05-02T00:00:00Z", "windowEnd", true},
-		{"targeted team", "all", []string{"T"}, "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", "2022-07-10T12:00:00Z", "2021-03-01T10:00:00Z", "windowEnd", true},
-		{"bounded period", "30d", nil, "", "", "", "", "", false},
+		{"organization", "all", nil, "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", "2022-07-10T12:00:00Z", "", "2021-03-01T10:00:00Z", "windowEnd", true},
+		{"targeted team", "all", []string{"T"}, "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", "2022-07-10T12:00:00Z", "", "2021-03-01T10:00:00Z", "windowEnd", true},
+		{"retired team", "all", nil, "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", "2022-07-10T12:00:00Z", "2026-08-20T12:56:16Z", "2021-03-01T10:00:00Z", "2026-09-30T08:30:00Z", true},
+		{"bounded period", "30d", nil, "", "", "", "", "", "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, _ := storage.Open(t.TempDir())
@@ -39,7 +42,11 @@ func TestAllPeriodResolvesSourceLifetimes(t *testing.T) {
 			ss.Put(context.Background(), contract.CredentialInput{Source: "github", Secret: "github-secret", Persistence: "session"})
 			ss.Put(context.Background(), contract.CredentialInput{Source: "linear", Secret: "linear-secret", Persistence: "session"})
 			transport := transportFunc(func(r *http.Request) (*http.Response, error) {
-				body := `{"data":{"organization":{"createdAt":"2019-05-02T00:00:00.000Z"},"teams":{"nodes":[{"id":"team-1","key":"T","name":"Team","createdAt":"2022-07-10T12:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}`
+				retired := "null"
+				if test.retiredAt != "" {
+					retired = `"` + test.retiredAt + `"`
+				}
+				body := `{"data":{"organization":{"createdAt":"2019-05-02T00:00:00.000Z"},"teams":{"nodes":[{"id":"team-1","key":"T","name":"Team","createdAt":"2022-07-10T12:00:00.000Z","retiredAt":` + retired + `}],"pageInfo":{"hasNextPage":false}}}}`
 				if r.URL.Host == "api.github.com" {
 					body = `{"id":42,"full_name":"acme/api","created_at":"2021-03-01T10:00:00Z","pushed_at":"2026-09-30T08:30:00Z","updated_at":"2026-10-20T00:00:00Z"}`
 				}
@@ -54,13 +61,20 @@ func TestAllPeriodResolvesSourceLifetimes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			noted := false
+			for _, w := range plan.Warnings {
+				noted = noted || strings.Contains(w, "organização Linear criada em 2019-05-02T00:00:00Z")
+			}
+			if noted != (test.preset == "all") {
+				t.Fatalf("nota da data da organização = %v, avisos %v", noted, plan.Warnings)
+			}
 			for _, r := range plan.Resources {
 				want := [2]string{}
 				if test.preset == "all" && r.Source == "github" {
 					want = [2]string{test.githubFrom, test.githubTo}
 				}
 				if test.preset == "all" && r.Source == "linear" {
-					want = [2]string{test.linearFrom, ""}
+					want = [2]string{test.linearFrom, test.retiredAt}
 				}
 				if got := [2]string{r.CreatedAt, r.LastChangeAt}; got != want {
 					t.Fatalf("%s %s: tempo de vida %v, esperado %v", r.Source, r.Name, got, want)

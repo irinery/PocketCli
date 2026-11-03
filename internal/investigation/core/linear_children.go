@@ -18,8 +18,8 @@ import (
 // Node selections are shared by the per-issue queries and the batch query, so
 // a page read either way projects the same fields.
 const (
-	linearHistoryNodes   = `id createdAt actor { id } fromState { name type } toState { name type } fromEstimate toEstimate fromProjectId toProjectId`
-	linearCommentNodes   = `id body createdAt updatedAt user { id }`
+	linearHistoryNodes   = `id createdAt actor { id displayName } fromState { name type } toState { name type } fromEstimate toEstimate fromProjectId toProjectId`
+	linearCommentNodes   = `id body createdAt updatedAt user { id displayName }`
 	linearRelationNodes  = `id type createdAt updatedAt issue { id } relatedIssue { id }`
 	linearAttachmentNode = `id url createdAt updatedAt`
 )
@@ -313,7 +313,8 @@ func (c *Core) projectLinearHistory(plan contract.Plan, issue query.Issue, raw j
 		FromProjectID string   `json:"fromProjectId"`
 		ToProjectID   string   `json:"toProjectId"`
 		Actor         *struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
 		} `json:"actor"`
 		FromState *struct {
 			Name string `json:"name"`
@@ -338,6 +339,7 @@ func (c *Core) projectLinearHistory(plan contract.Plan, issue query.Issue, raw j
 	actorID := ""
 	if item.Actor != nil {
 		actorID = item.Actor.ID
+		noteActor(d, actorID, "linear", safeTitle(item.Actor.DisplayName))
 	}
 	if item.FromState != nil || item.ToState != nil {
 		oldState, newState := "", ""
@@ -384,7 +386,8 @@ func (c *Core) projectLinearComment(plan contract.Plan, issue query.Issue, raw j
 		CreatedAt string `json:"createdAt"`
 		UpdatedAt string `json:"updatedAt"`
 		User      *struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
 		} `json:"user"`
 	}
 	if json.Unmarshal(raw, &item) != nil || item.ID == "" || item.CreatedAt == "" || item.UpdatedAt == "" {
@@ -401,6 +404,7 @@ func (c *Core) projectLinearComment(plan contract.Plan, issue query.Issue, raw j
 	actorID := ""
 	if item.User != nil {
 		actorID = item.User.ID
+		noteActor(d, actorID, "linear", safeTitle(item.User.DisplayName))
 	}
 	kind := "commented"
 	if item.UpdatedAt > item.CreatedAt {

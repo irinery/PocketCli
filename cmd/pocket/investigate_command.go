@@ -102,7 +102,7 @@ func newInvestigateCommand() *cobra.Command {
 		if _, err := rand.Read(key[:]); err != nil {
 			return err
 		}
-		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: startConfirmation(f, plan.Hash), IdempotencyKey: hex.EncodeToString(key[:])})
+		run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: startConfirmation(f, plan.Hash), IdempotencyKey: hex.EncodeToString(key[:]), PublishPartial: f.publishPartial})
 		if err != nil {
 			return err
 		}
@@ -165,6 +165,7 @@ func newInvestigateCommand() *cobra.Command {
 
 type investigationFlags struct {
 	scope, period, since, from, to, timezone, confirm, investigation string
+	publishPartial                                                   string
 	repos, teams                                                     []string
 	github, linear, noGitHub, noLinear, json, prepare, yes           bool
 	discoveryBudget                                                  int
@@ -174,7 +175,7 @@ type investigationFlags struct {
 var shortInvestigationFlags = map[string]string{"-p": "--period", "-r": "--repo", "-t": "--team", "-c": "--confirm", "-s": "--source"}
 
 // investigationValueFlags are the flags that take a value.
-var investigationValueFlags = map[string]bool{"--scope": true, "--period": true, "--since": true, "--from": true, "--to": true, "--until": true, "--timezone": true, "--confirm": true, "--investigation": true, "--discovery-budget": true, "--repo": true, "--team": true, "--source": true}
+var investigationValueFlags = map[string]bool{"--scope": true, "--period": true, "--since": true, "--from": true, "--to": true, "--until": true, "--timezone": true, "--confirm": true, "--investigation": true, "--discovery-budget": true, "--repo": true, "--team": true, "--source": true, "--publish-partial": true}
 
 var isoDateFlag = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
@@ -254,6 +255,11 @@ func parseInvestigationFlags(args []string) (investigationFlags, error) {
 			f.confirm = value
 		case "--investigation":
 			f.investigation = value
+		case "--publish-partial":
+			f.publishPartial = strings.TrimSpace(value)
+			if f.publishPartial == "" {
+				return f, fmt.Errorf("--publish-partial requer um motivo")
+			}
 		case "--discovery-budget":
 			budget, err := strconv.Atoi(value)
 			if err != nil || budget < 1 {
@@ -473,7 +479,7 @@ func runInvestigation(cmd *cobra.Command, args []string) error {
 	if _, err := rand.Read(key[:]); err != nil {
 		return err
 	}
-	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: confirm, IdempotencyKey: hex.EncodeToString(key[:])})
+	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: confirm, IdempotencyKey: hex.EncodeToString(key[:]), PublishPartial: f.publishPartial})
 	if err != nil {
 		return err
 	}
@@ -583,7 +589,7 @@ func runRefresh(cmd *cobra.Command, args []string) error {
 	if _, err := rand.Read(key[:]); err != nil {
 		return err
 	}
-	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: confirm, IdempotencyKey: hex.EncodeToString(key[:])})
+	run, err := c.StartRun(context.Background(), contract.RunRequest{PlanID: plan.ID, ConfirmedPlanHash: confirm, IdempotencyKey: hex.EncodeToString(key[:]), PublishPartial: f.publishPartial})
 	if err != nil {
 		return err
 	}
@@ -679,7 +685,7 @@ func printInvestigationPlanSummary(out io.Writer, plan contract.Plan, title stri
 		if l, err := time.LoadLocation(input.Period.Timezone); err == nil && input.Period.Timezone != "" {
 			loc = l
 		}
-		for i, line := range lifetimeRows(plan.Resources, plan.WindowEnd, input.Scope != nil && len(input.Scope.Teams) > 0, loc) {
+		for i, line := range lifetimeRows(plan.Resources, plan.WindowEnd, loc) {
 			label := ""
 			if i == 0 {
 				label = "Vida"
@@ -786,9 +792,9 @@ func formatWindow(start, end string, period contract.Period, resources ...contra
 }
 
 // lifetimeRows lists, for the "all" period, how long each repository lived
-// (creation to last change) and what the Linear history spans. A targeted
-// team has its own start; without a team scope it is the organization's.
-func lifetimeRows(resources []contract.Resource, windowEnd string, teamsScoped bool, loc *time.Location) []string {
+// (creation to last change) and each Linear team (creation to retirement or
+// the window end).
+func lifetimeRows(resources []contract.Resource, windowEnd string, loc *time.Location) []string {
 	day := func(value string) string {
 		at, err := time.Parse(time.RFC3339, value)
 		if err != nil {
@@ -797,7 +803,6 @@ func lifetimeRows(resources []contract.Resource, windowEnd string, teamsScoped b
 		return at.In(loc).Format("02/01/2006")
 	}
 	var lines []string
-	linearFrom := ""
 	for _, r := range resources {
 		from, to, ok := contract.ResourceLifetime(r, windowEnd)
 		if !ok {
@@ -807,15 +812,12 @@ func lifetimeRows(resources []contract.Resource, windowEnd string, teamsScoped b
 		case "github":
 			lines = append(lines, fmt.Sprintf("%s  %s → %s", r.Name, day(from), day(to)))
 		case "linear":
-			if teamsScoped {
-				lines = append(lines, fmt.Sprintf("Linear %s  %s → %s", r.Name, day(from), day(to)))
-			} else if linearFrom == "" || from < linearFrom {
-				linearFrom = from
+			retired := ""
+			if r.LastChangeAt != "" {
+				retired = " (aposentado)"
 			}
+			lines = append(lines, fmt.Sprintf("Linear %s  %s → %s%s", r.Name, day(from), day(to), retired))
 		}
-	}
-	if linearFrom != "" {
-		lines = append(lines, fmt.Sprintf("Linear (organização)  %s → %s", day(linearFrom), day(windowEnd)))
 	}
 	sort.Strings(lines)
 	if len(lines) > 6 {
