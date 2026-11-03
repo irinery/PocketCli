@@ -26,6 +26,8 @@ Para validar a projeção de dependências formais da timeline GitHub, rode `CGO
 
 Os runners isolam a stdin de cada teste em `/dev/null` e conferem se todos os arquivos descobertos foram processados. Testes que precisam de interação devem criar seu próprio pipe/PTY; depender da stdin do runner é considerado erro de contrato.
 
+Para validar a seleção da conta GitHub salva e a alternativa por outra PAT, rode `go test -buildvcs=false -run 'TestGitHubLoginFromCLI|TestChooseSavedGitHubCredential|TestLoadCredentialsUsesGitHubCLISessionWhenEnvIsMissing' ./cmd/pocket`. Pré-requisitos: Go; os testes usam um `gh` falso e entrada local, sem credenciais reais ou rede.
+
 Para validar isoladamente que o helper PTY preserva `/dev/null`, inclusive quando executado como root em container, rode `sh tests/test_pocket_resume.sh`. Pré-requisitos: `script` (util-linux), shell POSIX e `/dev/null` como character device. Variáveis de ambiente: nenhuma obrigatória.
 
 Para reproduzir localmente a Fase 02 com a mesma ordem básica do workflow, rode:
