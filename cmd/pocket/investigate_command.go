@@ -879,6 +879,21 @@ func loadCredentials(store *secrets.SessionStore, input contract.PlanInput, allo
 				credentialSource = "gh auth token"
 			}
 		}
+		if value != "" && credentialSource == "gh auth token" && allowPrompt {
+			login := githubLoginFromCLI()
+			account := "conta ativa salva no GitHub CLI"
+			if login != "" {
+				account += " (@" + login + ")"
+			}
+			useSaved, err := chooseSavedGitHubCredential(os.Stdin, os.Stderr, account)
+			if err != nil {
+				return err
+			}
+			if !useSaved {
+				value = ""
+				credentialSource = source.env
+			}
+		}
 		if value != "" && allowPrompt {
 			// Say it: a key from the environment skips the prompt, and a stale
 			// one (revoked, from an old session) is a common reason for a refusal.
@@ -934,6 +949,60 @@ func githubTokenFromCLI() string {
 		return ""
 	}
 	return token
+}
+
+// githubLoginFromCLI resolves the login attached to the active saved gh
+// credential. It returns no diagnostic details so auth/API failures never
+// expose command output or credentials.
+func githubLoginFromCLI() string {
+	path, err := osexec.LookPath("gh")
+	if err != nil {
+		return ""
+	}
+	output, err := osexec.Command(path, "api", "user", "--hostname", "github.com", "--jq", ".login").Output()
+	if err != nil {
+		return ""
+	}
+	login := strings.TrimSpace(string(output))
+	if login == "" || strings.ContainsAny(login, "\r\n\t ") {
+		return ""
+	}
+	return login
+}
+
+func chooseSavedGitHubCredential(input io.Reader, output io.Writer, account string) (bool, error) {
+	fmt.Fprintf(output, "GitHub: encontrei uma credencial salva para %s.\n", account)
+	fmt.Fprint(output, "Usar essa conta? [S/n]: ")
+	var choiceBytes []byte
+	for {
+		var char [1]byte
+		n, err := input.Read(char[:])
+		if n == 1 {
+			if char[0] == '\n' {
+				break
+			}
+			if char[0] != '\r' && len(choiceBytes) < 64 {
+				choiceBytes = append(choiceBytes, char[0])
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				return false, err
+			}
+			break
+		}
+		if n == 0 {
+			return false, io.ErrNoProgress
+		}
+	}
+	choice := strings.TrimSpace(string(choiceBytes))
+	if strings.EqualFold(choice, "n") || strings.EqualFold(choice, "nao") || strings.EqualFold(choice, "não") {
+		return false, nil
+	}
+	if choice == "" || strings.EqualFold(choice, "s") || strings.EqualFold(choice, "sim") {
+		return true, nil
+	}
+	return false, &contract.ErrorResponse{Code: "ERR_VALIDATION", Message: "responda S para usar a conta salva ou N para informar outra PAT"}
 }
 
 func waitInvestigation(cmd *cobra.Command, c *core.Core, run contract.Run, jsonMode bool) error {
