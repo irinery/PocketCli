@@ -364,7 +364,9 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 		entityIDs[entity.ID] = true
 	}
 	for _, link := range data.Links {
-		if !entityIDs[link.SourceID] || (allEntityIDs[link.TargetID] && !entityIDs[link.TargetID]) {
+		// An out_of_scope link points at a pull request that was never
+		// collected, so there is no entity on the other end.
+		if link.Status == "out_of_scope" || !entityIDs[link.SourceID] || (allEntityIDs[link.TargetID] && !entityIDs[link.TargetID]) {
 			continue
 		}
 		status := "candidate"

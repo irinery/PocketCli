@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -50,8 +51,33 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 	for _, link := range d.Links {
 		linked[link.ID] = true
 	}
+	collected := make(map[string]bool)
+	for _, r := range plan.Resources {
+		if r.Source == "github" {
+			collected[strings.ToLower(r.Name)] = true
+		}
+	}
+	for _, pr := range d.PullRequests {
+		collected[strings.ToLower(pr.Repository)] = true
+	}
+	// A pull request in a repository the run did not collect still shows the
+	// issue has code behind it; it is kept as out_of_scope instead of being
+	// dropped, and its repository is reported as a coverage gap.
+	var pullReferences int64
+	outside := make(map[string]int64)
 	for _, attachment := range d.Attachments {
 		if attachment.PullKey == "" || attachment.IssueID == "" || attachment.EvidenceID == "" {
+			continue
+		}
+		pullReferences++
+		repo := strings.SplitN(attachment.PullKey, "#", 2)[0]
+		if !collected[repo] {
+			outside[repo]++
+			id := "link-" + storage.Hash([]byte(attachment.IssueID + ":references_pr:" + attachment.PullKey + ":" + attachment.EvidenceID))[:24]
+			if !linked[id] {
+				linked[id] = true
+				d.Links = append(d.Links, contract.LinkRecord{ID: id, SourceID: attachment.IssueID, Relation: "references_pr", TargetID: "github-pr:" + attachment.PullKey, Status: "out_of_scope", EvidenceID: attachment.EvidenceID})
+			}
 			continue
 		}
 		pr, ok := prs[attachment.PullKey]
@@ -226,8 +252,43 @@ func (c *Core) linkDataset(plan contract.Plan, d *query.Dataset) error {
 		status = "unsupported"
 		reason = "nenhuma coleção de PR foi selecionada; vínculos formais Linear issue-PR não estão disponíveis"
 	}
+	d.Coverage = append(d.Coverage, referencedRepositoryCoverage(c, plan, pullReferences, outside)...)
 	d.Coverage = append(d.Coverage, c.coverage(contract.Resource{Source: "analysis", ID: plan.InvestigationID}, "links", status, int64(len(d.Links)), reason))
 	return nil
+}
+
+// referencedRepositoryCoverage turns the pull request links found in Linear
+// attachments into coverage: one row per cited repository the run did not
+// collect, and one row with how many references were resolvable at all.
+func referencedRepositoryCoverage(c *Core, plan contract.Plan, total int64, outside map[string]int64) []contract.Coverage {
+	if total == 0 {
+		return nil
+	}
+	repos := make([]string, 0, len(outside))
+	var missing int64
+	for repo, n := range outside {
+		repos = append(repos, repo)
+		missing += n
+	}
+	sort.Strings(repos)
+	status, reason := "unauthorized", "PRs citados em anexos Linear; repositório não visível à credencial GitHub desta investigação"
+	switch {
+	case !plan.Input.GitHubEnabled:
+		status, reason = "not_selected", "PRs citados em anexos Linear; coleta GitHub não selecionada"
+	case plan.Input.Scope != nil && len(plan.Input.Scope.Repositories) > 0:
+		status, reason = "not_selected", "PRs citados em anexos Linear; repositório fora dos selecionados"
+	}
+	out := make([]contract.Coverage, 0, len(repos)+1)
+	for _, repo := range repos {
+		out = append(out, c.coverage(contract.Resource{Source: "github", ID: repo}, contract.ReferencedRepositoryCollection, status, outside[repo], reason))
+	}
+	refs := c.coverage(contract.Resource{Source: "analysis", ID: plan.InvestigationID}, contract.PullReferencesCollection, "complete", total-missing, "todos os PRs citados em anexos Linear estão em repositórios coletados")
+	refs.Expected = &total
+	if missing > 0 {
+		refs.Status = "partial"
+		refs.Reason = fmt.Sprintf("%d de %d PRs citados em anexos Linear estão em %d repositórios não coletados", missing, total, len(repos))
+	}
+	return append(out, refs)
 }
 
 func (c *Core) sourceBody(evidenceID string) (string, error) {
