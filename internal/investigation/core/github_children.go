@@ -110,8 +110,7 @@ func (c *Core) collectGitHubChildren(ctx context.Context, plan contract.Plan, r 
 			}
 			items, complete, err := c.githubChildPages(ctx, plan, r, collection.name, target.Number, path, run)
 			if err != nil {
-				var coded *contract.ErrorResponse
-				if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
+				if fatalCollectionError(err) {
 					return err
 				}
 				status, reason = "partial", "revisões ou timeline não totalmente acessíveis"

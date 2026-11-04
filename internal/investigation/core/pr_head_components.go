@@ -9,6 +9,7 @@ import (
 	"path"
 	"sort"
 
+	"pocketcli/internal/investigation/collect"
 	"pocketcli/internal/investigation/contract"
 	"pocketcli/internal/investigation/gitmirror"
 	"pocketcli/internal/investigation/query"
@@ -219,7 +220,7 @@ func (c *Core) mapPRHeadFiles(ctx context.Context, plan contract.Plan, r contrac
 
 func fatalCollectionError(err error) bool {
 	var coded *contract.ErrorResponse
-	return errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RATE_LIMITED" || coded.Code == "ERR_RESOURCE_EXHAUSTED")
+	return collect.AuthenticationRejected(err) || errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RATE_LIMITED" || coded.Code == "ERR_RESOURCE_EXHAUSTED")
 }
 
 func (c *Core) cachedGitHubObject(ctx context.Context, plan contract.Plan, r contract.Resource, run *contract.Run, kind, authID, oid, suffix string) (json.RawMessage, error) {

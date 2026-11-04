@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -61,8 +60,7 @@ func (c *Core) prefetchGitHubFormalPages(ctx context.Context, plan contract.Plan
 		return nil, fault("ERR_RESOURCE_EXHAUSTED", "orçamento de transferência atingido")
 	}
 	if err != nil {
-		var coded *contract.ErrorResponse
-		if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
+		if fatalCollectionError(err) {
 			return nil, err
 		}
 		for _, target := range fresh {

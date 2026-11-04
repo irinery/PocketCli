@@ -413,6 +413,9 @@ func (c *Core) PreparePlan(ctx context.Context, input contract.PlanInput) (contr
 	}{canonicalInput, auth, resources, period.WindowStart, period.WindowEnd})
 	id := planID
 	warnings := []string{}
+	if input.GitHubEnabled && len(input.Scope.Repositories) == 0 {
+		warnings = append(warnings, "GitHub: a descoberta lista apenas repositórios visíveis à credencial escolhida; confira os privados da organização e a autorização da PAT/SSO antes de confirmar")
+	}
 	if input.Period.Preset == "all" && linearOrgCreatedAt != "" {
 		warnings = append(warnings, "organização Linear criada em "+linearOrgCreatedAt+"; cada team usa a própria data de criação e de aposentadoria")
 	}
@@ -521,8 +524,11 @@ func (c *Core) discoverRepository(ctx context.Context, name string, lifetime boo
 		return empty, err
 	}
 	endpoint := base.ResolveReference(&url.URL{Path: "/repos/" + name}).String()
-	data, _, _, err := c.collector.GetGitHub(ctx, endpoint)
+	data, _, status, err := c.collector.GetGitHub(ctx, endpoint)
 	if err != nil {
+		if status == http.StatusNotFound {
+			return empty, fault("ERR_FORBIDDEN", "GitHub não encontrou o repositório selecionado (HTTP 404): confira owner/repo e se a conta/PAT tem acesso ao repositório privado e autorização da organização/SSO")
+		}
 		return empty, err
 	}
 	var repo struct {

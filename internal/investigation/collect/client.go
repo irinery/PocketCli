@@ -582,16 +582,30 @@ func (c *Client) LinearQuery(ctx context.Context, query string, variables map[st
 	return envelope.Data, nil
 }
 
-// deniedError says which source refused and why. 401 means the source does
-// not accept the key (wrong, expired or revoked); 403 means it accepts the key
-// but the key cannot read the resource. The code stays ERR_FORBIDDEN.
+type sourceDenial struct {
+	*contract.ErrorResponse
+	status int
+}
+
+func (e *sourceDenial) Unwrap() error { return e.ErrorResponse }
+
+// AuthenticationRejected identifies an invalid credential without parsing an
+// external body or the operator-facing message. Object-level 403s still allow
+// the collectors to fall back to individual requests.
+func AuthenticationRejected(err error) bool {
+	var denial *sourceDenial
+	return errors.As(err, &denial) && denial.status == http.StatusUnauthorized
+}
+
+// deniedError distinguishes an invalid credential from object-level denial
+// while preserving the public ERR_FORBIDDEN contract.
 func deniedError(source string, status int) error {
 	name := "GitHub"
 	if source == "linear" {
 		name = "Linear"
 	}
 	if status == http.StatusUnauthorized {
-		return &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: name + " recusou a chave (HTTP 401): inválida, expirada ou revogada"}
+		return &sourceDenial{ErrorResponse: &contract.ErrorResponse{Code: "ERR_FORBIDDEN", Message: name + " recusou a chave (HTTP 401): inválida, expirada ou revogada"}, status: status}
 	}
 	message := name + " negou a leitura (HTTP 403): a chave não tem permissão para este recurso"
 	if source == "github" {
