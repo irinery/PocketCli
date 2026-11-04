@@ -481,6 +481,7 @@ const realAppJSTemplate = `(() => {
     summary.append(node('p', 'muted', 'Casos selecionados: ' + (report.cases || []).length + ' de ' + report.total_cases + (report.total_cases > (report.cases || []).length ? ' · seleção parcial' : '')));
     (report.limitations || []).forEach(item => summary.append(node('p', 'callout', item)));
     (report.next_actions || []).forEach(item => summary.append(node('p', 'muted', 'Próxima ação: ' + item)));
+    if (capabilities && capabilities.decision_timeline_available) summary.append(button('Timeline de decisões e mudanças', () => openDecisionTimeline('')));
     parent.append(summary);
     const objectives = card('Objetivos');
     (report.objectives || []).forEach(item => {
@@ -558,6 +559,54 @@ const realAppJSTemplate = `(() => {
     })));
     parent.append(actions);
   }
+  function renderTimelineReason(parent, item) {
+    const basis = item.rationale_basis || 'unknown';
+    const title = basis === 'source' ? 'Motivo declarado na fonte' : basis === 'hypothesis' ? 'Hipótese de intenção' : (item.rationale ? 'Motivo não verificado' : 'Motivo não identificado');
+    const confidence = item.confidence === 'low' ? 'baixa' : item.confidence === 'recorded' ? 'registrado na fonte' : 'indeterminada';
+    if (item.rationale || item.rationale_basis) parent.append(node('p', basis === 'hypothesis' ? 'callout' : 'muted', title + ': ' + (item.rationale || 'não há motivo sustentado pelo registro') + (basis === 'source' ? ' · comprovação no trecho da fonte' : ' · confiança ' + confidence)));
+    (item.alternatives || []).forEach(value => parent.append(node('p', 'muted', 'Outra explicação possível: ' + value)));
+    (item.limitations || []).forEach(value => parent.append(node('p', 'muted', value)));
+  }
+  async function openDecisionTimeline(cursor, state = {cursors: new Set(), ids: new Set(), total: null}, scope = {snapshot: snapshot.id, analysis: activeAnalysisID}) {
+    try {
+    if (state.cursors.has(cursor)) throw new Error('A timeline repetiu um cursor.');
+    state.cursors.add(cursor);
+    detail.hidden = false;
+    detail.replaceChildren(node('p', 'loading', 'Carregando timeline de decisões…'));
+    const params = new URLSearchParams({limit: '50'}); if (cursor) params.set('cursor', cursor);
+    const page = await api('/snapshots/' + segment(scope.snapshot) + '/insights/' + segment(scope.analysis) + '/timeline?' + params);
+    if (snapshot.id !== scope.snapshot || activeAnalysisID !== scope.analysis) return;
+    if (page.snapshot_id !== scope.snapshot || page.analysis_id !== scope.analysis || !Array.isArray(page.items) || !Number.isSafeInteger(page.total) || page.total < 0 || page.items.length > 50 || page.items.length > page.total || (state.total !== null && state.total !== page.total) || (page.next_cursor && (state.cursors.has(page.next_cursor) || !page.items.length))) throw new Error('A timeline retornou outro escopo ou paginação inválida.');
+    state.total = page.total;
+    const box = card('Timeline de decisões e mudanças · ' + page.total + ' registros');
+    box.append(button('Fechar', () => { detail.hidden = true; }), node('p', 'muted', 'O executor registrado pode ser diferente de quem decidiu. Hipóteses de intenção são leituras possíveis das mudanças, com confiança baixa.'));
+    if (!page.items.length) box.append(node('p', 'empty', 'Nenhuma decisão ou mudança elegível foi observada nesta análise.'));
+    page.items.forEach(item => {
+      const key = item.kind + ':' + item.id;
+      if (!item.id || state.ids.has(key)) throw new Error('A timeline contém registros repetidos.');
+      state.ids.add(key);
+      const row = card((item.at && Number.isFinite(Date.parse(item.at)) ? item.at : 'Data/ordem desconhecida') + ' · ' + (item.entity_identifier || item.entity_id || 'Decisão registrada'));
+      row.append(node('h3', '', item.summary));
+      if (item.kind === 'decision') row.append(node('p', 'muted', 'Decisor informado pela análise: ' + (item.decision_maker_label || item.decision_maker_id || 'não identificado') + ' · registrado por: ' + (item.recorded_by_label || item.recorded_by_id || 'não identificado')));
+      else row.append(node('p', 'muted', 'Executor registrado: ' + (item.actor_label || item.actor_id || 'não identificado') + ' · de: ' + (item.old_value ?? 'não registrado') + ' · para: ' + (item.new_value ?? 'não registrado')));
+      renderTimelineReason(row, item);
+      (item.evidence_ids || []).forEach(id => row.append(button('Evidência ' + id, async () => {
+        const proof = await api('/snapshots/' + segment(scope.snapshot) + '/evidence/' + segment(id));
+        row.append(node('p', 'muted', proof.locator || id), node('p', '', proof.preview || 'Conteúdo não disponível nesta visualização.'));
+      })));
+      box.append(row);
+    });
+    if (page.next_cursor && state.ids.size >= page.total) throw new Error('A timeline avançou além do total.');
+    if (!page.next_cursor && state.ids.size !== page.total) throw new Error('A timeline terminou antes do total.');
+    if (cursor) box.append(button('Voltar ao início', () => openDecisionTimeline('')));
+    if (page.next_cursor) box.append(button('Próxima página', () => openDecisionTimeline(page.next_cursor, state, scope)));
+    detail.replaceChildren(box);
+    } catch (error) {
+      if (snapshot.id !== scope.snapshot || activeAnalysisID !== scope.analysis) return;
+      detail.replaceChildren(button('Fechar', () => { detail.hidden = true; }));
+      fail(detail, error);
+    }
+  }
   async function renderInsightCases(parent, cursor, pageState = {requested: new Set(['']), ids: new Set(), total: null, lastID: ''}) {
     if (cursor && pageState.requested.has(cursor)) throw new Error('A paginação de casos repetiu um cursor.');
     if (cursor) pageState.requested.add(cursor);
@@ -613,25 +662,30 @@ const realAppJSTemplate = `(() => {
     (detailRecord.entities || []).forEach(item => box.append(node('p', 'muted', 'Entidade ' + item.id + ' · ' + labelPt(item.kind) + ' · ' + item.source + ' · recurso ' + item.resource_id + ' · ' + item.identifier + ' · ' + item.title + ' · estado temporal ' + labelPt(item.state_temporal_status))));
     const timeline = [];
     (detailRecord.claims || []).forEach(item => timeline.push({id: item.id, kind: 'Afirmação · ' + labelPt(item.kind) + ' · ' + labelPt(item.status), at: item.event_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, text: item.text, evidence: item.citations || []}));
-    (detailRecord.decisions || []).forEach(item => timeline.push({id: item.id, kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, claims: item.claim_ids, objectives: item.objective_ids, decisionMaker: item.decision_maker_id, recordedBy: item.recorded_by_id, text: item.question + ' → ' + item.choice + ' · ' + item.rationale, evidence: item.citations || []}));
-    (detailRecord.timeline || []).filter(item => item.kind !== 'decision').forEach(item => timeline.push({id: item.id, kind: labelPt(item.kind) + ' · ' + labelPt(item.source), at: item.at, end: item.end, observedAt: item.observed_at, actor: item.actor_id, oldValue: item.old_value, newValue: item.new_value, scope: item.scope, entities: item.entity_id ? [item.entity_id] : [], text: item.summary, evidence: (item.evidence_ids || []).map(id => ({evidence_id: id, quote: ''}))}));
+    const decisionMeta = new Map((detailRecord.timeline || []).filter(item => item.kind === 'decision').map(item => [item.id, item]));
+    (detailRecord.decisions || []).forEach(item => {
+      const meta = decisionMeta.get(item.id) || {};
+      timeline.push({...meta, id: item.id, rationale: meta.rationale || item.rationale, rationale_basis: meta.rationale_basis || 'unknown', kind: 'Decisão · ' + labelPt(item.status), at: item.decided_at, scope: item.scope && item.scope.description, method: item.method, validity: item.validity_status, validFrom: item.valid_from, validTo: item.valid_to, entities: item.entity_ids, claims: item.claim_ids, objectives: item.objective_ids, decisionMaker: meta.decision_maker_label || item.decision_maker_id, recordedBy: meta.recorded_by_label || item.recorded_by_id, text: item.question + ' → ' + item.choice, evidence: item.citations || []});
+    });
+    (detailRecord.timeline || []).filter(item => item.kind !== 'decision').forEach(item => timeline.push({...item, kind: labelPt(item.kind) + ' · ' + labelPt(item.source), at: item.at, end: item.end, observedAt: item.observed_at, actor: item.actor_label || item.actor_id, oldValue: item.old_value, newValue: item.new_value, scope: item.scope, entities: item.entity_id ? [item.entity_id] : [], text: item.summary, evidence: (item.evidence_ids || []).map(id => ({evidence_id: id, quote: ''}))}));
     const timelineTime = item => {
       if (!item.at || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(item.at)) return null;
       const value = Date.parse(item.at); return Number.isFinite(value) ? value : null;
     };
     timeline.sort((a, b) => { const at = timelineTime(a), bt = timelineTime(b); if (at === null) return bt === null ? 0 : 1; if (bt === null) return -1; return at - bt; });
-    const timelineBox = card('Timeline');
+    const timelineBox = card('Timeline de decisões e mudanças');
     timeline.forEach(item => {
       const time = timelineTime(item);
       const dateLabel = time === null ? 'Data/ordem desconhecida' + (item.at ? ' (' + item.at + ')' : '') : item.at;
       timelineBox.append(node('h3', '', dateLabel + ' · ' + item.id + ' · ' + item.kind), node('p', '', item.text));
+      renderTimelineReason(timelineBox, item);
       if (item.scope) timelineBox.append(node('p', 'muted', 'Escopo: ' + item.scope));
-      if (item.observedAt || item.end || item.actor || item.oldValue || item.newValue) timelineBox.append(node('p', 'muted', 'Observado: ' + (item.observedAt || 'não informado') + ' · até: ' + (item.end || 'não informado') + ' · ator: ' + (item.actor || 'não informado') + ' · de: ' + (item.oldValue || 'não informado') + ' · para: ' + (item.newValue || 'não informado')));
+      if (item.observedAt || item.end || item.actor || item.oldValue || item.newValue) timelineBox.append(node('p', 'muted', 'Observado: ' + (item.observedAt || 'não informado') + ' · até: ' + (item.end || 'não informado') + ' · executor registrado: ' + (item.actor || 'não informado') + ' · de: ' + (item.oldValue || 'não informado') + ' · para: ' + (item.newValue || 'não informado')));
       if (item.method || item.validity || item.validFrom || item.validTo) timelineBox.append(node('p', 'muted', 'Método: ' + labelPt(item.method) + ' · validade: ' + labelPt(item.validity) + ' · de ' + (item.validFrom || 'data desconhecida') + ' até ' + (item.validTo || 'fim não determinado')));
       if (item.entities && item.entities.length) timelineBox.append(node('p', 'muted', 'Entidades: ' + item.entities.join(', ')));
       if (item.claims && item.claims.length) timelineBox.append(node('p', 'muted', 'Afirmações relacionadas: ' + item.claims.join(', ')));
       if (item.objectives && item.objectives.length) timelineBox.append(node('p', 'muted', 'Objetivos: ' + item.objectives.join(', ')));
-      if (item.decisionMaker || item.recordedBy) timelineBox.append(node('p', 'muted', 'Responsável pela decisão: ' + (item.decisionMaker || 'não informado') + ' · registrado por: ' + (item.recordedBy || 'não informado')));
+      if (item.decisionMaker || item.recordedBy) timelineBox.append(node('p', 'muted', 'Decisor informado pela análise: ' + (item.decisionMaker || 'não informado') + ' · registrado por: ' + (item.recordedBy || 'não informado')));
       (item.evidence || []).forEach(citation => timelineBox.append(node('p', 'muted', citation.evidence_id + ': ' + citation.quote)));
     });
     (detailRecord.relations || []).forEach(item => {

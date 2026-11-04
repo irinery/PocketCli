@@ -13,6 +13,32 @@ import (
 	"pocketcli/internal/investigation/storage"
 )
 
+func TestInsightTimelineActorsStayScopedAndPseudonymous(t *testing.T) {
+	store, err := storage.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := query.Dataset{Snapshot: contract.Snapshot{SchemaVersion: contract.Version, Resources: []contract.Resource{{ID: "team", Source: "linear", Name: "TEST"}}, Actors: []contract.Actor{{ID: "executor", Name: "Synthetic Source Name", Pseudonym: "Pessoa A"}, {ID: "outside-actor", Name: "Other Synthetic Name", Pseudonym: "Pessoa B"}}}, Issues: []query.Issue{{ID: "item", Source: "linear", TeamID: "team", Identifier: "TEST-1"}}, Events: []query.Event{{ID: "change", EntityID: "item", Type: "state_changed", ActorID: "executor"}}, Estimates: []contract.EstimateRecord{{ID: "estimate", IssueID: "item", ActorID: "executor"}}}
+	snapshot, d := sealInsightDataset(t, d)
+	if err := store.Put("snapshots", snapshot.ID, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("datasets", snapshot.ID, d); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := (&Core{store: store}).ReadInsightSource(context.Background(), snapshot.ID, insightcontract.AnalysisConfig{RequestedScope: insightcontract.Scope{Resources: []insightcontract.ResourceRef{{ID: "team", Source: "linear"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(bundle)
+	if len(bundle.Actors) != 1 || bundle.Actors[0].Label != "Pessoa A" || strings.Contains(string(encoded), "Synthetic Source Name") || strings.Contains(string(encoded), "outside-actor") {
+		t.Fatalf("actor scope/privacy failed: %+v", bundle.Actors)
+	}
+	if len(bundle.Estimates) != 1 || bundle.Estimates[0].ActorID == nil || *bundle.Estimates[0].ActorID != "executor" {
+		t.Fatal("estimate executor lost")
+	}
+}
+
 func TestReadInsightSourceSeparatesScopeCoverageEvidenceAndLinks(t *testing.T) {
 	store, err := storage.Open(t.TempDir())
 	if err != nil {

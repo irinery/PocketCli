@@ -666,6 +666,39 @@ func (s *Service) GetInsightCase(ctx context.Context, snapshotID, analysisID, ca
 	return detail, nil
 }
 
+// ListDecisionTimeline reads only the frozen analysis; it never collects data
+// or calls a reasoning provider. Its cursor cannot be reused by case pages.
+func (s *Service) ListDecisionTimeline(ctx context.Context, snapshotID, analysisID, cursor string, limit int) (insightcontract.TimelinePage, error) {
+	a, err := s.loadArtifacts(ctx, snapshotID, analysisID)
+	if err != nil {
+		return insightcontract.TimelinePage{}, err
+	}
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 1 || limit > 200 {
+		return insightcontract.TimelinePage{}, errors.New("ERR_VALIDATION: limit inválido")
+	}
+	items := decisionTimeline(a.Source, a.Decisions.Decisions)
+	scope := snapshotID + ":" + analysisID + ":" + timelineVersion
+	start, err := decodeCursor(cursor, scope)
+	if err != nil {
+		return insightcontract.TimelinePage{}, err
+	}
+	if start > len(items) {
+		return insightcontract.TimelinePage{}, errors.New("ERR_VALIDATION: cursor inválido")
+	}
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	next := ""
+	if end < len(items) {
+		next = encodeCursor(scope, end)
+	}
+	return insightcontract.TimelinePage{SnapshotID: snapshotID, AnalysisID: analysisID, Total: int64(len(items)), Items: items[start:end], NextCursor: next}, nil
+}
+
 func (s *Service) loadArtifacts(ctx context.Context, snapshotID, analysisID string) (analysisArtifacts, error) {
 	if err := ctx.Err(); err != nil {
 		return analysisArtifacts{}, err

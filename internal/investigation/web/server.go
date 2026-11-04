@@ -495,6 +495,8 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if r.Method == http.MethodGet && path == "/capabilities" {
 		capabilities := map[string]any{"contract": contract.Version, "insight_contract": insightcontract.Version, "insights_available": h.insightReader != nil, "analysis_available": h.analysis != nil, "executive_export_available": h.executiveExports != nil, "demo": h.options.Demo, "modules": []string{"github_issues", "code_history", "ci", "deployments", "runtime_import"}, "pdf_available": h.reports != nil, "claude_available": h.editorial != nil}
+		_, timelineAvailable := h.insightReader.(insightcontract.DecisionTimelineReader)
+		capabilities["decision_timeline_available"] = timelineAvailable
 		if h.reports == nil {
 			reason := strings.TrimSpace(h.options.PDFUnavailableReason)
 			if reason == "" {
@@ -724,6 +726,31 @@ func (h *Handler) routeAPI(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		h.respond(w, out, err)
+		return
+	}
+	if len(parts) == 5 && parts[0] == "snapshots" && parts[2] == "insights" && parts[4] == "timeline" && r.Method == http.MethodGet {
+		reader, ok := h.insightReader.(insightcontract.DecisionTimelineReader)
+		if !ok {
+			h.unavailable(w, "timeline de decisões")
+			return
+		}
+		if !h.ownsSnapshot(w, r.Context(), parts[1]) || !h.requireAuthorizedInsight(w, parts[1], parts[3]) {
+			return
+		}
+		limit, ok := insightLimit(w, r.URL.Query().Get("limit"), 50)
+		if !ok {
+			return
+		}
+		page, err := reader.ListDecisionTimeline(r.Context(), parts[1], parts[3], r.URL.Query().Get("cursor"), limit)
+		if err != nil {
+			h.fail(w, err)
+			return
+		}
+		if page.SnapshotID != parts[1] || page.AnalysisID != parts[3] || page.Total < 0 || len(page.Items) > limit || int64(len(page.Items)) > page.Total || (page.NextCursor != "" && (page.NextCursor == r.URL.Query().Get("cursor") || len(page.Items) == 0)) {
+			h.writeError(w, 502, "ERR_INSIGHT_SCOPE", "A timeline retornou outro escopo ou paginação inválida.")
+			return
+		}
+		h.writeJSON(w, http.StatusOK, page)
 		return
 	}
 	if len(parts) == 5 && parts[0] == "snapshots" && parts[2] == "insights" && parts[4] == "cases" && r.Method == http.MethodGet {

@@ -159,3 +159,5 @@ O workflow inclui o job `build-and-smoke-alpine`, que simula um ambiente próxim
 - limites de execução (`GOMAXPROCS=1`, `GOMEMLIMIT=768MiB`).
 
 Ao adicionar testes que dependam de Tailscale, mantenha compatibilidade com esse mock.
+
+Timeline de decisões: `go test -buildvcs=false -run 'TestDecisionTimeline|TestInsightTimelineActors' ./internal/investigation/insights ./internal/investigation/core ./internal/investigation/web ./internal/investigation/report`. Requer Go; usa somente evidências sintéticas e storage temporário, sem tokens, rede ou provedor externo.

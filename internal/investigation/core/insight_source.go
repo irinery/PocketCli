@@ -239,6 +239,7 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 		Stages: []insightcontract.Stage{}, Estimates: []insightcontract.EstimateChange{}, Deliveries: []insightcontract.DeliveryObservation{}, LegacyFindings: []insightcontract.LegacyFinding{}, Limitations: []string{},
 	}
 	requestedResources := cfg.RequestedScope.Resources
+
 	resourceForName := func(source, name string) (contract.Resource, bool) {
 		for _, resource := range snapshot.Resources {
 			if resource.Source == source && (resource.Name == name || resource.ID == name) {
@@ -405,7 +406,7 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 		if !entityIDs[estimate.IssueID] {
 			continue
 		}
-		bundle.Estimates = append(bundle.Estimates, insightcontract.EstimateChange{ID: estimate.ID, EntityID: estimate.IssueID, EventAt: nonempty(estimate.EventAt), Before: estimate.Before, After: estimate.After, Timing: normalizeEstimateTiming(estimate.Timing), ScaleID: nil, EvidenceIDs: evidenceList(estimate.EvidenceID)})
+		bundle.Estimates = append(bundle.Estimates, insightcontract.EstimateChange{ID: estimate.ID, EntityID: estimate.IssueID, ActorID: nonempty(estimate.ActorID), EventAt: nonempty(estimate.EventAt), Before: estimate.Before, After: estimate.After, Timing: normalizeEstimateTiming(estimate.Timing), ScaleID: nil, EvidenceIDs: evidenceList(estimate.EvidenceID)})
 	}
 	for _, delivery := range data.Deliveries {
 		if !entityIDs[delivery.ComponentID] {
@@ -466,6 +467,28 @@ func (c *Core) ReadInsightSource(ctx context.Context, snapshotID string, cfg ins
 		}
 	}
 	bundle.Evidence = filteredEvidence
+	selectedActors := map[string]bool{}
+	for _, event := range bundle.Events {
+		if event.ActorID != nil {
+			selectedActors[*event.ActorID] = true
+		}
+	}
+	for _, estimate := range bundle.Estimates {
+		if estimate.ActorID != nil {
+			selectedActors[*estimate.ActorID] = true
+		}
+	}
+	for _, entity := range bundle.Entities {
+		if entity.OwnerID != nil {
+			selectedActors[*entity.OwnerID] = true
+		}
+	}
+	for _, actor := range data.Snapshot.Actors {
+		if selectedActors[actor.ID] {
+			bundle.Actors = append(bundle.Actors, insightcontract.TimelineActor{ID: actor.ID, Label: actor.Pseudonym})
+		}
+	}
+	sort.Slice(bundle.Actors, func(i, j int) bool { return bundle.Actors[i].ID < bundle.Actors[j].ID })
 	sortSourceBundle(&bundle)
 	canonical, err := json.Marshal(struct {
 		SnapshotHash           string                         `json:"snapshot_hash"`
