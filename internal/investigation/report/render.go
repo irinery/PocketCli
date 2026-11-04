@@ -14,7 +14,7 @@ import (
 // RendererVersion identifies the in-process PDF layout recorded in each
 // report. The CLI report cache includes it, so a layout change regenerates
 // reports that were built with an older one.
-const RendererVersion = "pdf-nativo/4"
+const RendererVersion = "pdf-nativo/5"
 
 // renderReport lays out the frozen report model and encodes it as PDF bytes.
 func renderReport(ctx context.Context, doc model, created time.Time) ([]byte, int, error) {

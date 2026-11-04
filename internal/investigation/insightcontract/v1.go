@@ -202,6 +202,7 @@ type Stage struct {
 type EstimateChange struct {
 	ID          string   `json:"id"`
 	EntityID    string   `json:"entity_id"`
+	ActorID     *string  `json:"actor_id,omitempty"`
 	EventAt     *string  `json:"event_at"`
 	Before      *float64 `json:"before"`
 	After       *float64 `json:"after"`
@@ -227,6 +228,7 @@ type SourceBundle struct {
 	Questions         []QuestionCoverage    `json:"questions"`
 	Queues            []QueueProgress       `json:"queues"`
 	Entities          []Entity              `json:"entities"`
+	Actors            []TimelineActor       `json:"actors,omitempty"`
 	Evidence          []EvidenceView        `json:"evidence"`
 	Links             []Link                `json:"links"`
 	Events            []Event               `json:"events"`
@@ -488,19 +490,45 @@ type ExecutiveReport struct {
 	Limitations       []string           `json:"limitations"`
 }
 type TimelineItem struct {
-	ID          string   `json:"id"`
-	Kind        string   `json:"kind"`
-	EntityID    string   `json:"entity_id,omitempty"`
-	At          *string  `json:"at"`
-	End         *string  `json:"end,omitempty"`
-	ObservedAt  *string  `json:"observed_at,omitempty"`
-	ActorID     *string  `json:"actor_id,omitempty"`
-	OldValue    *string  `json:"old_value,omitempty"`
-	NewValue    *string  `json:"new_value,omitempty"`
-	Scope       string   `json:"scope,omitempty"`
-	Source      string   `json:"source"`
-	Summary     string   `json:"summary"`
-	EvidenceIDs []string `json:"evidence_ids"`
+	ID                 string   `json:"id"`
+	Kind               string   `json:"kind"`
+	EntityID           string   `json:"entity_id,omitempty"`
+	At                 *string  `json:"at"`
+	End                *string  `json:"end,omitempty"`
+	ObservedAt         *string  `json:"observed_at,omitempty"`
+	ActorID            *string  `json:"actor_id,omitempty"`
+	ActorLabel         string   `json:"actor_label,omitempty"`
+	DecisionMakerID    *string  `json:"decision_maker_id,omitempty"`
+	DecisionMakerLabel string   `json:"decision_maker_label,omitempty"`
+	RecordedByID       *string  `json:"recorded_by_id,omitempty"`
+	RecordedByLabel    string   `json:"recorded_by_label,omitempty"`
+	EventType          string   `json:"event_type,omitempty"`
+	EntityIdentifier   string   `json:"entity_identifier,omitempty"`
+	Rationale          string   `json:"rationale,omitempty"`
+	RationaleBasis     string   `json:"rationale_basis,omitempty"`
+	Confidence         string   `json:"confidence,omitempty"`
+	Alternatives       []string `json:"alternatives,omitempty"`
+	Limitations        []string `json:"limitations,omitempty"`
+	OldValue           *string  `json:"old_value,omitempty"`
+	NewValue           *string  `json:"new_value,omitempty"`
+	Scope              string   `json:"scope,omitempty"`
+	Source             string   `json:"source"`
+	Summary            string   `json:"summary"`
+	EvidenceIDs        []string `json:"evidence_ids"`
+}
+type TimelineActor struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+type TimelinePage struct {
+	SnapshotID string         `json:"snapshot_id"`
+	AnalysisID string         `json:"analysis_id"`
+	Total      int64          `json:"total"`
+	Items      []TimelineItem `json:"items"`
+	NextCursor string         `json:"next_cursor"`
+}
+type DecisionTimelineReader interface {
+	ListDecisionTimeline(context.Context, string, string, string, int) (TimelinePage, error)
 }
 type CaseDetail struct {
 	SnapshotID     string             `json:"snapshot_id"`

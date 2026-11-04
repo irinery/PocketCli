@@ -18,7 +18,7 @@ import (
 	"pocketcli/internal/investigation/insightcontract"
 )
 
-const executiveRendererVersion = "pdf-nativo-executivo/1"
+const executiveRendererVersion = "pdf-nativo-executivo/2"
 const executivePageSize = 100
 
 type executiveTimelineEntry struct {
@@ -613,8 +613,23 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		if decision.DecidedAt != nil {
 			at = *decision.DecidedAt
 		}
-		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice+" · "+decision.Rationale, decision.Scope.Description, decision.Citations,
-			"Método: "+label(decision.Method), "Validade: "+validityLabel(decision.ValidityStatus, decision.ValidFrom, decision.ValidTo), "Entidades: "+joinedOrUnknown(decision.EntityIDs), "Afirmações: "+joinedOrUnknown(decision.ClaimIDs), "Objetivos: "+joinedOrUnknown(decision.ObjectiveIDs), "Responsável: "+optional(decision.DecisionMakerID), "Registrado por: "+optional(decision.RecordedByID)))
+		meta := insightcontract.TimelineItem{Rationale: decision.Rationale, RationaleBasis: "unknown"}
+		for _, item := range d.Timeline {
+			if item.ID == decision.ID && item.Kind == "decision" {
+				meta = item
+				break
+			}
+		}
+		maker, recorder := optional(decision.DecisionMakerID), optional(decision.RecordedByID)
+		if meta.DecisionMakerLabel != "" {
+			maker = meta.DecisionMakerLabel
+		}
+		if meta.RecordedByLabel != "" {
+			recorder = meta.RecordedByLabel
+		}
+		metadata := []string{"Método: " + label(decision.Method), "Validade: " + validityLabel(decision.ValidityStatus, decision.ValidFrom, decision.ValidTo), "Entidades: " + joinedOrUnknown(decision.EntityIDs), "Afirmações: " + joinedOrUnknown(decision.ClaimIDs), "Objetivos: " + joinedOrUnknown(decision.ObjectiveIDs), "Decisor informado pela análise: " + maker, "Registrado por: " + recorder}
+		metadata = append(metadata, timelineRationaleMetadata(meta)...)
+		timeline = append(timeline, newTimelineEntry(at, decision.ID, "Decisão · "+label(decision.Status), decision.Question+" → "+decision.Choice, decision.Scope.Description, decision.Citations, metadata...))
 	}
 	for _, item := range d.Timeline {
 		if item.Kind == "decision" {
@@ -625,6 +640,10 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 			at = *item.At
 		}
 		metadata := []string{"Entidade: " + label(item.EntityID), "Evidências: " + joinedOrUnknown(item.EvidenceIDs)}
+		metadata = append(metadata, timelineRationaleMetadata(item)...)
+		if item.ActorLabel != "" {
+			metadata = append(metadata, "Executor registrado: "+item.ActorLabel)
+		}
 		for _, field := range []struct {
 			name  string
 			value *string
@@ -645,7 +664,7 @@ func renderCaseDetail(l *pdfLayout, d insightcontract.CaseDetail) {
 		return timeline[i].orderedAt.Before(timeline[j].orderedAt)
 	})
 	if len(timeline) > 0 {
-		l.heading("Timeline do caso", 11, 5, true)
+		l.heading("Timeline do caso · decisões e mudanças", 11, 5, true)
 	}
 	for _, item := range timeline {
 		at := item.at

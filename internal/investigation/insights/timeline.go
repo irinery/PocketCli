@@ -1,6 +1,7 @@
 package insights
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -11,7 +12,12 @@ import (
 // invalid event times remain visible after dated records, without an inferred
 // position in history.
 func caseTimeline(source insightcontract.SourceBundle, decisions []insightcontract.DecisionRecord, entityIDs map[string]bool) []insightcontract.TimelineItem {
+	return buildTimeline(source, decisions, entityIDs, false)
+}
+
+func buildTimeline(source insightcontract.SourceBundle, decisions []insightcontract.DecisionRecord, entityIDs map[string]bool, onlyChanges bool) []insightcontract.TimelineItem {
 	items := make([]insightcontract.TimelineItem, 0)
+	index := timelineEvidenceIndex(source)
 	entitySource := make(map[string]string, len(source.Entities))
 	for _, entity := range source.Entities {
 		entitySource[entity.ID] = entity.Source
@@ -21,26 +27,49 @@ func caseTimeline(source insightcontract.SourceBundle, decisions []insightcontra
 		for _, citation := range decision.Citations {
 			evidenceIDs = append(evidenceIDs, citation.EvidenceID)
 		}
-		items = append(items, insightcontract.TimelineItem{ID: decision.ID, Kind: "decision", At: decision.DecidedAt, Scope: decision.Scope.Description, Source: "analysis", Summary: decision.Question + " → " + decision.Choice + " · " + decision.Rationale, EvidenceIDs: evidenceIDs})
+		items = append(items, decisionTimelineItem(source, decision, evidenceIDs, index))
 	}
 	for _, event := range source.Events {
 		if !entityIDs[event.EntityID] {
 			continue
 		}
+		if onlyChanges {
+			title, _, _ := changeIntent(event.Type, event.OldValue, event.NewValue)
+			if title == "" {
+				continue
+			}
+		}
 		observedAt := event.ObservedAt
-		items = append(items, insightcontract.TimelineItem{ID: event.ID, Kind: "observation", EntityID: event.EntityID, At: event.EventAt, ObservedAt: &observedAt, ActorID: event.ActorID, OldValue: event.OldValue, NewValue: event.NewValue, Source: entitySource[event.EntityID], Summary: event.Type, EvidenceIDs: append([]string(nil), event.EvidenceIDs...)})
+		items = append(items, insightcontract.TimelineItem{ID: event.ID, Kind: "observation", EventType: event.Type, EntityID: event.EntityID, At: event.EventAt, ObservedAt: &observedAt, ActorID: event.ActorID, OldValue: event.OldValue, NewValue: event.NewValue, Source: entitySource[event.EntityID], Summary: event.Type, EvidenceIDs: append([]string(nil), event.EvidenceIDs...)})
 	}
-	for _, stage := range source.Stages {
-		if !entityIDs[stage.EntityID] {
+	for _, change := range source.Estimates {
+		if !entityIDs[change.EntityID] {
 			continue
 		}
-		items = append(items, insightcontract.TimelineItem{ID: stage.ID, Kind: "stage", EntityID: stage.EntityID, At: stage.Start, End: stage.End, Source: entitySource[stage.EntityID], Summary: stage.Name, EvidenceIDs: append([]string(nil), stage.EvidenceIDs...)})
-	}
-	for _, delivery := range source.Deliveries {
-		if !entityIDs[delivery.EntityID] {
-			continue
+		var before, after *string
+		if change.Before != nil {
+			value := fmt.Sprint(*change.Before)
+			before = &value
 		}
-		items = append(items, insightcontract.TimelineItem{ID: delivery.ID, Kind: "result", EntityID: delivery.EntityID, At: delivery.EventAt, Scope: delivery.Environment, Source: entitySource[delivery.EntityID], Summary: delivery.Status, EvidenceIDs: append([]string(nil), delivery.EvidenceIDs...)})
+		if change.After != nil {
+			value := fmt.Sprint(*change.After)
+			after = &value
+		}
+		items = append(items, insightcontract.TimelineItem{ID: change.ID, Kind: "observation", EventType: "estimate_changed", EntityID: change.EntityID, At: change.EventAt, ActorID: change.ActorID, OldValue: before, NewValue: after, Source: entitySource[change.EntityID], Summary: "Estimativa alterada", EvidenceIDs: append([]string(nil), change.EvidenceIDs...)})
+	}
+	if !onlyChanges {
+		for _, stage := range source.Stages {
+			if !entityIDs[stage.EntityID] {
+				continue
+			}
+			items = append(items, insightcontract.TimelineItem{ID: stage.ID, Kind: "stage", EntityID: stage.EntityID, At: stage.Start, End: stage.End, Source: entitySource[stage.EntityID], Summary: stage.Name, EvidenceIDs: append([]string(nil), stage.EvidenceIDs...)})
+		}
+		for _, delivery := range source.Deliveries {
+			if !entityIDs[delivery.EntityID] {
+				continue
+			}
+			items = append(items, insightcontract.TimelineItem{ID: delivery.ID, Kind: "result", EntityID: delivery.EntityID, At: delivery.EventAt, Scope: delivery.Environment, Source: entitySource[delivery.EntityID], Summary: delivery.Status, EvidenceIDs: append([]string(nil), delivery.EvidenceIDs...)})
+		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		a, aOK := timelineTime(items[i].At)
@@ -50,7 +79,7 @@ func caseTimeline(source insightcontract.SourceBundle, decisions []insightcontra
 		}
 		return aOK && a.Before(b)
 	})
-	return items
+	return enrichDecisionTimeline(source, items)
 }
 
 func timelineTime(value *string) (time.Time, bool) {
