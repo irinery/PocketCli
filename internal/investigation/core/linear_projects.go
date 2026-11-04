@@ -42,6 +42,9 @@ func (c *Core) collectLinearProjects(ctx context.Context, plan contract.Plan, r 
 			return err
 		}
 		if queryErr != nil {
+			if fatalCollectionError(queryErr) {
+				return queryErr
+			}
 			var coded *contract.ErrorResponse
 			if errors.As(queryErr, &coded) {
 				switch coded.Code {

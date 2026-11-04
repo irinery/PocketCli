@@ -37,6 +37,23 @@ known_hosts
 tmp/
 .cache/
 
+# Private Investigation runtime and exports (fixtures stay in tests/).
+/investigations/
+/investigate-output/
+/investigation-results/
+/output/
+/datasets/
+/snapshots/
+/objects/
+/journals/
+/requestreceipts/
+/reports/
+*.sqlite
+*.sqlite3
+investigation-report*.pdf
+investigation-report*.html
+investigation-report*.json
+
 # Generated visual test reports
 scripts/testing/visual_integrity/reports/*
 !scripts/testing/visual_integrity/reports/.gitignore

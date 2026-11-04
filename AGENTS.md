@@ -2,6 +2,8 @@
 
 ## Regras para futuras atualizações
 
+- Resultados reais do `investigate` são privados. Não versionar datasets, evidências, snapshots, relatórios, logs, dumps ou históricos de validações reais, nem copiá-los para descrições de PR ou fixtures. Usar somente dados sintéticos em testes e exemplos; manter os arquivos reais no storage privado fora do repositório.
+
 - Ao alterar qualquer fluxo relacionado a `pocket update`, preserve a atualização mesmo quando existirem arquivos locais diferentes do padrão.
 - Arquivos customizáveis do usuário devem ficar centralizados em uma pasta `profile/` (ou depender apenas dela).
 - Fora de `profile/`, os arquivos do projeto devem seguir apenas um destes formatos:

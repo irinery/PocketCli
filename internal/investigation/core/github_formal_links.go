@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -126,8 +125,7 @@ func (c *Core) collectGitHubFormalLinks(ctx context.Context, plan contract.Plan,
 		}
 		items, complete, err := c.githubFormalPages(ctx, plan, r, target.Number, parts[0], parts[1], run)
 		if err != nil {
-			var coded *contract.ErrorResponse
-			if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
+			if fatalCollectionError(err) {
 				return err
 			}
 			status, reason = "partial", "eventos formais indisponíveis ou inválidos"

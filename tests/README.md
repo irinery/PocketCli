@@ -4,6 +4,10 @@ Este diretório concentra testes de regressão shell e serve como referência pa
 
 ## Tipos de testes na base
 
+Os resultados reais do `investigate` ficam fora do repositório. Use somente fixtures sintéticas em testes, documentação e PRs.
+
+Para validar filas Linear com mais de 100 issues, retomada sem repetir páginas já salvas, schema compartilhado entre teams do plano e interrupção por credencial inválida: `CGO_ENABLED=1 go test -buildvcs=false -tags investigate_sqlite -run 'TestLinearChildrenDrain|TestLinearRejectedCredential|TestLinearSchemaShared|TestRejectedCredentialStopsSource|TestSelectedRepositoryNotVisible' ./internal/investigation/core`. Pré-requisitos: Go e compilador C; transporte HTTP falso e storage temporário, sem tokens reais ou rede.
+
 - **Unitários (Go)**: em `cmd/pocket/*_test.go`, `internal/*/*_test.go`.
 - **Integração leve (Go)**: fluxo de dispatch do CLI (`root -> subcommands`) com doubles para dependências externas.
 - **Regressão shell**: scripts em `tests/test_*.sh`.

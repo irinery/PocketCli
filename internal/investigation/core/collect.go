@@ -339,8 +339,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			var walkErr *contract.ErrorResponse
-			if errors.As(openErr, &walkErr) && (walkErr.Code == "ERR_AUDIT_FAILED" || walkErr.Code == "ERR_RESOURCE_EXHAUSTED") {
+			if fatalCollectionError(openErr) {
 				return openErr
 			}
 		}
@@ -348,8 +347,7 @@ func (c *Core) collectRepository(ctx context.Context, plan contract.Plan, r cont
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		var collectionErr *contract.ErrorResponse
-		if errors.As(err, &collectionErr) && (collectionErr.Code == "ERR_AUDIT_FAILED" || collectionErr.Code == "ERR_RESOURCE_EXHAUSTED") {
+		if fatalCollectionError(err) {
 			return err
 		}
 		if err == nil {
@@ -568,6 +566,9 @@ func (c *Core) collectRepositoryComments(ctx context.Context, plan contract.Plan
 			}
 		}
 		if err != nil {
+			if fatalCollectionError(err) {
+				return err
+			}
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -703,6 +704,9 @@ func (c *Core) collectTeam(ctx context.Context, plan contract.Plan, r contract.R
 				return fault("ERR_AUDIT_FAILED", "falha ao auditar request")
 			}
 			if err != nil {
+				if fatalCollectionError(err) {
+					return err
+				}
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}

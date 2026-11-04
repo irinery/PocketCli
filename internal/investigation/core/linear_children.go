@@ -3,8 +3,6 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -39,8 +37,11 @@ type linearChildSchema struct {
 	Attachments      bool `json:"attachments"`
 }
 
-func (c *Core) linearSchema(ctx context.Context, plan contract.Plan, r contract.Resource, run *contract.Run) (linearChildSchema, error) {
-	id := storage.Hash([]byte(plan.ID + ":" + r.ID + ":schema:v2"))
+func (c *Core) linearSchema(ctx context.Context, plan contract.Plan, _ contract.Resource, run *contract.Run) (linearChildSchema, error) {
+	// Issue is a source-wide GraphQL type, independent of the selected team.
+	// Keep the cache within the confirmed plan so credentials and API versions
+	// cannot silently reuse another plan's capabilities.
+	id := storage.Hash([]byte(plan.ID + ":linear:schema:v3"))
 	var schema linearChildSchema
 	if err := c.store.Get("linearschema", id, &schema); err == nil {
 		return schema, nil
@@ -85,8 +86,7 @@ func (c *Core) linearSchema(ctx context.Context, plan contract.Plan, r contract.
 func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r contract.Resource, d *query.Dataset, run *contract.Run) error {
 	schema, err := c.linearSchema(ctx, plan, r, run)
 	if err != nil {
-		var coded *contract.ErrorResponse
-		if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
+		if fatalCollectionError(err) {
 			return err
 		}
 		for _, collection := range []string{"history", "comments", "relations", "inverseRelations", "attachments"} {
@@ -106,7 +106,6 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 		available      bool
 		status, reason string
 		selected       []query.Issue
-		cursorID       string
 	}
 	plans := []*childPlan{{name: "history", gql: linearHistoryQuery, available: schema.History}, {name: "comments", gql: linearCommentsQuery, available: schema.Comments}, {name: "relations", gql: linearRelationsQuery, available: schema.Relations}, {name: "inverseRelations", gql: linearInverseRelationsQuery, available: schema.InverseRelations}, {name: "attachments", gql: linearAttachmentsQuery, available: schema.Attachments}}
 	wanted := make(map[string][]string)
@@ -116,24 +115,8 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 		}
 		collection.status, collection.reason = "complete", "coleção por issue consultada com paginação"
 		collection.selected = targets
-		if len(targets) > 100 {
-			collection.status, collection.reason = "partial", fmt.Sprintf("fila de reconciliação Linear: %d issues pendentes", len(targets)-100)
-			var auth planAuth
-			if err := c.store.Get("planauth", plan.ID, &auth); err != nil {
-				return fault("ERR_AUDIT_FAILED", "identidade Linear indisponível")
-			}
-			collection.cursorID = storage.Hash([]byte(plan.InvestigationID + ":" + r.ID + ":" + collection.name + ":" + auth.Linear))
-			var cursor githubReconcileCursor
-			if err := c.store.Get("reconcile", collection.cursorID, &cursor); err != nil && !os.IsNotExist(err) {
-				return fault("ERR_AUDIT_FAILED", "cursor Linear corrompido")
-			}
-			start := sort.Search(len(targets), func(i int) bool { return targets[i].ID > cursor.LastEntityID })
-			if start >= len(targets) {
-				start = 0
-			}
-			selected := append(append([]query.Issue{}, targets[start:]...), targets[:start]...)
-			collection.selected = selected[:100]
-		}
+		// Each batch is bounded and journaled. Session, quota and transfer
+		// budgets stop the run safely; do not require a new plan every 100 issues.
 		for _, issue := range collection.selected {
 			wanted[issue.ID] = append(wanted[issue.ID], collection.name)
 		}
@@ -153,9 +136,7 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 		}
 		status, reason := collection.status, collection.reason
 		selected := collection.selected
-		cursorID := collection.cursorID
 		var observed int64
-		lastComplete := ""
 		for _, issue := range selected {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -164,16 +145,13 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 			reportProgress(ctx, run, 0.5+0.5*float64(done)/float64(total))
 			items, complete, err := c.linearChildPages(ctx, plan, r, issue, collection.name, collection.gql, run)
 			if err != nil {
-				var coded *contract.ErrorResponse
-				if errors.As(err, &coded) && (coded.Code == "ERR_AUDIT_FAILED" || coded.Code == "ERR_RESOURCE_EXHAUSTED" || coded.Code == "ERR_RATE_LIMITED") {
+				if fatalCollectionError(err) {
 					return err
 				}
 				status, reason = "partial", "coleção Linear incompleta ou inacessível"
 			}
 			if !complete {
 				status, reason = "partial", "paginação Linear por issue incompleta"
-			} else {
-				lastComplete = issue.ID
 			}
 			observed += int64(len(items))
 			if collection.name == "history" && complete && err == nil {
@@ -207,11 +185,6 @@ func (c *Core) collectLinearChildren(ctx context.Context, plan contract.Plan, r 
 						status, reason = "partial", "relação Linear inválida, divergente ou posterior à janela"
 					}
 				}
-			}
-		}
-		if cursorID != "" && lastComplete != "" {
-			if err := c.store.Put("reconcile", cursorID, githubReconcileCursor{LastEntityID: lastComplete}); err != nil {
-				return fault("ERR_AUDIT_FAILED", "falha ao persistir cursor Linear")
 			}
 		}
 		d.Coverage = append(d.Coverage, c.coverage(r, collection.name, status, observed, reason))
